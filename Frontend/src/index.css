@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@layer base {
+  :root {
+    --background: 220 20% 10%;
+    --foreground: 210 20% 92%;
+
+    --card: 220 18% 13%;
+    --card-foreground: 210 20% 92%;
+
+    --popover: 220 18% 13%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary: 45 96% 51%;
+    --primary-foreground: 220 20% 10%;
+
+    --secondary: 220 16% 18%;
+    --secondary-foreground: 210 20% 85%;
+
+    --muted: 220 14% 16%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent: 342 88% 35%;
+    --accent-foreground: 210 20% 95%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 14% 20%;
+    --input: 220 14% 20%;
+    --ring: 45 96% 51%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 220 22% 8%;
+    --sidebar-foreground: 210 15% 70%;
+    --sidebar-primary: 45 96% 51%;
+    --sidebar-primary-foreground: 220 20% 10%;
+    --sidebar-accent: 220 16% 14%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 220 14% 16%;
+    --sidebar-ring: 45 96% 51%;
+
+    /* Custom tokens */
+    --gold: 45 96% 51%;
+    --gold-dim: 45 70% 40%;
+    --deep-red: 342 88% 35%;
+    --deep-red-dim: 342 60% 25%;
+    --success: 152 60% 45%;
+    --warning: 38 92% 50%;
+    --info: 210 80% 55%;
+    --chart-1: 45 96% 51%;
+    --chart-2: 342 88% 35%;
+    --chart-3: 152 60% 45%;
+    --chart-4: 210 80% 55%;
+    --chart-5: 280 60% 55%;
+
+    --gradient-gold: linear-gradient(135deg, hsl(45 96% 51%), hsl(38 92% 42%));
+    --gradient-red: linear-gradient(135deg, hsl(342 88% 35%), hsl(350 70% 28%));
+    --gradient-card: linear-gradient(145deg, hsl(220 18% 14%), hsl(220 18% 11%));
+    --shadow-gold: 0 4px 20px -4px hsl(45 96% 51% / 0.2);
+    --shadow-card: 0 4px 24px -8px hsl(0 0% 0% / 0.4);
+    --shadow-glow-gold: 0 0 30px -5px hsl(45 96% 51% / 0.15);
+    --shadow-glow-red: 0 0 30px -5px hsl(342 88% 35% / 0.15);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  code, pre {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer utilities {
+  .text-gradient-gold {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(45 96% 51%), hsl(38 92% 58%));
+  }
+
+  .text-gradient-red {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(342 88% 45%), hsl(350 70% 38%));
+  }
+
+  .card-glow-gold {
+    box-shadow: var(--shadow-card), var(--shadow-glow-gold);
+  }
+
+  .card-glow-red {
+    box-shadow: var(--shadow-card), var(--shadow-glow-red);
+  }
+
+  .bg-grid-pattern {
+    background-image: 
+      linear-gradient(hsl(220 14% 18% / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 14% 18% / 0.5) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(220 14% 22%) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(220 14% 22%);
+    border-radius: 3px;
+  }
+}
