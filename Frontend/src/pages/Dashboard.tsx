@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Server,
@@ -8,12 +8,27 @@ import {
   AlertTriangle,
   ShieldAlert,
   Search,
+  Loader2,
 } from "lucide-react";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  dashboardService,
+  assetService,
+  dnsService,
+  cryptoService,
+} from "@/services/api";
+import { toast } from "sonner";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { LiveScanConsole } from "@/components/dashboard/LiveScanConsole";
+import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
+import { HNDLAlert } from "@/components/ui/HNDLAlert";
+import { useScan } from "@/hooks/useScan";
+import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 import {
   PieChart,
   Pie,
@@ -23,23 +38,6 @@ import {
   Legend,
 } from "recharts";
 
-const stats = [
-  { title: "Total Assets", value: "2,847", icon: Server, variant: "gold" as const },
-  { title: "Web Applications", value: "342", icon: Globe, variant: "default" as const },
-  { title: "APIs", value: "189", icon: Code, variant: "info" as const },
-  { title: "Servers", value: "1,204", icon: HardDrive, variant: "default" as const },
-  { title: "Expiring Certs", value: "23", icon: AlertTriangle, variant: "red" as const },
-  { title: "High Risk Assets", value: "67", icon: ShieldAlert, variant: "red" as const },
-];
-
-const distributionData = [
-  { name: "Web Apps", value: 342 },
-  { name: "APIs", value: 189 },
-  { name: "Servers", value: 1204 },
-  { name: "Databases", value: 412 },
-  { name: "IoT Devices", value: 700 },
-];
-
 const CHART_COLORS = [
   "hsl(45, 96%, 51%)",
   "hsl(342, 88%, 35%)",
@@ -48,29 +46,8 @@ const CHART_COLORS = [
   "hsl(280, 60%, 55%)",
 ];
 
-const assetInventoryData = [
-  { name: "Core Banking API", url: "api.bank.com", ipv4: "10.0.1.15", ipv6: "::1", type: "API", owner: "Platform Team", risk: "High", certStatus: "Valid", keyLength: "2048", lastScan: "2026-03-12" },
-  { name: "Customer Portal", url: "portal.bank.com", ipv4: "10.0.2.20", ipv6: "fe80::1", type: "Web App", owner: "Digital Team", risk: "Medium", certStatus: "Expiring", keyLength: "4096", lastScan: "2026-03-11" },
-  { name: "Payment Gateway", url: "pay.bank.com", ipv4: "10.0.3.10", ipv6: "::ffff:10.0.3.10", type: "API", owner: "Payments Team", risk: "Critical", certStatus: "Valid", keyLength: "2048", lastScan: "2026-03-10" },
-  { name: "Auth Server", url: "auth.bank.com", ipv4: "10.0.1.5", ipv6: "fe80::2", type: "Server", owner: "Security Team", risk: "Low", certStatus: "Valid", keyLength: "4096", lastScan: "2026-03-12" },
-  { name: "Data Warehouse", url: "dw.internal", ipv4: "10.0.5.100", ipv6: "—", type: "Database", owner: "Data Team", risk: "Medium", certStatus: "Valid", keyLength: "2048", lastScan: "2026-03-09" },
-];
-
-const nameServerData = [
-  { hostname: "ns1.bank.com", type: "A", ipAddress: "203.0.113.1", ttl: "3600" },
-  { hostname: "ns2.bank.com", type: "A", ipAddress: "203.0.113.2", ttl: "3600" },
-  { hostname: "mail.bank.com", type: "MX", ipAddress: "203.0.113.10", ttl: "7200" },
-  { hostname: "api.bank.com", type: "CNAME", ipAddress: "lb.bank.com", ttl: "300" },
-];
-
-const cryptoSecurityData = [
-  { asset: "Core Banking API", keyLength: "2048-bit RSA", cipherSuite: "TLS_AES_256_GCM_SHA384", tlsVersion: "TLS 1.3", ca: "DigiCert" },
-  { asset: "Customer Portal", keyLength: "4096-bit RSA", cipherSuite: "TLS_CHACHA20_POLY1305", tlsVersion: "TLS 1.3", ca: "Let's Encrypt" },
-  { asset: "Payment Gateway", keyLength: "2048-bit RSA", cipherSuite: "TLS_AES_128_GCM_SHA256", tlsVersion: "TLS 1.2", ca: "Comodo" },
-  { asset: "Auth Server", keyLength: "4096-bit RSA", cipherSuite: "TLS_AES_256_GCM_SHA384", tlsVersion: "TLS 1.3", ca: "DigiCert" },
-];
-
 const riskBadge = (risk: string) => {
+  if (!risk) return null;
   const colors: Record<string, string> = {
     Critical: "bg-accent/20 text-accent border-accent/30",
     High: "bg-accent/15 text-accent border-accent/20",
@@ -85,6 +62,7 @@ const riskBadge = (risk: string) => {
 };
 
 const certBadge = (status: string) => {
+  if (!status) return null;
   const colors: Record<string, string> = {
     Valid: "bg-success/15 text-success border-success/20",
     Expiring: "bg-warning/15 text-warning border-warning/20",
@@ -97,13 +75,237 @@ const certBadge = (status: string) => {
   );
 };
 
+function inferAssetTypeFromPorts(ports: number[]) {
+  const p = new Set(ports || []);
+  if (p.has(443) || p.has(8443) || p.has(80) || p.has(8080)) return "Web App";
+  if (p.has(22) || p.has(3389)) return "Server";
+  return "Other";
+}
+
+const isHNDLVulnerable = (keyLength?: string, cipherSuite?: string) => {
+  const kl = (keyLength || "").toUpperCase();
+  const cs = (cipherSuite || "").toUpperCase();
+  return kl.includes("RSA") || cs.includes("ECDH") || cs.includes("ECDSA");
+};
+
 export default function Dashboard() {
   const [domain, setDomain] = useState("");
   const [scannedDomain, setScannedDomain] = useState("");
+  
+  const [summary, setSummary] = useState<any>(null);
+  const [distributionData, setDistributionData] = useState<any[]>([]);
+  const [assetInventoryData, setAssetInventoryData] = useState<any[]>([]);
+  const [nameServerData, setNameServerData] = useState<any[]>([]);
+  const [cryptoSecurityData, setCryptoSecurityData] = useState<any[]>([]);
+  
+  const [hndlCount, setHndlCount] = useState(0);
+  const [totalAssetsCount, setTotalAssetsCount] = useState(0);
 
-  const handleScan = () => {
-    if (domain.trim()) {
-      setScannedDomain(domain.trim());
+  const { isScanning, stageIndex, results, error, startScan } = useScan();
+
+  const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const { messages, clearMessages } = useWebSocket(activeScanId);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      
+      if (lastMsg.type === 'metrics' && lastMsg.data) {
+        setSummary((prev: any) => ({ ...prev, ...lastMsg.data }));
+      }
+
+      if (lastMsg.type === 'data' && lastMsg.assets) {
+        const v1Assets = lastMsg.assets;
+        setAssetInventoryData(
+          v1Assets.slice(0, 5).map((a: any) => ({
+            name: a.subdomain,
+            url: a.subdomain,
+            ipv4: a.ip,
+            ipv6: "N/A",
+            type: inferAssetTypeFromPorts(a.open_ports),
+            owner: "N/A",
+            risk: "Scanning...",
+            certStatus: "Scanning...",
+            keyLength: "N/A",
+            lastScan: "Today",
+          }))
+        );
+      }
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    refreshDashboardData();
+  }, []);
+
+  useEffect(() => {
+    if (results && results.status === "completed" && !isScanning) {
+      toast.success(`Scan completed successfully for ${scannedDomain}!`);
+      refreshDashboardData(results);
+    } else if (error) {
+      toast.error(error);
+    }
+  }, [results, isScanning, error]);
+
+  const refreshDashboardData = async (v1FallbackPayload: any = null) => {
+    try {
+      const [sumRes, assetRes, dnsRes, cryptoRes] = await Promise.all([
+        dashboardService.getSummary().catch(() => ({ data: null })),
+        assetService.getAll({ page_size: 100 }).catch(() => ({ data: { items: [] } })),
+        dnsService.getNameServerRecords().catch(() => ({ data: [] })),
+        cryptoService.getCryptoSecurityData().catch(() => ({ data: [] }))
+      ]);
+
+      if (sumRes.data) setSummary(sumRes.data);
+      if (dnsRes.data) setNameServerData(dnsRes.data);
+      
+      const assets = assetRes.data?.items || [];
+        
+      const formattedInventory = assets.slice(0, 5).map((a: any) => ({
+        name: a.asset_name,
+        url: a.url,
+        ipv4: a.ipv4,
+        ipv6: a.ipv6,
+        type: a.type || "Unknown",
+        owner: a.owner || "N/A",
+        risk: a.risk || "Low",
+        certStatus: a.certificate_status || "Valid",
+        keyLength: a.key_length ? a.key_length.toString() : "N/A",
+        lastScan: a.last_scan ? new Date(a.last_scan).toLocaleDateString() : "Never",
+        pqcStatus: determinePQCStatus(a.tls_version, a.cipher_suite, a.key_length?.toString()),
+        hndlRisk: isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite),
+      }));
+      setAssetInventoryData(formattedInventory);
+
+      const distCount: Record<string, number> = {};
+      let hCount = 0;
+      assets.forEach((a: any) => {
+        const type = a.type || "Other";
+        distCount[type] = (distCount[type] || 0) + 1;
+        if (isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite)) {
+          hCount++;
+        }
+      });
+      setHndlCount(hCount);
+      setTotalAssetsCount(assets.length);
+      
+      const distArray = Object.keys(distCount).map(k => ({
+        name: k,
+        value: distCount[k]
+      }));
+      setDistributionData(distArray.length > 0 ? distArray : [{ name: "No Data", value: 1 }]);
+      
+      if (cryptoRes.data) {
+        const cryptoRecords = cryptoRes.data.map((c: any) => ({
+          asset: c.asset,
+          keyLength: c.key_length ? `${c.key_length}-bit` : "Unknown",
+          cipherSuite: c.cipher_suite || "Unknown",
+          tlsVersion: c.tls_version || "Unknown",
+          ca: c.certificate_authority || "Unknown",
+          pqcStatus: determinePQCStatus(c.tls_version, c.cipher_suite, c.key_length?.toString()),
+        }));
+        setCryptoSecurityData(cryptoRecords.slice(0, 5));
+      }
+
+      if (!assets.length && v1FallbackPayload) {
+        applyV1Fallback(v1FallbackPayload);
+      }
+    } catch (err) {
+      console.error("Could not refresh dashboard data", err);
+    }
+  };
+
+  const applyV1Fallback = (v1: any) => {
+    const v1Assets = Array.isArray(v1.assets) ? v1.assets : [];
+    const v1Tls = Array.isArray(v1.tls_results) ? v1.tls_results : [];
+
+    const expiring = v1Tls.filter((t: any) => {
+      const days = t?.certificate?.days_until_expiry;
+      return typeof days === "number" && days <= 30 && days >= 0;
+    }).length;
+    const highRisk = Array.isArray(v1.cbom)
+      ? v1.cbom.filter((c: any) => ["critical", "high"].includes(String(c?.risk_level))).length
+      : 0;
+
+    setSummary((prev: any) => prev ?? {
+      total_assets: v1Assets.length,
+      public_web_apps: v1Assets.filter((a: any) => inferAssetTypeFromPorts(a.open_ports) === "Web App").length,
+      apis: 0,
+      servers: v1Assets.filter((a: any) => inferAssetTypeFromPorts(a.open_ports) === "Server").length,
+      expiring_certificates: expiring,
+      high_risk_assets: highRisk,
+    });
+
+    setAssetInventoryData(
+      v1Assets.slice(0, 5).map((a: any) => {
+        const tls = v1Tls.find((t: any) => t.host === a.subdomain) || {};
+        return {
+          name: a.subdomain,
+          url: a.subdomain,
+          ipv4: a.ip,
+          ipv6: "N/A",
+          type: inferAssetTypeFromPorts(a.open_ports),
+          owner: "N/A",
+          risk: (v1?.quantum_score?.risk_level || "Low").toString(),
+          certStatus: "Valid",
+          keyLength: "N/A",
+          lastScan: v1.completed_at ? new Date(v1.completed_at).toLocaleDateString() : "Today",
+          pqcStatus: determinePQCStatus(tls.tls_version, tls.cipher_suite, tls.certificate?.public_key_size?.toString()),
+          hndlRisk: isHNDLVulnerable(tls.certificate?.public_key_size?.toString(), tls.cipher_suite),
+        };
+      })
+    );
+    
+    let hCount3 = 0;
+    v1Assets.forEach((a: any) => {
+      const tls = v1Tls.find((t: any) => t.host === a.subdomain) || {};
+      if (isHNDLVulnerable(tls.certificate?.public_key_size?.toString(), tls.cipher_suite)) hCount3++;
+    });
+    setHndlCount(hCount3);
+    setTotalAssetsCount(v1Assets.length);
+
+    const distCount: Record<string, number> = {};
+    v1Assets.forEach((a: any) => {
+      const t = inferAssetTypeFromPorts(a.open_ports);
+      distCount[t] = (distCount[t] || 0) + 1;
+    });
+    const distArray = Object.keys(distCount).map((k) => ({ name: k, value: distCount[k] }));
+    setDistributionData(distArray.length > 0 ? distArray : [{ name: "No Data", value: 1 }]);
+
+    setCryptoSecurityData(
+      v1Tls.slice(0, 5).map((t: any) => ({
+        asset: `${t.host}:${t.port}`,
+        keyLength: t?.certificate?.public_key_size ? `${t.certificate.public_key_size}-bit` : "Unknown",
+        cipherSuite: t.cipher_suite || "Unknown",
+        tlsVersion: t.tls_version || "Unknown",
+        ca: t?.certificate?.issuer || "Unknown",
+        pqcStatus: determinePQCStatus(t.tls_version, t.cipher_suite, t.certificate?.public_key_size?.toString()),
+      }))
+    );
+  };
+
+  const stats = [
+    { title: "Total Assets", value: summary ? summary.total_assets.toString() : "...", icon: Server, variant: "gold" as const },
+    { title: "Web Applications", value: summary ? summary.public_web_apps.toString() : "...", icon: Globe, variant: "default" as const },
+    { title: "APIs", value: summary ? summary.apis.toString() : "...", icon: Code, variant: "info" as const },
+    { title: "Servers", value: summary ? summary.servers.toString() : "...", icon: HardDrive, variant: "default" as const },
+    { title: "Expiring Certs", value: summary ? summary.expiring_certificates.toString() : "...", icon: AlertTriangle, variant: "red" as const },
+    { title: "High Risk Assets", value: summary ? summary.high_risk_assets.toString() : "...", icon: ShieldAlert, variant: "red" as const },
+    { title: "HNDL Vulnerable", value: hndlCount.toString(), icon: AlertTriangle, variant: "red" as const },
+  ];
+
+  const handleScan = async () => {
+    if (domain.trim() && !isScanning) {
+      const targetDomain = domain.trim();
+      setScannedDomain(targetDomain);
+      clearMessages();
+      setIsConsoleOpen(true);
+      
+      // Need to simulate a scan ID if no web socket returns one immediately
+      setActiveScanId("pending..."); 
+      
+      await startScan(targetDomain);
     }
   };
 
@@ -126,21 +328,35 @@ export default function Dashboard() {
               onChange={(e) => setDomain(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleScan()}
               className="pl-10 bg-secondary border-border"
+              disabled={isScanning}
             />
           </div>
-          <Button onClick={handleScan} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+          <Button onClick={handleScan} disabled={isScanning} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+            {isScanning && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             Scan
           </Button>
         </div>
-        {scannedDomain && (
+        {!isScanning && scannedDomain && stageIndex >= 5 && (
           <p className="text-xs text-muted-foreground mt-2">
-            Showing results for: <span className="text-primary font-medium">{scannedDomain}</span>
+            Scan results available for: <span className="text-primary font-medium">{scannedDomain}</span>.
           </p>
         )}
       </div>
 
+      <ScanProgressBar isScanning={isScanning} stageIndex={stageIndex} targetDomain={scannedDomain} />
+      
+      {hndlCount > 0 && (
+        <HNDLAlert 
+          description={
+            <span>
+              <strong>{hndlCount} out of {totalAssetsCount}</strong> scanned assets are currently vulnerable to Harvest Now, Decrypt Later (HNDL) attacks. They use legacy asymmetric cryptography (RSA/ECC) for key exchange. Adversaries may be harvesting encrypted traffic today for future quantum decryption.
+            </span>
+          } 
+        />
+      )}
+
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-4">
         {stats.map((s, i) => (
           <motion.div key={s.title} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
             <StatCard {...s} />
@@ -151,7 +367,12 @@ export default function Dashboard() {
       {/* Chart + Inventory */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Pie Chart */}
-        <div className="rounded-xl border border-border bg-card p-5">
+        <div className="rounded-xl border border-border bg-card p-5 relative">
+          {isScanning && (
+            <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          )}
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">
             Assets Distribution
           </h3>
@@ -167,7 +388,7 @@ export default function Dashboard() {
                 dataKey="value"
               >
                 {distributionData.map((_, i) => (
-                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                  <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip
@@ -187,42 +408,54 @@ export default function Dashboard() {
         </div>
 
         {/* Asset Inventory */}
-        <div className="xl:col-span-2">
+        <div className="xl:col-span-2 relative">
+          {isScanning && (
+            <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex flex-col gap-4 p-8">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          )}
           <DataTable
-            title="Assets Inventory"
+            title="Recent Assets"
             searchable
             data={assetInventoryData}
             columns={[
               { key: "name", header: "Asset Name" },
               { key: "url", header: "URL" },
               { key: "ipv4", header: "IPv4" },
-              { key: "ipv6", header: "IPv6" },
               { key: "type", header: "Type" },
               { key: "owner", header: "Owner" },
               { key: "risk", header: "Risk", render: (r) => riskBadge(r.risk as string) },
+              { key: "hndlRisk", header: "HNDL Risk", render: (r) => r.hndlRisk ? <Badge className="bg-[#A20E37]/15 text-[#A20E37] border-[#A20E37]/20 uppercase text-[10px]">Yes</Badge> : <Badge className="bg-success/15 text-success border-success/20 uppercase text-[10px]">No</Badge> },
               { key: "certStatus", header: "Cert Status", render: (r) => certBadge(r.certStatus as string) },
-              { key: "keyLength", header: "Key Length" },
-              { key: "lastScan", header: "Last Scan" },
+              { key: "pqcStatus", header: "PQC Status", render: (r) => <PQCBadge status={r.pqcStatus as PQCStatus} /> },
             ]}
           />
         </div>
       </div>
 
       {/* Name Server + Crypto */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 relative">
+        {isScanning && (
+          <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex items-center justify-center gap-4 p-8">
+            <Loader2 className="w-10 h-10 animate-spin text-primary" />
+          </div>
+        )}
         <DataTable
           title="Name Server Records"
           data={nameServerData}
           columns={[
             { key: "hostname", header: "Hostname" },
             { key: "type", header: "Type" },
-            { key: "ipAddress", header: "IP Address" },
+            { key: "ip_address", header: "IP Address" },
             { key: "ttl", header: "TTL" },
           ]}
         />
 
         <DataTable
-          title="Crypto & Security"
+          title="Crypto & Security Overview"
           data={cryptoSecurityData}
           columns={[
             { key: "asset", header: "Asset" },
@@ -230,9 +463,17 @@ export default function Dashboard() {
             { key: "cipherSuite", header: "Cipher Suite" },
             { key: "tlsVersion", header: "TLS Version" },
             { key: "ca", header: "Certificate Authority" },
+            { key: "pqcStatus", header: "PQC Status", render: (r) => <PQCBadge status={r.pqcStatus as PQCStatus} /> },
           ]}
         />
       </div>
+
+      <LiveScanConsole 
+        isOpen={isConsoleOpen} 
+        onClose={() => setIsConsoleOpen(false)} 
+        messages={messages} 
+        scanId={activeScanId}
+      />
     </div>
   );
 }

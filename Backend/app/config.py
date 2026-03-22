@@ -17,20 +17,20 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
 
-    # ── MongoDB ──────────────────────────────────────────────────
+    # ── MongoDB (existing scanner pipeline) ──────────────────────
     MONGO_URI: str = "mongodb://localhost:27017"
     MONGO_DB_NAME: str = "quantumshield"
 
+    # ── PostgreSQL (Assessment System API) ───────────────────────
+    POSTGRES_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quantumshield"
+
+    # ── JWT Auth ─────────────────────────────────────────────────
+    SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_SECRET"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # 8 hours
+
     # ── CORS (comma-separated origins for the React frontend) ───
     CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://192.168.128.206:5173",
-        "http://172.30.87.37:5173",
-        "http://172.30.86.107:5173",
-        "http://172.30.86.107:3000",
-        "http://172.30.86.115:5173",
-        "http://172.30.86.115:3000",
+        "*"
     ]
 
     # ── Scanner defaults ─────────────────────────────────────────

@@ -1,18 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { FileText, Download, Calendar, Zap } from "lucide-react";
+import { FileText, Download, Calendar, Zap, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-
-const domains = [
-  "bank.com",
-  "api.bank.com",
-  "portal.bank.com",
-  "pay.bank.com",
-  "auth.bank.com",
-  "internal.bank.com",
-];
+import { reportingService, assetService } from "@/services/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const reportTypes = [
   { id: "executive", label: "Executive Reporting", icon: FileText, description: "High-level summary for leadership" },
@@ -27,6 +20,29 @@ export default function Reporting() {
   const [selectedType, setSelectedType] = useState("executive");
   const [selectedFormat, setSelectedFormat] = useState("PDF");
   const [generating, setGenerating] = useState(false);
+  const [domains, setDomains] = useState<string[]>([]);
+  const { user } = useAuth();
+  const isEmployee = user?.role === "Employee";
+
+  useEffect(() => {
+    // Try to dynamically load domains from asset discovery or inventory
+    assetService.getAll()
+      .then((res) => {
+        const items = Array.isArray(res.data) ? res.data : (res.data?.items ?? []);
+        const uniqueDomains = Array.from(
+          new Set(items.map((a: any) => a.url).filter(Boolean))
+        ) as string[];
+        if (uniqueDomains.length > 0) {
+          setDomains(uniqueDomains);
+        } else {
+          setDomains(["All Domains"]);
+        }
+      })
+      .catch((err) => {
+        console.error("Could not fetch available domains", err);
+        setDomains(["All Domains"]);
+      });
+  }, []);
 
   const handleGenerate = async () => {
     if (!selectedDomain) {
@@ -34,10 +50,51 @@ export default function Reporting() {
       return;
     }
     setGenerating(true);
-    // Simulate generation
-    await new Promise((r) => setTimeout(r, 2000));
-    toast.success(`${selectedFormat} report generated for ${selectedDomain}`);
-    setGenerating(false);
+
+    try {
+      const payload: any = {
+        format: selectedFormat.toLowerCase(),
+        filters: selectedDomain !== "All Domains" ? { domain: selectedDomain } : undefined
+      };
+
+      if (selectedType === "scheduler") {
+        // Schedule for 24 hours from now as a default
+        payload.scheduled_at = new Date(Date.now() + 86400000).toISOString();
+      }
+
+      const res = await reportingService.generateReport(selectedType, payload);
+
+      if (selectedType === "scheduler") {
+        toast.success(`Report scheduled successfully for ${selectedDomain}`);
+      } else {
+        // Handle Blob download
+        const url = window.URL.createObjectURL(new Blob([res.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Try to extract filename from response headers
+        const contentDisposition = res.headers['content-disposition'];
+        let filename = `report_${new Date().toISOString()}.${selectedFormat.toLowerCase()}`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+            if (filenameMatch && filenameMatch.length === 2) {
+                filename = filenameMatch[1];
+            }
+        }
+        
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        toast.success(`${selectedFormat} report generated for ${selectedDomain}`);
+      }
+
+    } catch (error) {
+      console.error("Report generation failed", error);
+      toast.error("Failed to generate report");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   return (
@@ -106,10 +163,10 @@ export default function Reporting() {
           <div className="flex items-end">
             <Button
               onClick={handleGenerate}
-              disabled={generating}
-              className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
+              disabled={generating || isEmployee}
+              className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold disabled:cursor-not-allowed"
             >
-              <Download className="mr-2 h-4 w-4" />
+              {isEmployee ? <Lock className="mr-2 h-4 w-4" /> : <Download className="mr-2 h-4 w-4" />}
               {generating ? "Generating..." : "Generate Report"}
             </Button>
           </div>
@@ -119,30 +176,10 @@ export default function Reporting() {
       {/* Recent Reports */}
       <div className="rounded-xl border border-border bg-card p-6">
         <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Recent Reports</h3>
-        <div className="space-y-3">
-          {[
-            { domain: "bank.com", type: "Executive", format: "PDF", date: "2026-03-12", size: "2.4 MB" },
-            { domain: "api.bank.com", type: "On-Demand", format: "JSON", date: "2026-03-11", size: "1.1 MB" },
-            { domain: "portal.bank.com", type: "Scheduler", format: "CSV", date: "2026-03-10", size: "856 KB" },
-          ].map((report, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center">
-                  <FileText className="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">{report.domain}</p>
-                  <p className="text-xs text-muted-foreground">{report.type} • {report.format} • {report.date}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">{report.size}</span>
-                <Button variant="ghost" size="sm" className="text-primary hover:text-primary/80">
-                  <Download className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
+        <div className="flex flex-col items-center justify-center py-8 text-center bg-secondary/20 rounded-lg border border-dashed border-border">
+          <FileText className="h-8 w-8 text-muted-foreground mb-3 opacity-50" />
+          <p className="text-sm font-medium text-foreground">No recent reports</p>
+          <p className="text-xs text-muted-foreground mt-1">Generate a report above to see it here.</p>
         </div>
       </div>
     </div>

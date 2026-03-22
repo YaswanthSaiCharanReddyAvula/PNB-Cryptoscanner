@@ -39,7 +39,7 @@ async def _run_command(cmd: List[str], name: str = "Command", timeout: int | Non
                 logger.info("Tool [%s] finished in %.2fs", name, duration)
                 
                 if stderr and b"error" in stderr.lower():
-                    logger.warning("stderr from %s: %s", name, stderr.decode(errors="replace")[:500])
+                    logger.warning("stderr from %s: %s", name, stderr.decode(errors="replace"))
                 
                 return stdout.decode(errors="replace")
                 
@@ -64,13 +64,15 @@ async def _run_command(cmd: List[str], name: str = "Command", timeout: int | Non
     except Exception as exc:
         logger.error("Tool [%s] failed (%s): %s", name, cmd[0], exc)
         return ""
+    
+    return ""
 
 
 async def run_subfinder(domain: str) -> Set[str]:
     """Passive domain discovery using Subfinder."""
     logger.info("Running Subfinder (Passive) for %s...", domain)
     output = await _run_command(
-        ["subfinder", "-d", domain, "-silent"], 
+        ["subfinder", "-d", domain, "-silent", "-r", "8.8.8.8,1.1.1.1"], 
         name="Subfinder"
     )
     subs = set()
@@ -91,7 +93,7 @@ async def run_amass(domain: str) -> Set[str]:
     output = await _run_command(
         ["amass", "enum", "-passive", "-d", domain], 
         name="Amass", 
-        timeout=settings.TOOL_TIMEOUT * 2 # Give Amass more time
+        timeout=60 # Reduced to 60s to prevent dashboard hangs
     )
     subs = set()
     if output.strip():
@@ -114,11 +116,17 @@ async def run_dnsx(subdomains: List[str]) -> List[str]:
             f.write("\n".join(subdomains))
             
         output = await _run_command(
-            ["dnsx", "-l", temp_target, "-silent", "-resp-only"], 
+            ["dnsx", "-l", temp_target, "-silent", "-resp-only", "-r", "8.8.8.8,1.1.1.1"], 
             name="DNSX"
         )
         
-        live = [line.strip() for line in output.splitlines() if line.strip()]
+        live = []
+        domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+        for line in output.splitlines():
+            line = line.strip()
+            # Verify the parsed host actually structurally resembles a valid domain name
+            if line and domain_regex.match(line) and "error" not in line.lower():
+                live.append(line)
         return list(set(live))
     except Exception as exc:
         logger.error("DNSX failed: %s", exc)
@@ -127,6 +135,8 @@ async def run_dnsx(subdomains: List[str]) -> List[str]:
         if os.path.exists(temp_target):
             try: os.remove(temp_target)
             except: pass
+            
+    return []
 
 
 async def run_httpx(subdomains: List[str]) -> List[str]:
@@ -142,18 +152,28 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
             f.write("\n".join(subdomains))
             
         output = await _run_command(
+            # Using httpx-toolkit if httpx python package is shadowing, but we'll try standard httpx
+            # The python httpx throws errors which have spaces, so we filter them.
             ["httpx", "-l", temp_target, "-silent"], 
             name="HTTPX"
         )
         
-        # Extract hosts from URLs (httpx returns full URLs)
+        # Extract strictly valid hosts from URLs (httpx returns full URLs)
         active_web = []
+        domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         for line in output.splitlines():
             line = line.strip()
-            if line:
-                host = line.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
-                if host:
-                    active_web.append(host)
+            if not line:
+                continue
+                
+            # Strip protocol
+            host = line.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+            
+            # The python httpx CLI error output contains arbitrary text ("req deps not installed", etc)
+            # Verify the parsed host actually structurally resembles a valid domain name
+            if host and domain_regex.match(host) and "error" not in host.lower():
+                active_web.append(host)
+                
         return list(set(active_web))
     except Exception as exc:
         logger.error("HTTPX failed: %s", exc)
@@ -162,6 +182,8 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
         if os.path.exists(temp_target):
             try: os.remove(temp_target)
             except: pass
+
+    return []
 
 
 async def scan_ports(target: str, ports: str | None = None) -> List[int]:
@@ -172,6 +194,11 @@ async def scan_ports(target: str, ports: str | None = None) -> List[int]:
     ], name=f"Nmap-{target}")
 
     open_ports: List[int] = []
+    # If nmap totally fails to resolve the target, output will be empty or have "Failed to resolve"
+    if not output or "Failed to resolve" in output:
+        logger.warning(f"Nmap failed to resolve or scan {target}. Attempting default ports.")
+        return [443]
+
     for line in output.splitlines():
         port_matches = re.findall(r"(\d+)/open", line)
         open_ports.extend(int(p) for p in port_matches)
@@ -179,12 +206,27 @@ async def scan_ports(target: str, ports: str | None = None) -> List[int]:
     return open_ports if open_ports else [443]
 
 
-async def discover_assets(domain: str, ports: str | None = None) -> List[DiscoveredAsset]:
+async def discover_assets(domain: str, ports: str | None = None, broadcast_func = None) -> List[DiscoveredAsset]:
     """
     Refined Pipeline: Subfinder -> Amass -> DNSX -> HTTPX -> Nmap.
     """
+    async def log_and_broadcast(msg: str):
+        logger.info(msg)
+        if broadcast_func:
+            await broadcast_func(msg)
+
+    domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    if not domain_regex.match(domain):
+        log_and_broadcast(f"Invalid domain format rejected by pipeline: {domain}")
+        return []
+
     # 1. Discovery (Passive + Deep)
-    logger.info("=== Starting discovery Phase for %s ===", domain)
+    await log_and_broadcast(f"=== Starting discovery Phase for {domain} ===")
+    
+    # Update runners to optionally use broadcast if needed (not shown in _run_command but done in discover_assets loop)
+    # For now, we'll manually broadcast major tool transitions.
+    
+    await log_and_broadcast("Running Subfinder and Amass (Search Phase)...")
     subfinder_res, amass_res = await asyncio.gather(
         run_subfinder(domain),
         run_amass(domain)
@@ -194,23 +236,33 @@ async def discover_assets(domain: str, ports: str | None = None) -> List[Discove
         all_subs = [domain]
     
     # 2. DNSX (Live Check)
+    await log_and_broadcast(f"Found {len(all_subs)} potential domains. Verifying live hosts with DNSX...")
     live_subs = await run_dnsx(all_subs)
     if not live_subs:
-        logger.warning("DNSX found no live hosts, using root domain as fallback.")
-        live_subs = [domain]
+        await log_and_broadcast(f"DNSX found no live hosts, using all discovered subdomains as fallback.")
+        live_subs = list(all_subs) if all_subs else [domain]
 
     # 3. HTTPX (Web Services)
+    await log_and_broadcast(f"Probing {len(live_subs)} live hosts for web services with HTTPX...")
     web_hosts = await run_httpx(live_subs)
     targets = web_hosts if web_hosts else live_subs
+    
+    # Final sanity check: strip out any target that is definitely not a valid domain / IP
+    # before feeding it to Nmap (preventing python CLI error injections)
+    clean_targets = []
+    for t in targets:
+        if domain_regex.match(t) and "error" not in t.lower() and "dependency" not in t.lower() and "client" not in t.lower():
+            clean_targets.append(t)
+    targets = clean_targets
 
     # 4. Nmap (Port Scan)
-    logger.info("Starting Nmap port scan for %d targets...", len(targets))
+    await log_and_broadcast(f"Starting Nmap port scan for {len(targets)} targets...")
     assets: List[DiscoveredAsset] = []
     
     for i, target in enumerate(targets):
         progress = ((i + 1) / len(targets)) * 100
-        logger.info("[Nmap Progress] Scanning %s (%d/%d) - %.1f%% complete", 
-                    target, i + 1, len(targets), progress)
+        msg = f"[Nmap Progress] Scanning {target} ({i + 1}/{len(targets)}) - {progress:.1f}% complete"
+        await log_and_broadcast(msg)
         
         try:
             open_ports = await scan_ports(target, ports)
@@ -225,6 +277,6 @@ async def discover_assets(domain: str, ports: str | None = None) -> List[Discove
             open_ports=open_ports
         ))
 
-    logger.info("=== Discovery complete: %d assets found ===", len(assets))
+    await log_and_broadcast(f"=== Discovery complete: {len(assets)} assets found ===")
     return assets
 

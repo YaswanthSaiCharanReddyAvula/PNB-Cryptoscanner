@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,36 +11,53 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { motion } from "framer-motion";
-
-const initialNodes: Node[] = [
-  { id: "gw", position: { x: 400, y: 50 }, data: { label: "Internet Gateway" }, style: { background: "hsl(45, 96%, 51%)", color: "hsl(220, 20%, 10%)", border: "none", borderRadius: "12px", fontWeight: 600, fontSize: "12px", padding: "12px 20px" } },
-  { id: "fw", position: { x: 400, y: 160 }, data: { label: "Firewall" }, style: { background: "hsl(342, 88%, 35%)", color: "#fff", border: "none", borderRadius: "12px", fontWeight: 600, fontSize: "12px", padding: "12px 20px" } },
-  { id: "lb", position: { x: 400, y: 270 }, data: { label: "Load Balancer" }, style: { background: "hsl(210, 80%, 55%)", color: "#fff", border: "none", borderRadius: "12px", fontWeight: 600, fontSize: "12px", padding: "12px 20px" } },
-  { id: "web1", position: { x: 150, y: 380 }, data: { label: "Web Server 1" }, style: { background: "hsl(220, 18%, 18%)", color: "hsl(210, 20%, 92%)", border: "1px solid hsl(220, 14%, 25%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-  { id: "web2", position: { x: 400, y: 380 }, data: { label: "Web Server 2" }, style: { background: "hsl(220, 18%, 18%)", color: "hsl(210, 20%, 92%)", border: "1px solid hsl(220, 14%, 25%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-  { id: "api1", position: { x: 650, y: 380 }, data: { label: "API Server" }, style: { background: "hsl(220, 18%, 18%)", color: "hsl(210, 20%, 92%)", border: "1px solid hsl(220, 14%, 25%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-  { id: "db1", position: { x: 250, y: 500 }, data: { label: "Primary DB" }, style: { background: "hsl(152, 60%, 20%)", color: "hsl(152, 60%, 80%)", border: "1px solid hsl(152, 40%, 30%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-  { id: "db2", position: { x: 550, y: 500 }, data: { label: "Replica DB" }, style: { background: "hsl(152, 60%, 20%)", color: "hsl(152, 60%, 80%)", border: "1px solid hsl(152, 40%, 30%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-  { id: "cache", position: { x: 400, y: 600 }, data: { label: "Redis Cache" }, style: { background: "hsl(280, 40%, 20%)", color: "hsl(280, 60%, 75%)", border: "1px solid hsl(280, 30%, 30%)", borderRadius: "10px", fontSize: "11px", padding: "10px 16px" } },
-];
+import { discoveryService } from "@/services/api";
 
 const edgeStyle = { stroke: "hsl(220, 14%, 30%)", strokeWidth: 2 };
-const initialEdges: Edge[] = [
-  { id: "e1", source: "gw", target: "fw", style: edgeStyle, animated: true },
-  { id: "e2", source: "fw", target: "lb", style: edgeStyle, animated: true },
-  { id: "e3", source: "lb", target: "web1", style: edgeStyle },
-  { id: "e4", source: "lb", target: "web2", style: edgeStyle },
-  { id: "e5", source: "lb", target: "api1", style: edgeStyle },
-  { id: "e6", source: "web1", target: "db1", style: edgeStyle },
-  { id: "e7", source: "web2", target: "db1", style: edgeStyle },
-  { id: "e8", source: "api1", target: "db2", style: edgeStyle },
-  { id: "e9", source: "db1", target: "cache", style: edgeStyle },
-  { id: "e10", source: "db2", target: "cache", style: edgeStyle },
-];
 
 export default function AssetDiscovery() {
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  useEffect(() => {
+    discoveryService.getNetworkGraph()
+      .then(res => {
+        const data = res.data;
+        if (data.nodes && data.edges) {
+          // Layout nodes in a simple grid for visualization
+          const formattedNodes: Node[] = data.nodes.map((n: any, i: number) => {
+            const cols = 4;
+            const x = (i % cols) * 250 + 100;
+            const y = Math.floor(i / cols) * 150 + 100;
+            return {
+              id: n.id,
+              position: { x, y },
+              data: { label: n.label || n.id },
+              style: { 
+                background: "hsl(220, 18%, 18%)", 
+                color: "hsl(210, 20%, 92%)", 
+                border: "1px solid hsl(220, 14%, 25%)", 
+                borderRadius: "10px", 
+                fontSize: "11px", 
+                padding: "10px 16px" 
+              }
+            };
+          });
+
+          const formattedEdges: Edge[] = data.edges.map((e: any, i: number) => ({
+            id: `edge-${i}`,
+            source: e.source,
+            target: e.target,
+            style: edgeStyle,
+            animated: true
+          }));
+
+          setNodes(formattedNodes);
+          setEdges(formattedEdges);
+        }
+      })
+      .catch(err => console.error("Could not fetch discovery graph", err));
+  }, []);
 
   return (
     <div className="space-y-6">

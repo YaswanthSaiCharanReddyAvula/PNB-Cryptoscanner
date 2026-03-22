@@ -1,42 +1,17 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { Globe, Search, ShieldCheck, AlertTriangle, ShieldAlert } from "lucide-react";
+import { DataTable } from "@/components/dashboard/DataTable";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Globe, Search, ShieldCheck, AlertTriangle, ShieldAlert, Download, RefreshCw } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell,
 } from "recharts";
-
-const stats = [
-  { title: "Total Applications", value: "534", icon: Globe, variant: "gold" as const },
-  { title: "Sites Surveyed", value: "1,203", icon: Search, variant: "info" as const },
-  { title: "Active Certificates", value: "892", icon: ShieldCheck, variant: "success" as const },
-  { title: "Weak Cryptography", value: "47", icon: AlertTriangle, variant: "red" as const },
-  { title: "Certificate Issues", value: "18", icon: ShieldAlert, variant: "red" as const },
-];
-
-const keyLengthData = [
-  { name: "1024-bit", count: 12 },
-  { name: "2048-bit", count: 456 },
-  { name: "3072-bit", count: 89 },
-  { name: "4096-bit", count: 234 },
-  { name: "EC-256", count: 67 },
-  { name: "EC-384", count: 34 },
-];
-
-const caData = [
-  { name: "DigiCert", value: 340 },
-  { name: "Let's Encrypt", value: 280 },
-  { name: "Comodo", value: 120 },
-  { name: "GlobalSign", value: 90 },
-  { name: "Entrust", value: 62 },
-];
-
-const protocolData = [
-  { name: "TLS 1.3", value: 580 },
-  { name: "TLS 1.2", value: 250 },
-  { name: "TLS 1.1", value: 42 },
-  { name: "TLS 1.0", value: 20 },
-];
+import { cbomService, cryptoService } from "@/services/api";
+import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
+import { CheckCircle } from "lucide-react";
 
 const COLORS = ["hsl(45, 96%, 51%)", "hsl(342, 88%, 35%)", "hsl(152, 60%, 45%)", "hsl(210, 80%, 55%)", "hsl(280, 60%, 55%)"];
 
@@ -50,15 +25,277 @@ const tooltipStyle = {
   },
 };
 
+const MOCK_CBOM_ASSETS = [
+  {
+    assetName: "API Gateway",
+    url: "api.securebank.com",
+    assetType: "API",
+    tlsVersion: "TLS 1.3",
+    keyExchange: "ML-KEM (Kyber768)",
+    cipherSuite: "TLS_AES_256_GCM_SHA384",
+    ca: "DigiCert Global Root G3",
+    keyLength: "768-bit",
+    certExpiry: "2026-10-15",
+    pqcStatus: "quantum-safe",
+    hndlRisk: false,
+    recommendedMigration: "None"
+  },
+  {
+    assetName: "Customer Portal",
+    url: "app.securebank.com",
+    assetType: "Web App",
+    tlsVersion: "TLS 1.2",
+    keyExchange: "ECDHE-RSA",
+    cipherSuite: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+    ca: "Let's Encrypt Authority X3",
+    keyLength: "2048-bit",
+    certExpiry: "2024-05-20",
+    pqcStatus: "vulnerable",
+    hndlRisk: true,
+    recommendedMigration: "Migrate to ML-KEM via hybrid key exchange"
+  },
+  {
+    assetName: "Auth Service",
+    url: "auth.securebank.com",
+    assetType: "API",
+    tlsVersion: "TLS 1.3",
+    keyExchange: "X25519",
+    cipherSuite: "TLS_CHACHA20_POLY1305_SHA256",
+    ca: "Amazon",
+    keyLength: "256-bit",
+    certExpiry: "2025-01-10",
+    pqcStatus: "pqc-ready",
+    hndlRisk: true,
+    recommendedMigration: "Upgrade X25519 to X25519Kyber768Draft00"
+  },
+  {
+    assetName: "Legacy Database",
+    url: "db-internal.securebank.net",
+    assetType: "Server",
+    tlsVersion: "TLS 1.0",
+    keyExchange: "RSA",
+    cipherSuite: "TLS_RSA_WITH_AES_128_CBC_SHA",
+    ca: "Internal Corp CA",
+    keyLength: "1024-bit",
+    certExpiry: "2023-11-01",
+    pqcStatus: "vulnerable",
+    hndlRisk: true,
+    recommendedMigration: "Urgent: Disable TLS 1.0, upgrade to TLS 1.3 + ML-KEM"
+  },
+  {
+    assetName: "Payment Gateway",
+    url: "pay.securebank.com",
+    assetType: "API",
+    tlsVersion: "TLS 1.3",
+    keyExchange: "FALCON-512",
+    cipherSuite: "TLS_AES_256_GCM_SHA384",
+    ca: "GlobalSign PQC Root",
+    keyLength: "512-bit",
+    certExpiry: "2026-12-01",
+    pqcStatus: "quantum-safe",
+    hndlRisk: false,
+    recommendedMigration: "None"
+  },
+  {
+    assetName: "Corporate VPN",
+    url: "vpn.securebank.com",
+    assetType: "Server",
+    tlsVersion: "TLS 1.2",
+    keyExchange: "DHE-RSA",
+    cipherSuite: "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+    ca: "Sectigo RSA Domain Validation Secure Server CA",
+    keyLength: "4096-bit",
+    certExpiry: "2025-08-30",
+    pqcStatus: "vulnerable",
+    hndlRisk: true,
+    recommendedMigration: "Migrate to Hybrid PQC VPN protocols"
+  },
+  {
+    assetName: "Mobile App API",
+    url: "mobile.securebank.com",
+    assetType: "API",
+    tlsVersion: "TLS 1.3",
+    keyExchange: "ECDHE-ECDSA",
+    cipherSuite: "TLS_AES_128_GCM_SHA256",
+    ca: "Let's Encrypt Authority X3",
+    keyLength: "256-bit",
+    certExpiry: "2024-12-15",
+    pqcStatus: "vulnerable",
+    hndlRisk: true,
+    recommendedMigration: "Transition auth keys to ML-DSA/Dilithium"
+  },
+  {
+    assetName: "Marketing Site",
+    url: "www.securebank.com",
+    assetType: "Web App",
+    tlsVersion: "TLS 1.3",
+    keyExchange: "X25519",
+    cipherSuite: "TLS_AES_256_GCM_SHA384",
+    ca: "Cloudflare Inc ECC CA-3",
+    keyLength: "256-bit",
+    certExpiry: "2025-06-22",
+    pqcStatus: "pqc-ready",
+    hndlRisk: false,
+    recommendedMigration: "Monitor standard maturity; prep ML-KEM"
+  }
+];
+
 export default function CBOM() {
+  const [summary, setSummary] = useState<any>(null);
+  const [keyLengthData, setKeyLengthData] = useState<any[]>([]);
+  const [caData, setCaData] = useState<any[]>([]);
+  const [protocolData, setProtocolData] = useState<any[]>([]);
+  const [pqcStats, setPqcStats] = useState({ safe: 0, ready: 0, vuln: 0, hndl: 0 });
+  const [pqcFilter, setPqcFilter] = useState("All");
+
+  useEffect(() => {
+    // Fetch Summary
+    cbomService.getSummary()
+      .then(res => setSummary(res.data))
+      .catch(err => console.error("Could not fetch CBOM summary", err));
+
+    // Fetch Charts
+    cbomService.getCharts()
+      .then(res => {
+        const data = res.data;
+        if (data.key_length_distribution) {
+          setKeyLengthData(data.key_length_distribution.map((k: any) => ({
+            name: `${k.key_length}-bit`,
+            count: k.count
+          })));
+        }
+        if (data.top_certificate_authorities) {
+          setCaData(data.top_certificate_authorities.map((c: any) => ({
+            name: c.certificate_authority,
+            value: c.count
+          })));
+        }
+        if (data.encryption_protocols) {
+          setProtocolData(data.encryption_protocols.map((p: any) => ({
+            name: p.tls_version,
+            value: p.count
+          })));
+        }
+      })
+      .catch(err => console.error("Could not fetch CBOM charts", err));
+
+    // Fetch PQC tallies
+    cryptoService.getCryptoSecurityData()
+      .then(res => {
+        let safe = 0, ready = 0, vuln = 0, hndl = 0;
+        res.data.forEach((c: any) => {
+          const status = determinePQCStatus(c.tls_version, c.cipher_suite, c.key_length?.toString());
+          if (status === "quantum-safe") safe++;
+          else if (status === "pqc-ready") ready++;
+          else if (status === "vulnerable") vuln++;
+          else if (status === "hndl-risk") hndl++;
+        });
+        setPqcStats({ safe, ready, vuln, hndl });
+      })
+      .catch(err => console.error("Could not fetch crypto data for PQC stats", err));
+  }, []);
+
+  const stats = [
+    { title: "Total Applications", value: summary ? summary.total_applications.toString() : "...", icon: Globe, variant: "gold" as const },
+    { title: "Sites Surveyed", value: summary ? summary.sites_surveyed.toString() : "...", icon: Search, variant: "info" as const },
+    { title: "Active Certificates", value: summary ? summary.active_certificates.toString() : "...", icon: ShieldCheck, variant: "success" as const },
+    { title: "Weak Cryptography", value: summary ? summary.weak_cryptography.toString() : "...", icon: AlertTriangle, variant: "red" as const },
+    { title: "Certificate Issues", value: summary ? summary.certificate_issues.toString() : "...", icon: ShieldAlert, variant: "red" as const },
+  ];
+
+  const filteredAssets = MOCK_CBOM_ASSETS.filter(a => {
+    if (pqcFilter === "All") return true;
+    if (pqcFilter === "Quantum Safe" && a.pqcStatus === "quantum-safe") return true;
+    if (pqcFilter === "Vulnerable" && a.pqcStatus === "vulnerable") return true;
+    if (pqcFilter === "PQC Ready" && a.pqcStatus === "pqc-ready") return true;
+    return false;
+  });
+
+  const handleExportJSON = () => {
+    const report = {
+      generated_at: new Date().toISOString(),
+      domain: "securebank.com",
+      total_assets: MOCK_CBOM_ASSETS.length,
+      assets: MOCK_CBOM_ASSETS.map(a => ({
+        name: a.assetName,
+        url: a.url,
+        tls_version: a.tlsVersion,
+        cipher_suite: a.cipherSuite,
+        key_exchange: a.keyExchange,
+        certificate_authority: a.ca,
+        key_length: a.keyLength,
+        cert_expiry: a.certExpiry,
+        pqc_status: a.pqcStatus,
+        hndl_risk: a.hndlRisk,
+        recommended_migration: a.recommendedMigration
+      })),
+      summary: {
+        quantum_safe: MOCK_CBOM_ASSETS.filter(a => a.pqcStatus === "quantum-safe").length,
+        pqc_ready: MOCK_CBOM_ASSETS.filter(a => a.pqcStatus === "pqc-ready").length,
+        vulnerable: MOCK_CBOM_ASSETS.filter(a => a.pqcStatus === "vulnerable").length,
+        hndl_risk: MOCK_CBOM_ASSETS.filter(a => a.hndlRisk).length
+      }
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(report, null, 2));
+    const el = document.createElement("a");
+    el.setAttribute("href", dataStr);
+    el.setAttribute("download", "cbom_report.json");
+    document.body.appendChild(el);
+    el.click();
+    el.remove();
+  };
+  
+  const handleExportCSV = () => {
+    const headers = [
+      "Asset Name", "URL", "Asset Type", "TLS Version", "Key Exchange",
+      "Cipher Suite", "Certificate Authority", "Key Length", "Cert Expiry",
+      "PQC Status", "HNDL Risk", "Recommended Migration"
+    ];
+    const rows = MOCK_CBOM_ASSETS.map(a => [
+      a.assetName, a.url, a.assetType, a.tlsVersion, a.keyExchange,
+      a.cipherSuite, a.ca, a.keyLength, a.certExpiry, a.pqcStatus,
+      a.hndlRisk ? "Yes" : "No", a.recommendedMigration
+    ].map(str => `"${String(str).replace(/"/g, '""')}"`).join(","));
+    
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const el = document.createElement("a");
+    el.setAttribute("href", encodedUri);
+    el.setAttribute("download", "cbom_report.csv");
+    document.body.appendChild(el);
+    el.click();
+    el.remove();
+  };
+
+  const handleExportPDF = () => {
+    window.print();
+  };
+
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold text-foreground">CBOM</h1>
-        <p className="text-sm text-muted-foreground">Cryptographic Bill of Materials</p>
+    <div className="space-y-6 printable-cbom">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">CBOM</h1>
+          <p className="text-sm text-muted-foreground">Cryptographic Bill of Materials</p>
+        </div>
       </motion.div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* Summary Top Card */}
+      <div className="rounded-xl border border-border bg-card p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center no-print">
+        <div>
+          <h2 className="text-lg font-bold text-foreground">CBOM Inventory Report</h2>
+          <div className="text-sm text-muted-foreground mt-2 space-y-1">
+            <p><strong>CBOM Generated:</strong> {new Date().toLocaleString()}</p>
+            <p><strong>Domain scanned:</strong> securebank.com</p>
+            <p><strong>NIST Compliance:</strong> FIPS 140-3 / NIST SP 800-208</p>
+          </div>
+        </div>
+        <Button onClick={() => window.location.reload()} variant="outline" className="mt-4 sm:mt-0 gap-2 border-[#FBBC09]/50 text-[#FBBC09] hover:bg-[#FBBC09]/10 hover:text-[#FBBC09]">
+          <RefreshCw className="w-4 h-4" /> Regenerate
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 no-print">
         {stats.map((s, i) => (
           <motion.div key={s.title} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
             <StatCard {...s} />
@@ -66,7 +303,34 @@ export default function CBOM() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 no-print">
+        {/* PQC Status */}
+        <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2 xl:col-span-3">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">PQC Asset Readiness Overview</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#FBBC09]/10 border border-[#FBBC09]/20">
+              <ShieldCheck className="w-6 h-6 text-[#FBBC09] mb-2" />
+              <span className="text-2xl font-bold text-[#FBBC09]">{pqcStats.safe}</span>
+              <span className="text-xs text-muted-foreground uppercase mt-1">Quantum Safe</span>
+            </div>
+            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#0ea5e9]/10 border border-[#0ea5e9]/20">
+              <CheckCircle className="w-6 h-6 text-[#0ea5e9] mb-2" />
+              <span className="text-2xl font-bold text-[#0ea5e9]">{pqcStats.ready}</span>
+              <span className="text-xs text-muted-foreground uppercase mt-1">PQC Ready</span>
+            </div>
+            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#ef4444]/10 border border-[#ef4444]/20">
+              <AlertTriangle className="w-6 h-6 text-[#ef4444] mb-2" />
+              <span className="text-2xl font-bold text-[#ef4444]">{pqcStats.vuln}</span>
+              <span className="text-xs text-muted-foreground uppercase mt-1">Vulnerable</span>
+            </div>
+            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#A20E37]/10 border border-[#A20E37]/20">
+              <ShieldAlert className="w-6 h-6 text-[#A20E37] mb-2" />
+              <span className="text-2xl font-bold text-[#A20E37]">{pqcStats.hndl}</span>
+              <span className="text-xs text-muted-foreground uppercase mt-1">HNDL Risk</span>
+            </div>
+          </div>
+        </div>
+
         {/* Key Length */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Key Length Distribution</h3>
@@ -88,7 +352,7 @@ export default function CBOM() {
             <PieChart>
               <Pie data={caData} cx="50%" cy="50%" outerRadius={90} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
                 {caData.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i]} />
+                  <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip {...tooltipStyle} />
@@ -109,6 +373,84 @@ export default function CBOM() {
             </BarChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      {/* Export Controls & Inventory Table */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        
+        {/* Print Header */}
+        <div className="hidden print:block mb-8 text-black">
+          <div className="flex justify-between items-end border-b-2 border-black pb-4 mb-4">
+            <div>
+              <h1 className="text-3xl font-bold">PNB × QSCAS</h1>
+              <h2 className="text-xl mt-1 text-gray-700">Cryptographic Bill of Materials (CBOM)</h2>
+            </div>
+            <div className="text-right text-sm text-gray-600">
+              <p>Generated: {new Date().toLocaleDateString()}</p>
+              <p>Domain: securebank.com</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col xl:flex-row justify-between xl:items-center gap-4 mb-6 no-print">
+          <div>
+            <h3 className="text-lg font-bold text-foreground">Cryptographic Bill of Materials — Asset Inventory</h3>
+            <p className="text-sm text-muted-foreground mt-1">Detailed inventory of cryptographic assets and vulnerabilities.</p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <select 
+              className="h-10 px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              value={pqcFilter}
+              onChange={e => setPqcFilter(e.target.value)}
+            >
+              <option value="All">All Assets</option>
+              <option value="Quantum Safe">Quantum Safe Only</option>
+              <option value="PQC Ready">PQC Ready Only</option>
+              <option value="Vulnerable">Vulnerable Only</option>
+            </select>
+
+            <div className="flex gap-2">
+              <Button onClick={handleExportJSON} variant="outline" className="gap-2">
+                <Download className="w-4 h-4" /> Export JSON
+              </Button>
+              <Button onClick={handleExportCSV} variant="outline" className="gap-2">
+                <Download className="w-4 h-4" /> Export CSV
+              </Button>
+              <Button onClick={handleExportPDF} className="gap-2 bg-primary">
+                <Download className="w-4 h-4" /> Export PDF
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <DataTable
+          searchable
+          pageSize={10}
+          data={filteredAssets}
+          columns={[
+            { key: "assetName", header: "Asset Name" },
+            { key: "url", header: "URL / Endpoint" },
+            { key: "assetType", header: "Asset Type" },
+            { key: "tlsVersion", header: "TLS Version" },
+            { key: "keyExchange", header: "Key Exchange" },
+            { key: "cipherSuite", header: "Cipher Suite" },
+            { key: "ca", header: "Cert Authority" },
+            { key: "keyLength", header: "Key Length" },
+            { key: "certExpiry", header: "Cert Expiry" },
+            { 
+              key: "pqcStatus", 
+              header: "PQC Status", 
+              render: (r) => <PQCBadge status={r.pqcStatus as PQCStatus} /> 
+            },
+            { 
+              key: "hndlRisk", 
+              header: "HNDL Risk", 
+              render: (r) => r.hndlRisk ? <Badge className="bg-[#A20E37]/15 text-[#A20E37] border-[#A20E37]/20 uppercase text-[10px]">Yes</Badge> : <Badge className="bg-success/15 text-success border-success/20 uppercase text-[10px]">No</Badge> 
+            },
+            { key: "recommendedMigration", header: "Recommended Migration" },
+          ]}
+        />
       </div>
     </div>
   );

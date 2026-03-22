@@ -1,36 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search } from "lucide-react";
-import {
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  ResponsiveContainer, Tooltip,
-} from "recharts";
-
-const overallScore = 73;
-
-const radarData = [
-  { subject: "Network", score: 82 },
-  { subject: "Application", score: 68 },
-  { subject: "Endpoint", score: 75 },
-  { subject: "Cloud", score: 70 },
-  { subject: "Data", score: 85 },
-  { subject: "Identity", score: 60 },
-];
-
-const riskFactors = [
-  { factor: "SSL/TLS Configuration", score: 85, impact: "High", status: "Good" },
-  { factor: "Encryption Standards", score: 70, impact: "Critical", status: "Fair" },
-  { factor: "Patch Management", score: 65, impact: "High", status: "Fair" },
-  { factor: "Access Controls", score: 55, impact: "Critical", status: "Poor" },
-  { factor: "Network Segmentation", score: 80, impact: "Medium", status: "Good" },
-  { factor: "Incident Response", score: 72, impact: "High", status: "Fair" },
-  { factor: "Data Protection", score: 88, impact: "Critical", status: "Good" },
-  { factor: "Vulnerability Management", score: 60, impact: "High", status: "Fair" },
-];
+import { Search, Lock, Loader2 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { cyberRatingService } from "@/services/api";
+import { toast } from "sonner";
+import { useScan } from "@/hooks/useScan";
+import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 
 const getScoreColor = (score: number) => {
   if (score >= 80) return "text-success";
@@ -38,32 +17,89 @@ const getScoreColor = (score: number) => {
   return "text-accent";
 };
 
-const getScoreLabel = (score: number) => {
-  if (score >= 80) return "Good";
-  if (score >= 60) return "Fair";
-  return "Poor";
-};
-
-const statusBadge = (status: string) => {
+const statusBadge = (severity: string) => {
+  if (!severity) return null;
   const c: Record<string, string> = {
-    Good: "bg-success/15 text-success border-success/20",
-    Fair: "bg-warning/15 text-warning border-warning/20",
-    Poor: "bg-accent/15 text-accent border-accent/20",
+    Critical: "bg-accent/15 text-accent border-accent/20",
+    High: "bg-warning/15 text-warning border-warning/20",
+    Medium: "bg-info/15 text-info border-info/20",
+    Low: "bg-success/15 text-success border-success/20",
   };
-  return <Badge variant="outline" className={`text-[10px] ${c[status] || ""}`}>{status}</Badge>;
-};
-
-const tooltipStyle = {
-  contentStyle: { background: "hsl(220, 18%, 13%)", border: "1px solid hsl(220, 14%, 20%)", borderRadius: "8px", fontSize: "12px", color: "hsl(210, 20%, 92%)" },
+  return <Badge variant="outline" className={`text-[10px] ${c[severity] || ""}`}>{severity}</Badge>;
 };
 
 export default function CyberRating() {
   const [domain, setDomain] = useState("");
   const [scannedDomain, setScannedDomain] = useState("");
 
-  const handleScan = () => {
-    if (domain.trim()) {
-      setScannedDomain(domain.trim());
+  const [overallScore, setOverallScore] = useState(0);
+  const [grade, setGrade] = useState("Unknown");
+  const [riskFactors, setRiskFactors] = useState<any[]>([]);
+  
+  const { user } = useAuth();
+  const isEmployee = user?.role === "Employee";
+
+  const { isScanning, stageIndex, results, error, startScan } = useScan();
+
+  const fetchScore = async (v1FallbackPayload: any = null) => {
+    try {
+      const res = await cyberRatingService.getRating();
+      const data = res.data;
+      setOverallScore(data.score || 0);
+      setGrade(data.grade || "Unknown");
+      setRiskFactors(data.risk_factors || []);
+    } catch {
+      // Handle gracefully if backend has no persisted data initially
+    }
+
+    if (overallScore === 0 || grade === "Unknown") {
+      if (v1FallbackPayload) {
+        applyV1Fallback(v1FallbackPayload);
+      }
+    }
+  };
+
+  const applyV1Fallback = (v1: any) => {
+    const tls = Array.isArray(v1.tls_results) ? v1.tls_results : [];
+    const hasLegacyProto = tls.some((t: any) =>
+      String(t?.tls_version || "").toLowerCase().includes("1.0") ||
+      String(t?.tls_version || "").toLowerCase().includes("1.1") ||
+      String(t?.tls_version || "").toLowerCase().includes("ssl")
+    );
+    const qScore = v1?.quantum_score?.score;
+    const base = typeof qScore === "number" ? qScore : 50;
+    const computed = Math.max(0, Math.min(100, Math.round(base - (hasLegacyProto ? 20 : 0))));
+
+    setOverallScore(computed);
+    setGrade(computed >= 80 ? "Elite-PQC" : computed >= 60 ? "Standard" : "Legacy");
+    setRiskFactors([
+      ...(hasLegacyProto ? [{ factor: "Legacy protocols enabled", severity: "High", detail: "TLS 1.0/1.1 or SSL detected in scan results" }] : []),
+      ...(Array.isArray(v1.recommendations) && v1.recommendations.length
+        ? [{ factor: "PQC migration recommendations", severity: "Medium", detail: "Recommendations generated from cryptographic inventory" }]
+        : []),
+    ]);
+  };
+
+  useEffect(() => {
+    fetchScore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (results && results.status === "completed" && !isScanning) {
+      toast.success(`Analysis completed for ${scannedDomain}!`);
+      fetchScore(results);
+    } else if (error) {
+      toast.error(error);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, isScanning, error]);
+
+  const handleScan = async () => {
+    if (domain.trim() && !isScanning) {
+      const targetDomain = domain.trim();
+      setScannedDomain(targetDomain);
+      await startScan(targetDomain);
     }
   };
 
@@ -86,22 +122,26 @@ export default function CyberRating() {
               onChange={(e) => setDomain(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleScan()}
               className="pl-10 bg-secondary border-border"
+              disabled={isScanning}
             />
           </div>
-          <Button onClick={handleScan} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+          <Button onClick={handleScan} disabled={isEmployee || !domain || isScanning} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+            {isEmployee ? <Lock className="mr-2 h-4 w-4" /> : isScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} 
             Analyze
           </Button>
         </div>
-        {scannedDomain && (
+        {!isScanning && scannedDomain && stageIndex >= 5 && (
           <p className="text-xs text-muted-foreground mt-2">
             Showing results for: <span className="text-primary font-medium">{scannedDomain}</span>
           </p>
         )}
       </div>
 
+      <ScanProgressBar isScanning={isScanning} stageIndex={stageIndex} targetDomain={scannedDomain} />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Score */}
-        <div className="rounded-xl border border-border bg-card p-8 flex flex-col items-center justify-center">
+        <div className="rounded-xl border border-border bg-card p-8 flex flex-col items-center justify-center lg:col-span-2">
           <div className="relative">
             <svg viewBox="0 0 200 200" className="w-56 h-56">
               <circle cx="100" cy="100" r="85" fill="none" stroke="hsl(220, 14%, 20%)" strokeWidth="14" />
@@ -112,33 +152,20 @@ export default function CyberRating() {
                 strokeDasharray={`${overallScore * 5.34} 534`}
                 strokeLinecap="round"
                 transform="rotate(-90 100 100)"
+                style={{ transition: "stroke-dasharray 1s ease-out, stroke 1s ease" }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={`text-5xl font-bold ${getScoreColor(overallScore)}`}>{overallScore}</span>
+              <span className={`text-5xl font-bold ${getScoreColor(overallScore)} transition-colors duration-1000`}>{overallScore}</span>
               <span className="text-sm text-muted-foreground">out of 100</span>
-              <span className={`text-xs font-semibold mt-1 ${getScoreColor(overallScore)}`}>
-                {getScoreLabel(overallScore)}
+              <span className={`text-xs font-semibold mt-1 ${getScoreColor(overallScore)} transition-colors duration-1000`}>
+                {grade}
               </span>
             </div>
           </div>
           <p className="text-sm text-muted-foreground mt-4 text-center max-w-xs">
-            Your organization's security posture is <strong className="text-foreground">fair</strong>. Focus on improving access controls and vulnerability management.
+            Your organization's security grade is <strong className="text-foreground">{grade}</strong>. Review the risk factors below to improve your score.
           </p>
-        </div>
-
-        {/* Radar */}
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Risk Breakdown</h3>
-          <ResponsiveContainer width="100%" height={320}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="hsl(220, 14%, 20%)" />
-              <PolarAngleAxis dataKey="subject" tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 11 }} />
-              <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 9 }} />
-              <Radar name="Score" dataKey="score" stroke="hsl(45, 96%, 51%)" fill="hsl(45, 96%, 51%)" fillOpacity={0.2} strokeWidth={2} />
-              <Tooltip {...tooltipStyle} />
-            </RadarChart>
-          </ResponsiveContainer>
         </div>
       </div>
 
@@ -148,12 +175,8 @@ export default function CyberRating() {
         data={riskFactors}
         columns={[
           { key: "factor", header: "Factor" },
-          { key: "score", header: "Score", render: (r) => <span className={`font-bold ${getScoreColor(r.score as number)}`}>{r.score as number}/100</span> },
-          { key: "impact", header: "Impact", render: (r) => {
-            const c: Record<string, string> = { Critical: "text-accent", High: "text-warning", Medium: "text-info" };
-            return <span className={`text-xs font-medium ${c[r.impact as string] || ""}`}>{r.impact as string}</span>;
-          }},
-          { key: "status", header: "Status", render: (r) => statusBadge(r.status as string) },
+          { key: "severity", header: "Severity", render: (r) => statusBadge(r.severity as string) },
+          { key: "detail", header: "Detail" },
         ]}
       />
     </div>

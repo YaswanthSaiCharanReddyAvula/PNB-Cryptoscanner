@@ -1,4 +1,4 @@
-import { Bell, LogOut, User } from "lucide-react";
+import { Bell, LogOut, User, Lock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -48,7 +48,8 @@ export function TopNavbar() {
                 <User className="h-3.5 w-3.5 text-primary" />
               </div>
               <span className="text-sm hidden sm:block">{user?.name || "User"}</span>
-              <Badge variant="outline" className="text-[10px] border-primary/30 text-primary hidden md:flex">
+              <Badge variant="outline" className="text-[10px] border-primary/30 text-primary hidden md:flex items-center gap-1">
+                {user?.role === "Employee" && <Lock className="h-3 w-3 text-muted-foreground" />}
                 {user?.role || "user"}
               </Badge>
             </Button>

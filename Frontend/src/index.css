@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @layer base {
   :root {
@@ -126,5 +126,56 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background-color: hsl(220 14% 22%);
     border-radius: 3px;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  
+  body {
+    background-color: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Force light theme elements for printing */
+  .printable-cbom * {
+    color: black !important;
+    border-color: #ddd !important;
+  }
+
+  /* Force table backgrounds to be white */
+  table, th, td, .bg-card, .bg-secondary {
+    background-color: white !important;
+  }
+  
+  /* Retain critical badge colors by removing them from * inheritance */
+  .bg-success\/15, .text-success, .border-success\/20,
+  .bg-warning\/15, .text-warning, .border-warning\/20,
+  .bg-\[\#A20E37\]\/15, .text-\[\#A20E37\] {
+    border-color: currentColor !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Hide Vite sidebar or layout wrapper */
+  nav, header, footer, aside, .sidebar {
+    display: none !important;
+  }
+  
+  /* Make content full width */
+  main, #root, .flex, .flex-1, .h-screen, .w-full {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
   }
 }

@@ -1,73 +1,48 @@
-# Welcome to your Lovable project
+# QuantumShield Frontend — Quantum‑Safe Cryptography Assessment System (QSCAS)
 
-## Project info
+Banking-grade cybersecurity dashboard UI for the **Quantum‑Safe Cryptography Assessment System**.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Tech stack
 
-## How can I edit this code?
+- React + TypeScript (Vite)
+- TailwindCSS + shadcn/ui
+- Recharts (charts)
+- Axios (API)
 
-There are several ways of editing your application.
+## Quick start (Windows)
 
-**Use Lovable**
+```bash
+cd Frontend
+npm install
+```
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+Create `Frontend/.env`:
 
-Changes made via Lovable will be committed automatically to this repo.
+```env
+# Backend API base URL (FastAPI v2 mounted at /api)
+VITE_API_BASE_URL=http://localhost:8000/api
+```
 
-**Use your preferred IDE**
+Run dev server:
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Open: `http://localhost:8080`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Kali backend connectivity (Windows → Kali VM)
 
-**Use GitHub Codespaces**
+If your backend runs on Kali and frontend runs on Windows, set:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```env
+VITE_API_BASE_URL=http://<kali-ip>:8000/api
+```
 
-## What technologies are used for this project?
+Then restart `npm run dev` (Vite reads env only at startup).
 
-This project is built with:
+## Auth + RBAC
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- Login uses the backend `/api/login` and stores the JWT in `sessionStorage`
+- RBAC roles: `admin`, `employee`
+  - `Reporting` page is **admin-only** (hidden + route guarded)

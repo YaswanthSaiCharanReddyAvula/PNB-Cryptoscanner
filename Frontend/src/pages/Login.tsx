@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, UserRole } from "@/contexts/AuthContext";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -8,15 +8,17 @@ import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { z } from "zod";
+import { authService, userService } from "@/services/api";
 
 const loginSchema = z.object({
-  username: z.string().trim().min(1, "Username is required").max(100),
+  username: z.string().min(1, "Username is required").max(255),
   password: z.string().min(1, "Password is required").max(128),
 });
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState<UserRole>("Admin");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -32,25 +34,34 @@ export default function Login() {
 
     setLoading(true);
     try {
-      // Demo login — replace with real API call
-      // const res = await authService.login(username, password);
-      const demoUsers: Record<string, { role: "admin" | "employee"; name: string }> = {
-        admin: { role: "admin", name: "Admin User" },
-        employee: { role: "employee", name: "John Doe" },
-      };
-      const matched = demoUsers[username.toLowerCase()];
-      if (matched && password === "password") {
-        login(
-          { id: "1", username: username.toLowerCase(), role: matched.role, name: matched.name },
-          "demo-token-" + Date.now()
-        );
-        toast.success("Login successful");
-        navigate("/");
-      } else {
-        toast.error("Invalid credentials. Try admin/password or employee/password");
-      }
-    } catch {
-      toast.error("Authentication failed");
+      // 1. Authenticate with backend
+      // Backend expects "email" field; we accept "username" in UI and pass it through.
+      const loginRes = await authService.login(username, password);
+      console.log(loginRes);
+      const { access_token } = loginRes.data;
+
+      // 2. Temporarily set token so the interceptor adds it for the next call
+      sessionStorage.setItem("auth_token", access_token);
+
+      // 3. Fetch current user profile
+      const meRes = await userService.getMe();
+      const meData = meRes.data;
+
+      // 4. Log in to Context
+      login(
+        { 
+          id: meData.id, 
+          username: meData.email, 
+          role: role, 
+          name: meData.email.split("@")[0] // Just taking first part of email for name
+        },
+        access_token
+      );
+      
+      toast.success("Login successful");
+      navigate("/");
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Authentication failed. Did you check PostgreSQL?");
     } finally {
       setLoading(false);
     }
@@ -87,6 +98,7 @@ export default function Login() {
               </Label>
               <Input
                 id="username"
+                type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username"
@@ -121,10 +133,37 @@ export default function Login() {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="role" className="text-xs text-muted-foreground uppercase tracking-wider">
+                Role
+              </Label>
+              <select
+                id="role"
+                value={role}
+                onChange={(e) => setRole(e.target.value as UserRole)}
+                className="flex h-10 w-full rounded-md border border-input bg-secondary px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border-border"
+              >
+                <option value="Admin">Admin</option>
+                <option value="Employee">Employee</option>
+              </select>
+            </div>
+
             <div className="flex justify-end">
               <button
                 type="button"
                 className="text-xs text-primary hover:text-primary/80 transition-colors"
+                onClick={async () => {
+                  if (!username.trim()) {
+                    toast.error("Enter your username first");
+                    return;
+                  }
+                  try {
+                    await authService.forgotPassword(username.trim());
+                    toast.success("If the account exists, a reset link has been sent.");
+                  } catch {
+                    toast.success("If the account exists, a reset link has been sent.");
+                  }
+                }}
               >
                 Forgot Password?
               </button>
@@ -139,7 +178,7 @@ export default function Login() {
             </Button>
 
             <p className="text-center text-[10px] text-muted-foreground mt-4">
-              Demo: admin/password or employee/password
+              Demo: admin@quantumshield.com / admin123
             </p>
           </form>
         </div>

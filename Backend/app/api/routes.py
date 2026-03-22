@@ -25,6 +25,8 @@ from app.db.models import (
     ScanRequest,
     ScanResult,
     ScanStatus,
+    RiskLevel,
+    TLSInfo,
 )
 from app.modules import (
     asset_discovery,
@@ -36,6 +38,7 @@ from app.modules import (
 )
 from app.modules.headers_scanner import scan_headers
 from app.modules.cve_mapper import map_cves
+from app.core.ws_manager import manager as ws_manager
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -76,9 +79,53 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         # ── Stage 1: Asset Discovery ─────────────────────────────
         logger.info("[%s] Stage 1/6: Asset Discovery", scan_id)
+        
+        async def broadcast_tool_log(msg: str):
+            await ws_manager.broadcast({
+                "type": "log",
+                "stage": 1,
+                "message": msg
+            }, scan_id)
+
+        await ws_manager.broadcast({
+            "type": "status",
+            "stage": 1,
+            "status": "running",
+            "message": "Starting Asset Discovery..."
+        }, scan_id)
+
         assets = await asset_discovery.discover_assets(
-            request.domain, ports=request.ports
+            request.domain, ports=request.ports, broadcast_func=broadcast_tool_log
         )
+
+        # Calculate live metrics after Stage 1
+        def infer_type(ports):
+            p = set(ports)
+            if any(x in p for x in [80, 443, 8080, 8443]): return "web_app"
+            if any(x in p for x in [22, 3389]): return "server"
+            return "other"
+
+        web_count = sum(1 for a in assets if infer_type(a.open_ports) == "web_app")
+        srv_count = sum(1 for a in assets if infer_type(a.open_ports) == "server")
+
+        await ws_manager.broadcast({
+            "type": "metrics",
+            "status": "update",
+            "data": {
+                "total_assets": len(assets),
+                "public_web_apps": web_count,
+                "servers": srv_count,
+                "apis": 0 # Heuristic placeholder
+            }
+        }, scan_id)
+
+        await ws_manager.broadcast({
+            "type": "data",
+            "stage": 1,
+            "assets_count": len(assets),
+            "assets": [a.model_dump() for a in assets],
+            "message": f"Discovery complete: {len(assets)} assets found."
+        }, scan_id)
 
         await collection.update_one(
             {"scan_id": scan_id},
@@ -93,7 +140,19 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
                 tls_tasks.append(tls_scanner.scan_tls(asset.subdomain, port))
 
         tls_results = await asyncio.gather(*tls_tasks, return_exceptions=True)
-        tls_results = [r for r in tls_results if not isinstance(r, Exception)]
+        # Use TLSInfo for explicit type filtering to satisfy linting
+        tls_results = [r for r in tls_results if isinstance(r, TLSInfo)]
+
+        # Calculate metrics after Stage 2
+        expiring = sum(1 for t in tls_results if t.certificate and (t.certificate.days_until_expiry or 365) <= 30)
+        
+        await ws_manager.broadcast({
+            "type": "metrics",
+            "status": "update",
+            "data": {
+                "expiring_certificates": expiring
+            }
+        }, scan_id)
 
         await collection.update_one(
             {"scan_id": scan_id},
@@ -115,6 +174,17 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         # ── Stage 4: Quantum Risk Scoring ────────────────────────
         logger.info("[%s] Stage 4/6: Quantum Risk Scoring", scan_id)
         q_score = quantum_risk_engine.calculate_score(all_components)
+
+        # Calculate metrics after Stage 4
+        is_high_risk = 1 if q_score.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH] else 0
+        
+        await ws_manager.broadcast({
+            "type": "metrics",
+            "status": "update",
+            "data": {
+                "high_risk_assets": is_high_risk # This is simplified, ideally it's per asset
+            }
+        }, scan_id)
 
         await collection.update_one(
             {"scan_id": scan_id},
@@ -168,7 +238,28 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             }},
         )
 
-        logger.info("[%s] ✅ Scan pipeline completed successfully (8/8 stages).", scan_id)
+        # ── Stage 9: Sync to PostgreSQL for Dashboard ────────────
+        try:
+            from app.db.sync import sync_scan_to_postgres
+            logger.info("[%s] Stage 9: Syncing to PostgreSQL Dashboard", scan_id)
+            await sync_scan_to_postgres(
+                request.domain, 
+                assets, 
+                tls_results, 
+                all_components, 
+                q_score.model_dump()
+            )
+        except Exception as sync_exc:
+            logger.error("[%s] ⚠️ PostgreSQL sync failed: %s", scan_id, sync_exc)
+
+        await ws_manager.broadcast({
+            "type": "status",
+            "stage": 9,
+            "status": "completed",
+            "message": "Scan completed successfully."
+        }, scan_id)
+
+        logger.info("[%s] ✅ Scan pipeline completed successfully (9/9 stages).", scan_id)
 
     except Exception as exc:
         logger.exception("[%s] ❌ Scan pipeline failed: %s", scan_id, exc)

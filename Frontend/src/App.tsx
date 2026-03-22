@@ -23,6 +23,19 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <DashboardLayout>{children}</DashboardLayout>;
 }
 
+function RoleRoute({
+  children,
+  allowedRoles,
+}: {
+  children: React.ReactNode;
+  allowedRoles: string[];
+}) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
 
@@ -38,7 +51,16 @@ function AppRoutes() {
       <Route path="/cbom" element={<ProtectedRoute><CBOM /></ProtectedRoute>} />
       <Route path="/pqc-posture" element={<ProtectedRoute><PQCPosture /></ProtectedRoute>} />
       <Route path="/cyber-rating" element={<ProtectedRoute><CyberRating /></ProtectedRoute>} />
-      <Route path="/reporting" element={<ProtectedRoute><Reporting /></ProtectedRoute>} />
+      <Route
+        path="/reporting"
+        element={
+          <ProtectedRoute>
+            <RoleRoute allowedRoles={["admin"]}>
+              <Reporting />
+            </RoleRoute>
+          </ProtectedRoute>
+        }
+      />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
