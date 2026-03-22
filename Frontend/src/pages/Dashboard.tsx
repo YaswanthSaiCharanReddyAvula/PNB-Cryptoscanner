@@ -36,6 +36,11 @@ import {
   ResponsiveContainer,
   Tooltip,
   Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
 } from "recharts";
 
 const CHART_COLORS = [
@@ -44,6 +49,48 @@ const CHART_COLORS = [
   "hsl(152, 60%, 45%)",
   "hsl(210, 80%, 55%)",
   "hsl(280, 60%, 55%)",
+];
+
+const TOOLTIP_STYLE = {
+  contentStyle: {
+    background: "hsl(220, 18%, 13%)",
+    border: "1px solid hsl(220, 14%, 20%)",
+    borderRadius: "8px",
+    fontSize: "12px",
+    color: "hsl(210, 20%, 92%)",
+  },
+};
+
+const CERT_EXPIRY_DATA = [
+  { name: "0-30 Days",  count: 3,  color: "#A20E37" },
+  { name: "30-60 Days", count: 4,  color: "#f97316" },
+  { name: "60-90 Days", count: 2,  color: "#FBBC09" },
+  { name: ">90 Days",   count: 84, color: "#22c55e" },
+];
+
+const IP_VERSION_DATA = [
+  { name: "IPv4", value: 86, color: "#3b82f6" },
+  { name: "IPv6", value: 14, color: "#1e3a8a" },
+];
+
+const ASSET_RISK_DATA = [
+  { name: "Critical", count: 6,  color: "#A20E37" },
+  { name: "High",     count: 14, color: "#f97316" },
+  { name: "Medium",   count: 28, color: "#FBBC09" },
+  { name: "Low",      count: 45, color: "#22c55e" },
+];
+
+const ACTIVITY_FEED = [
+  { icon: "✗", color: "#A20E37", msg: "Scan completed: 125 assets",              time: "10 min ago" },
+  { icon: "⚠", color: "#f97316", msg: "Weak cipher detected: vpn.company.com",   time: "1 hr ago" },
+  { icon: "⚠", color: "#FBBC09", msg: "Certificate expiring soon: api.company.com", time: "3 hrs ago" },
+];
+
+const GEO_PINS = [
+  { city: "USA",       x: "18%", y: "38%" },
+  { city: "Germany",   x: "48%", y: "30%" },
+  { city: "India",     x: "63%", y: "45%" },
+  { city: "Singapore", x: "72%", y: "55%" },
 ];
 
 const riskBadge = (risk: string) => {
@@ -364,61 +411,120 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Chart + Inventory */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Pie Chart */}
+      {/* Charts Row — 4 cols */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        {/* Chart 1 — Assets Distribution (existing donut) */}
         <div className="rounded-xl border border-border bg-card p-5 relative">
           {isScanning && (
             <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           )}
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">
-            Assets Distribution
-          </h3>
-          <ResponsiveContainer width="100%" height={280}>
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Assets Distribution</h3>
+          <ResponsiveContainer width="100%" height={220}>
             <PieChart>
-              <Pie
-                data={distributionData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                paddingAngle={3}
-                dataKey="value"
-              >
+              <Pie data={distributionData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
                 {distributionData.map((_, i) => (
                   <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip
-                contentStyle={{
-                  background: "hsl(220, 18%, 13%)",
-                  border: "1px solid hsl(220, 14%, 20%)",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                  color: "hsl(210, 20%, 92%)",
-                }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: "11px", color: "hsl(215, 15%, 55%)" }}
-              />
+              <Tooltip {...TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215, 15%, 55%)" }} />
             </PieChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Asset Inventory */}
-        <div className="xl:col-span-2 relative">
-          {isScanning && (
-            <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex flex-col gap-4 p-8">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+        {/* Chart 2 — IP Version Breakdown */}
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">IP Version Breakdown</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie
+                data={IP_VERSION_DATA}
+                cx="50%" cy="50%"
+                innerRadius={55} outerRadius={80}
+                dataKey="value"
+                strokeWidth={2}
+                stroke="hsl(220,22%,10%)"
+                label={({ cx, cy, value, name }) => (
+                  <>
+                    <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={22} fontWeight={700}>{value}%</text>
+                    <text x={cx} y={cy + 14} textAnchor="middle" fill="hsl(215,15%,55%)" fontSize={10}>{name}</text>
+                  </>
+                )}
+                labelLine={false}
+              >
+                {IP_VERSION_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+              </Pie>
+              <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
+              <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215,15%,55%)" }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Chart 3 — Certificate Expiry Timeline */}
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Cert Expiry Timeline</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={CERT_EXPIRY_DATA} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" horizontal={false} />
+              <XAxis type="number" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+              <YAxis type="category" dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} width={72} />
+              <Tooltip {...TOOLTIP_STYLE} />
+              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                {CERT_EXPIRY_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Chart 4 — Asset Risk Distribution */}
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Asset Risk Distribution</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={ASSET_RISK_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" />
+              <XAxis dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+              <YAxis tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+              <Tooltip {...TOOLTIP_STYLE} />
+              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                {ASSET_RISK_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Asset Inventory Table */}
+      <div className="relative">
+        {isScanning && (
+          <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex flex-col gap-4 p-8">
+            <Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" />
+          </div>
+        )}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          {/* Custom header with Add Asset + Scan All */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-wrap gap-3">
+            <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">Assets Inventory</h3>
+            <div className="flex items-center gap-2">
+              <button
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
+                style={{ borderColor: "#FBBC09", color: "#FBBC09" }}
+              >
+                + Add Asset ▾
+              </button>
+              <button
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors"
+                style={{ backgroundColor: "#FBBC09", color: "#111" }}
+                onClick={handleScan}
+                disabled={isScanning}
+              >
+                ⟳ Scan All
+              </button>
             </div>
-          )}
+          </div>
           <DataTable
-            title="Recent Assets"
             searchable
             data={assetInventoryData}
             columns={[
@@ -453,7 +559,6 @@ export default function Dashboard() {
             { key: "ttl", header: "TTL" },
           ]}
         />
-
         <DataTable
           title="Crypto & Security Overview"
           data={cryptoSecurityData}
@@ -468,10 +573,76 @@ export default function Dashboard() {
         />
       </div>
 
-      <LiveScanConsole 
-        isOpen={isConsoleOpen} 
-        onClose={() => setIsConsoleOpen(false)} 
-        messages={messages} 
+      {/* Activity Feed + Geo Map */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        {/* Activity feed */}
+        <div className="xl:col-span-1 rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Recent Scans &amp; Activity</h3>
+          <div className="space-y-2">
+            {ACTIVITY_FEED.map((item, i) => (
+              <div
+                key={i}
+                className="flex items-start gap-3 p-3 rounded-lg"
+                style={{ backgroundColor: `${item.color}10`, border: `1px solid ${item.color}25` }}
+              >
+                <span className="text-lg leading-none flex-shrink-0" style={{ color: item.color }}>{item.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-foreground font-medium truncate">{item.msg}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{item.time}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Geo Map */}
+        <div className="xl:col-span-2 rounded-xl border border-border bg-card p-5 overflow-hidden">
+          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Geographic Asset Distribution</h3>
+          <div className="relative w-full rounded-lg overflow-hidden" style={{ height: 200, backgroundColor: "hsl(220,22%,10%)" }}>
+            {/* Simple SVG world outline */}
+            <svg viewBox="0 0 800 400" className="absolute inset-0 w-full h-full opacity-20">
+              {/* Simplified continents as polygons */}
+              {/* North America */}
+              <polygon points="80,80 200,70 220,160 160,200 80,180" fill="hsl(220,14%,40%)" />
+              {/* South America */}
+              <polygon points="160,210 210,200 230,300 180,340 130,300" fill="hsl(220,14%,40%)" />
+              {/* Europe */}
+              <polygon points="340,70 430,65 440,140 370,150 330,120" fill="hsl(220,14%,40%)" />
+              {/* Africa */}
+              <polygon points="350,155 430,145 450,280 390,320 330,280 330,200" fill="hsl(220,14%,40%)" />
+              {/* Asia */}
+              <polygon points="440,60 680,55 700,200 600,230 460,200 430,130" fill="hsl(220,14%,40%)" />
+              {/* Australia */}
+              <polygon points="600,250 700,245 710,310 640,330 590,300" fill="hsl(220,14%,40%)" />
+            </svg>
+
+            {/* City pins */}
+            {GEO_PINS.map((pin) => (
+              <div
+                key={pin.city}
+                className="absolute flex flex-col items-center"
+                style={{ left: pin.x, top: pin.y, transform: "translate(-50%,-100%)" }}
+              >
+                <div
+                  className="w-3 h-3 rounded-full border-2 border-white shadow-lg"
+                  style={{ backgroundColor: "#FBBC09" }}
+                />
+                <div
+                  className="mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap"
+                  style={{ backgroundColor: "#FBBC09", color: "#111" }}
+                >
+                  {pin.city}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <LiveScanConsole
+        isOpen={isConsoleOpen}
+        onClose={() => setIsConsoleOpen(false)}
+        messages={messages}
         scanId={activeScanId}
       />
     </div>

@@ -140,6 +140,66 @@ const MOCK_CBOM_ASSETS = [
   }
 ];
 
+// ── Cipher Usage mock data ────────────────────────────────────────────────
+const CIPHER_USAGE = [
+  { name: "ECDHE-RSA-AES256-GCM-SHA384",    count: 29, weak: false },
+  { name: "ECDHE-ECDSA-AES256-GCM-SHA384",  count: 23, weak: false },
+  { name: "AES256-GCM-SHA384",               count: 19, weak: false },
+  { name: "AES128-GCM-SHA256",               count: 15, weak: false },
+  { name: "TLS_RSA_WITH_DES_CBC_SHA",        count: 9,  weak: true  },
+  { name: "RC4-SHA",                         count: 4,  weak: true  },
+];
+const CIPHER_MAX = Math.max(...CIPHER_USAGE.map((c) => c.count));
+
+// ── Per-application CBOM mock ─────────────────────────────────────────────
+const PER_APP_CBOM = [
+  {
+    application: "portal.company.com",
+    keyLength: "2048-Bit",
+    cipher: "ECDHE-RSA-AES256-GCM-SHA384",
+    ca: "DigiCert",
+    algorithmOid: "1.2.840.113549.1.1.11",
+    keyState: "Active",
+    keyCreationDate: "2024-01-10",
+    sigAlgorithm: "SHA256withRSA",
+    weak: false,
+  },
+  {
+    application: "portal.company.com",
+    keyLength: "1024-Bit",
+    cipher: "TLS_RSA_WITH_256C@SHA384",
+    ca: "COMODO",
+    algorithmOid: "1.2.840.113549.1.1.5",
+    keyState: "Expired",
+    keyCreationDate: "2021-06-15",
+    sigAlgorithm: "SHA1withRSA",
+    weak: true,
+  },
+  {
+    application: "vpn.company.com",
+    keyLength: "4096-Bit",
+    cipher: "ECDHE-RSA-AES256-GCM-SHA384",
+    ca: "COMODO",
+    algorithmOid: "1.2.840.10045.4.3.3",
+    keyState: "Active",
+    keyCreationDate: "2024-09-01",
+    sigAlgorithm: "SHA384withECDSA",
+    weak: false,
+  },
+  {
+    application: "purn.company.com",
+    keyLength: "4096-Bit",
+    cipher: "TLS_RSA_AES256_GCM_SHA384",
+    ca: "loopDot",
+    algorithmOid: "1.2.840.113549.1.1.12",
+    keyState: "Revoked",
+    keyCreationDate: "2022-11-20",
+    sigAlgorithm: "SHA512withRSA",
+    weak: true,
+  },
+];
+
+
 export default function CBOM() {
   const [summary, setSummary] = useState<any>(null);
   const [keyLengthData, setKeyLengthData] = useState<any[]>([]);
@@ -375,6 +435,50 @@ export default function CBOM() {
         </div>
       </div>
 
+      {/* ── Cipher Usage ────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-border bg-card p-5 no-print">
+        <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Cipher Usage</h3>
+        <div className="space-y-3">
+          {CIPHER_USAGE.map((cipher) => {
+            const pct = Math.round((cipher.count / CIPHER_MAX) * 100);
+            const barColor = cipher.weak ? "#A20E37" : "#FBBC09";
+            return (
+              <div
+                key={cipher.name}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
+                  cipher.weak ? "bg-[#A20E37]/10 border border-[#A20E37]/20" : ""
+                }`}
+              >
+                <span
+                  className="text-xs font-mono flex-1 min-w-0 truncate"
+                  style={{ color: cipher.weak ? "#A20E37" : "hsl(var(--foreground))" }}
+                  title={cipher.name}
+                >
+                  {cipher.name}
+                  {cipher.weak && (
+                    <span className="ml-2 text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-[#A20E37]/20 text-[#A20E37]">
+                      WEAK
+                    </span>
+                  )}
+                </span>
+                <div className="w-40 h-3 rounded-full bg-secondary overflow-hidden flex-shrink-0">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${pct}%`, backgroundColor: barColor }}
+                  />
+                </div>
+                <span
+                  className="text-xs font-bold w-6 text-right flex-shrink-0"
+                  style={{ color: barColor }}
+                >
+                  {cipher.count}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Export Controls & Inventory Table */}
       <div className="rounded-xl border border-border bg-card p-6">
         
@@ -451,6 +555,57 @@ export default function CBOM() {
             { key: "recommendedMigration", header: "Recommended Migration" },
           ]}
         />
+      </div>
+
+      {/* ── Per-Application CBOM Table (CERT-IN Compliance) ────────── */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden no-print">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">Per-Application CBOM</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">CERT-IN compliance fields — Algorithm OID, Key State, Key Creation Date, Signature Algorithm</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ backgroundColor: "#FBBC09" }}>
+                {["Application","Key Length","Cipher Suite","Certificate Authority","Algorithm OID","Key State","Key Creation Date","Signature Algorithm"].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left font-bold uppercase tracking-wide" style={{ color: "#111" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {PER_APP_CBOM.map((row, i) => (
+                <tr
+                  key={i}
+                  className="border-b border-border/40 hover:opacity-90 transition-opacity"
+                  style={{
+                    backgroundColor: row.weak
+                      ? "rgba(162,14,55,0.10)"
+                      : i % 2 === 0
+                      ? "rgba(251,188,9,0.04)"
+                      : "transparent",
+                  }}
+                >
+                  <td className="px-4 py-2.5 font-mono text-foreground">{row.application}</td>
+                  <td className="px-4 py-2.5 font-mono" style={{ color: row.keyLength === "1024-Bit" ? "#A20E37" : "inherit" }}>{row.keyLength}</td>
+                  <td className="px-4 py-2.5 font-mono max-w-[180px] truncate" style={{ color: row.weak ? "#A20E37" : "inherit" }} title={row.cipher}>{row.cipher}</td>
+                  <td className="px-4 py-2.5">{row.ca}</td>
+                  <td className="px-4 py-2.5 font-mono text-muted-foreground">{row.algorithmOid}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                      row.keyState === "Active"
+                        ? "bg-green-500/15 text-green-400"
+                        : row.keyState === "Revoked"
+                        ? "bg-[#A20E37]/15 text-[#A20E37]"
+                        : "bg-yellow-500/15 text-yellow-400"
+                    }`}>{row.keyState}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{row.keyCreationDate}</td>
+                  <td className="px-4 py-2.5 font-mono text-muted-foreground">{row.sigAlgorithm}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

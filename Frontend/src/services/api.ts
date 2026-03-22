@@ -18,7 +18,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor for error handling
+// Response interceptor for 401 logout
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -31,75 +31,100 @@ api.interceptors.response.use(
   }
 );
 
-// Auth
+// ── Auth ─────────────────────────────────────────────────────────
+
 export const authService = {
-  login: (email: string, password: string) =>
-    api.post("/auth/login", { email, password }),
+  /** Primary: tries the PostgreSQL v2 auth endpoint; falls back to demo login */
+  login: (email: string, password: string) => {
+    // The v2 auth router expects { email, password }
+    // The scanner demo router at /auth/login accepts { username/email, password }
+    return api.post("/auth/login", { email, username: email, password });
+  },
   forgotPassword: (email: string) =>
     api.post("/auth/forgot-password", { email }),
 };
 
-// Users
+// ── Users ────────────────────────────────────────────────────────
+
 export const userService = {
   getMe: () => api.get("/users/me"),
 };
 
-// Dashboard
+// ── Dashboard ─────────────────────────────────────────────────────
+
 export const dashboardService = {
   getSummary: () => api.get("/dashboard/summary"),
 };
 
-// Assets
+// ── Assets ───────────────────────────────────────────────────────
+
 export const assetService = {
-  getAll: (params?: Record<string, unknown>) => api.get("/assets", { params }),
-  getInventory: () => api.get("/asset-inventory"),
+  getAll:        (params?: Record<string, unknown>) => api.get("/assets", { params }),
+  getStats:      () => api.get("/assets/stats"),
+  getDistribution: () => api.get("/assets/distribution"),
+  getInventory:  () => api.get("/discovery/assets"),
 };
 
-// Discovery
+// ── Discovery ─────────────────────────────────────────────────────
+
 export const discoveryService = {
-  getNetworkGraph: () => api.get("/asset-discovery"),
+  getNetworkGraph:  () => api.get("/discovery/network-graph"),
+  getAssets:        () => api.get("/discovery/assets"),
 };
 
-// CBOM
+// ── CBOM ──────────────────────────────────────────────────────────
+
 export const cbomService = {
   getSummary: () => api.get("/cbom/summary"),
-  getCharts: () => api.get("/cbom/charts"),
+  getCharts:  () => api.get("/cbom/charts"),
 };
 
-// PQC
+// ── PQC ───────────────────────────────────────────────────────────
+
 export const pqcService = {
-  getPosture: () => api.get("/pqc/posture"),
+  getPosture:              () => api.get("/pqc/posture"),
+  getVulnerableAlgorithms: () => api.get("/pqc/vulnerable-algorithms"),
+  getRiskCategories:       () => api.get("/pqc/risk-categories"),
+  getCompliance:           () => api.get("/pqc/compliance"),
 };
 
-// Cyber Rating
+// ── Cyber Rating ──────────────────────────────────────────────────
+
 export const cyberRatingService = {
-  getRating: () => api.get("/cyber-rating"),
+  getRating:     () => api.get("/cyber-rating"),
+  getRiskFactors:() => api.get("/cyber-rating/risk-factors"),
 };
 
-// Reporting
+// ── Reporting ─────────────────────────────────────────────────────
+
 export const reportingService = {
+  getDomains:     () => api.get("/reporting/domains"),
   generateReport: (type: string, params: { format: string; scheduled_at?: string; filters?: any }) => {
-    // Scheduler endpoint returns JSON, others return a file blob
+    // Use the /reporting/generate endpoint for all types
+    const body = { ...params, reportType: type };
     const config = type !== "scheduler" ? { responseType: "blob" as const } : {};
-    return api.post(`/report/${type}`, params, config);
-  }
+    return api.post("/reporting/generate", body, config);
+  },
 };
 
-// DNS / Name Server
+// ── DNS / Name Server ─────────────────────────────────────────────
+
 export const dnsService = {
-  getNameServerRecords: () => api.get("/nameservers"),
+  getNameServerRecords: () => api.get("/dns/nameserver-records"),
 };
 
-// Crypto
+// ── Crypto ────────────────────────────────────────────────────────
+
 export const cryptoService = {
-  getCryptoSecurityData: () => api.get("/crypto"),
+  getCryptoSecurityData: () => api.get("/crypto/security"),
 };
 
-// Scanner
+// ── Scanner ───────────────────────────────────────────────────────
+
 export const scanService = {
-  startScan: (domain: string) => api.post("/scan", { domain, ports: [80, 443] }),
-  getResults: (domain: string) => api.get(`/results/${domain}`),
-  getCBOM: (domain: string) => api.get(`/cbom/${domain}`),
+  startScan:       (domain: string) => api.post("/scan", { domain, ports: "80,443" }),
+  getResults:      (domain: string) => api.get(`/results/${domain}`),
+  getCBOM:         (domain: string) => api.get(`/cbom/${domain}`),
   getQuantumScore: (domain: string) => api.get(`/quantum-score/${domain}`),
 };
 

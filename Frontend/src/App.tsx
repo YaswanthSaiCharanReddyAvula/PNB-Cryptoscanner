@@ -55,9 +55,9 @@ function AppRoutes() {
         path="/reporting"
         element={
           <ProtectedRoute>
-            <RoleRoute allowedRoles={["admin"]}>
+            {/* <RoleRoute allowedRoles={["admin"]}> */}
               <Reporting />
-            </RoleRoute>
+            {/* </RoleRoute> */}
           </ProtectedRoute>
         }
       />
