@@ -35,25 +35,19 @@ export default function Login() {
     setLoading(true);
     try {
       // 1. Authenticate with backend
-      // Backend expects "email" field; we accept "username" in UI and pass it through.
       const loginRes = await authService.login(username, password);
-      console.log(loginRes);
-      const { access_token } = loginRes.data;
+      const { access_token, user } = loginRes.data;
 
-      // 2. Temporarily set token so the interceptor adds it for the next call
+      // 2. Set token so the interceptor adds it for the next call
       sessionStorage.setItem("auth_token", access_token);
 
-      // 3. Fetch current user profile
-      const meRes = await userService.getMe();
-      const meData = meRes.data;
-
-      // 4. Log in to Context
+      // 3. Log in to Context using the returned mocked user object or local state
       login(
         { 
-          id: meData.id, 
-          username: meData.email, 
+          id: user?.id || "demo-id", 
+          username: username, 
           role: role, 
-          name: meData.email.split("@")[0] // Just taking first part of email for name
+          name: user?.full_name || username.split("@")[0]
         },
         access_token
       );
@@ -61,7 +55,7 @@ export default function Login() {
       toast.success("Login successful");
       navigate("/");
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Authentication failed. Did you check PostgreSQL?");
+      toast.error(err.response?.data?.detail || "Authentication failed. Check your credentials.");
     } finally {
       setLoading(false);
     }

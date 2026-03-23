@@ -78,12 +78,12 @@ export function AppSidebar() {
   return (
     <Sidebar
       collapsible="icon"
-      className="border-r border-border"
+      className="border-r-0"
       style={{ backgroundColor: MAROON }}
     >
       <SidebarHeader
-        className="p-4 border-b"
-        style={{ borderColor: `${GOLD}25`, backgroundColor: `${MAROON}` }}
+        className="p-4"
+        style={{ backgroundColor: MAROON }}
       >
         <SidebarShield collapsed={collapsed} />
       </SidebarHeader>
@@ -99,7 +99,7 @@ export function AppSidebar() {
             </SidebarGroupLabel>
           )}
           <SidebarGroupContent>
-            <SidebarMenu className="gap-0.5 px-2">
+            <SidebarMenu className="gap-2 px-2">
               {navItems.map((item) => {
                 const active = isActive(item.url);
                 return (
@@ -108,27 +108,28 @@ export function AppSidebar() {
                       asChild
                       isActive={active}
                       tooltip={item.title}
+                      className="hover:bg-transparent"
                     >
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 text-sm"
+                        className="flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 text-[15px]"
                         style={
                           active
                             ? {
                                 backgroundColor: GOLD,
-                                color: "#111111",
+                                color: MAROON,
                                 fontWeight: 700,
                               }
                             : {
-                                color: "#f5d9e0cc",
+                                color: "#dfa0a0", // Soft muted pinkish for inactive text
                               }
                         }
                         activeClassName=""
                       >
                         <item.icon
-                          className="h-4 w-4 flex-shrink-0"
-                          style={{ color: active ? "#111111" : GOLD }}
+                          className="h-5 w-5 flex-shrink-0"
+                          style={{ color: active ? MAROON : GOLD }}
                         />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>

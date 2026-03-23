@@ -61,37 +61,15 @@ const TOOLTIP_STYLE = {
   },
 };
 
-const CERT_EXPIRY_DATA = [
-  { name: "0-30 Days",  count: 3,  color: "#A20E37" },
-  { name: "30-60 Days", count: 4,  color: "#f97316" },
-  { name: "60-90 Days", count: 2,  color: "#FBBC09" },
-  { name: ">90 Days",   count: 84, color: "#22c55e" },
-];
+const CERT_EXPIRY_DATA: any[] = [];
 
-const IP_VERSION_DATA = [
-  { name: "IPv4", value: 86, color: "#3b82f6" },
-  { name: "IPv6", value: 14, color: "#1e3a8a" },
-];
+const IP_VERSION_DATA: any[] = [];
 
-const ASSET_RISK_DATA = [
-  { name: "Critical", count: 6,  color: "#A20E37" },
-  { name: "High",     count: 14, color: "#f97316" },
-  { name: "Medium",   count: 28, color: "#FBBC09" },
-  { name: "Low",      count: 45, color: "#22c55e" },
-];
+const ASSET_RISK_DATA: any[] = [];
 
-const ACTIVITY_FEED = [
-  { icon: "✗", color: "#A20E37", msg: "Scan completed: 125 assets",              time: "10 min ago" },
-  { icon: "⚠", color: "#f97316", msg: "Weak cipher detected: vpn.company.com",   time: "1 hr ago" },
-  { icon: "⚠", color: "#FBBC09", msg: "Certificate expiring soon: api.company.com", time: "3 hrs ago" },
-];
+const ACTIVITY_FEED: any[] = [];
 
-const GEO_PINS = [
-  { city: "USA",       x: "18%", y: "38%" },
-  { city: "Germany",   x: "48%", y: "30%" },
-  { city: "India",     x: "63%", y: "45%" },
-  { city: "Singapore", x: "72%", y: "55%" },
-];
+const GEO_PINS: any[] = [];
 
 const riskBadge = (risk: string) => {
   if (!risk) return null;

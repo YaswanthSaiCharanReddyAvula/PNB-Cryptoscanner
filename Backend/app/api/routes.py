@@ -60,9 +60,19 @@ from app.modules.cve_mapper import map_cves
 from app.core.ws_manager import manager as ws_manager
 from app.utils.logger import get_logger
 
+from app.utils.logger import get_logger
+from app.db.connection import get_database
+
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
+
+@router.delete("/reset-db", summary="Development endpoint to drop the entire database")
+async def drop_database_dev():
+    """Drops the entire quantumshield database. Use only for development!"""
+    db = get_database()
+    await db.client.drop_database(db.name)
+    return {"status": "success", "message": f"Database {db.name} dropped completely."}
 
 # ── Collection name ──────────────────────────────────────────────
 SCANS_COLLECTION = "scans"
@@ -240,7 +250,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 8: CVE / Known-Attack Mapping ──────────────────
-        logger.info("[%s] Stage 8/9: CVE Mapping", scan_id)
+        logger.info("[%s] Stage 8/8: CVE Mapping", scan_id)
         cve_findings = map_cves(tls_results)
 
         await collection.update_one(
@@ -252,28 +262,14 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             }},
         )
 
-        # ── Stage 9: Sync to PostgreSQL ──────────────────────────
-        try:
-            from app.db.sync import sync_scan_to_postgres
-            logger.info("[%s] Stage 9/9: Syncing to PostgreSQL", scan_id)
-            await sync_scan_to_postgres(
-                request.domain,
-                assets,
-                tls_results,
-                all_components,
-                q_score.model_dump()
-            )
-        except Exception as sync_exc:
-            logger.error("[%s] ⚠️ PostgreSQL sync failed: %s", scan_id, sync_exc)
-
         await ws_manager.broadcast({
             "type": "status",
-            "stage": 9,
+            "stage": 8,
             "status": "completed",
             "message": "Scan completed successfully."
         }, scan_id)
 
-        logger.info("[%s] ✅ Scan pipeline completed (9/9 stages).", scan_id)
+        logger.info("[%s] ✅ Scan pipeline completed (8/8 stages).", scan_id)
 
     except Exception as exc:
         logger.exception("[%s] ❌ Scan pipeline failed: %s", scan_id, exc)
@@ -387,12 +383,12 @@ async def get_dashboard_summary():
     )
 
     return {
-        "total_assets": total_assets or 128,
-        "public_web_apps": 42,
-        "apis": 26,
-        "servers": 37,
-        "expiring_certificates": expiring or 9,
-        "high_risk_assets": high_risk or 14,
+        "total_assets": total_assets,
+        "public_web_apps": 0,
+        "apis": 0,
+        "servers": 0,
+        "expiring_certificates": expiring,
+        "high_risk_assets": high_risk,
     }
 
 
@@ -425,54 +421,21 @@ async def get_assets():
                 "last_scan": str(scan.get("completed_at", ""))[:10],
             })
 
-    if not assets:
-        assets = [
-            {"asset_name": "portal.pnbindia.in", "url": "https://portal.pnbindia.in",
-             "ipv4": "34.12.11.45", "ipv6": "2001:0db8:85a3::7334",
-             "type": "Web App", "owner": "IT", "risk": "High",
-             "hndlRisk": True, "certStatus": "valid", "pqcStatus": "not-ready",
-             "key_length": "2048-bit", "last_scan": "2026-03-12"},
-            {"asset_name": "api.pnbindia.in", "url": "https://api.pnbindia.in",
-             "ipv4": "34.12.11.90", "ipv6": "2001:0db8:85a3::1111",
-             "type": "API", "owner": "DevOps", "risk": "Medium",
-             "hndlRisk": False, "certStatus": "expiring", "pqcStatus": "partial",
-             "key_length": "4096-bit", "last_scan": "2026-03-11"},
-            {"asset_name": "vpn.pnbindia.in", "url": "https://vpn.pnbindia.in",
-             "ipv4": "34.55.90.21", "ipv6": "2001:0db8:85a3::abcd",
-             "type": "Gateway", "owner": "Infra", "risk": "Critical",
-             "hndlRisk": True, "certStatus": "expired", "pqcStatus": "not-ready",
-             "key_length": "1024-bit", "last_scan": "2026-03-10"},
-            {"asset_name": "mobilebank.pnbindia.in", "url": "https://mobilebank.pnbindia.in",
-             "ipv4": "34.12.55.77", "ipv6": "",
-             "type": "Mobile App", "owner": "Mobile Team", "risk": "Low",
-             "hndlRisk": False, "certStatus": "valid", "pqcStatus": "ready",
-             "key_length": "4096-bit", "last_scan": "2026-03-13"},
-            {"asset_name": "netbanking.pnbindia.in", "url": "https://netbanking.pnbindia.in",
-             "ipv4": "103.25.151.22", "ipv6": "",
-             "type": "Web App", "owner": "Retail Banking", "risk": "High",
-             "hndlRisk": True, "certStatus": "valid", "pqcStatus": "not-ready",
-             "key_length": "2048-bit", "last_scan": "2026-03-12"},
-        ]
     return assets
 
 
 @router.get("/assets/stats", summary="Get asset statistics", tags=["Assets"])
 async def get_asset_stats():
+    # To implement dynamically based on DB later. For now, zeroed out when no scans exist.
     return {
-        "total": 128, "web_apps": 42, "apis": 26,
-        "servers": 37, "gateways": 11, "other": 12,
+        "total": 0, "web_apps": 0, "apis": 0,
+        "servers": 0, "gateways": 0, "other": 0,
     }
 
 
 @router.get("/assets/distribution", summary="Get asset type distribution", tags=["Assets"])
 async def get_asset_distribution():
-    return [
-        {"name": "Web Applications", "value": 42},
-        {"name": "APIs", "value": 26},
-        {"name": "Servers", "value": 37},
-        {"name": "Load Balancers", "value": 11},
-        {"name": "Other", "value": 12},
-    ]
+    return []
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -657,10 +620,29 @@ async def get_pqc_compliance():
 
 @router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
 async def get_cyber_rating():
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({}, sort=[("completed_at", -1)])
+    
+    # Base score out of 100
+    base_score = 75
+    if doc and "quantum_score" in doc:
+        base_score = doc["quantum_score"].get("score", 75)
+        
+    # Scale to 1000
+    scaled_score = int(base_score * 10)
+    
+    # Determine Tier
+    if scaled_score < 400:
+        tier = "Legacy"
+    elif scaled_score <= 700:
+        tier = "Standard"
+    else:
+        tier = "Elite-PQC"
+
     return {
-        "score": 755,
+        "score": scaled_score,
         "max_score": 1000,
-        "tier": "Elite-PQC",
+        "tier": tier,
         "tier_description": "Indicates a stronger security posture",
         "tiers": [
             {"status": "Legacy",    "range": "< 400"},
@@ -668,11 +650,11 @@ async def get_cyber_rating():
             {"status": "Elite-PQC", "range": "> 700"},
         ],
         "per_url_scores": [
-            {"url": "portal.pnbindia.in",    "score": 100},
-            {"url": "api.pnbindia.in",        "score": 50},
+            {"url": "portal.pnbindia.in",    "score": 1000},
+            {"url": "api.pnbindia.in",        "score": 500},
             {"url": "vpn.pnbindia.in",        "score": 0},
-            {"url": "netbanking.pnbindia.in", "score": 75},
-            {"url": "mobilebank.pnbindia.in", "score": 100},
+            {"url": "netbanking.pnbindia.in", "score": 750},
+            {"url": "mobilebank.pnbindia.in", "score": 1000},
         ],
     }
 
@@ -744,46 +726,14 @@ async def get_discovery_assets():
                 "company": "Punjab National Bank",
             })
 
-    if not results:
-        results = [
-            {"detection_date": "2026-03-12", "ip_address": "40.104.62.216",
-             "ports": "80, 443", "subnets": "103.107.224.0/22",
-             "asn": "AS9583", "net_name": "MSFT", "location": "India",
-             "company": "Punjab National Bank"},
-            {"detection_date": "2026-03-11", "ip_address": "103.25.151.22",
-             "ports": "53, 80", "subnets": "103.107.224.0/22",
-             "asn": "AS9583", "net_name": "Quantum-Link-Co",
-             "location": "Nashik, India", "company": "Punjab National Bank"},
-            {"detection_date": "2026-03-10", "ip_address": "34.55.90.21",
-             "ports": "443", "subnets": "34.0.0.0/8",
-             "asn": "AS15169", "net_name": "GOOGLE",
-             "location": "Mumbai, India", "company": "Punjab National Bank"},
-        ]
     return results
 
 
 @router.get("/discovery/network-graph", summary="Get network graph data", tags=["Discovery"])
 async def get_network_graph():
     return {
-        "nodes": [
-            {"id": "gw",   "label": "Internet Gateway", "type": "gateway"},
-            {"id": "fw",   "label": "Firewall",          "type": "firewall"},
-            {"id": "lb",   "label": "Load Balancer",     "type": "loadbalancer"},
-            {"id": "web1", "label": "Web Server 1",      "type": "webserver"},
-            {"id": "web2", "label": "Web Server 2",      "type": "webserver"},
-            {"id": "api1", "label": "API Server",        "type": "api"},
-            {"id": "db1",  "label": "Primary DB",        "type": "database"},
-            {"id": "db2",  "label": "Replica DB",        "type": "database"},
-        ],
-        "edges": [
-            {"source": "gw",   "target": "fw"},
-            {"source": "fw",   "target": "lb"},
-            {"source": "lb",   "target": "web1"},
-            {"source": "lb",   "target": "web2"},
-            {"source": "lb",   "target": "api1"},
-            {"source": "web1", "target": "db1"},
-            {"source": "api1", "target": "db2"},
-        ],
+        "nodes": [],
+        "edges": [],
     }
 
 
@@ -791,14 +741,21 @@ async def get_network_graph():
 # Auth endpoint (demo / fallback)
 # ════════════════════════════════════════════════════════════════════
 
+from pydantic import BaseModel
+
+class LoginPayload(BaseModel):
+    username: str = ""
+    email: str = ""
+    password: str = ""
+
 @router.post("/auth/login", summary="Demo login — returns bearer token", tags=["Auth"])
-async def demo_login(payload: dict):
+async def demo_login(payload: LoginPayload):
     """
-    Demo login endpoint. Accepts username/password and returns a token.
+    Demo login endpoint. Accepts JSON with username/email and password and returns a token.
     Credentials: any of admin/employee/hackathon_user with password 'password'.
     """
-    username = payload.get("username", "") or payload.get("email", "").split("@")[0]
-    password = payload.get("password", "")
+    username = payload.username or payload.email.split("@")[0]
+    password = payload.password
 
     demo_users = {
         "admin":           {"role": "Admin",    "name": "Admin User"},

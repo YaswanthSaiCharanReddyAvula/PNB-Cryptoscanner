@@ -33,51 +33,20 @@ type SubFilter = "New" | "False Positive" | "Confirmed" | "All";
 
 // ── Sample Data ───────────────────────────────────────────────────────────────
 
-const DOMAIN_DATA = [
-  { detectionDate: "2025-01-14", domainName: "pnb.bank.in", registrationDate: "2009-04-02", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2025-01-12", domainName: "netbanking.pnbindia.in", registrationDate: "2011-07-15", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2025-01-10", domainName: "corp.pnbindia.in", registrationDate: "2013-03-22", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2025-01-08", domainName: "mobile.pnbindia.in", registrationDate: "2015-11-09", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2025-01-06", domainName: "api.pnbindia.in", registrationDate: "2018-06-30", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2024-12-30", domainName: "secure.pnbindia.in", registrationDate: "2020-01-17", registrar: "National Internet Exchange of India", company: "PNB" },
-  { detectionDate: "2024-12-28", domainName: "loans.pnbindia.in", registrationDate: "2021-08-04", registrar: "National Internet Exchange of India", company: "PNB" },
-];
+const DOMAIN_DATA: any[] = [];
 
-const SSL_DATA = [
-  { detectionDate: "2025-01-14", sha: "b7563b983bfd217d471f607c9bbc509034a6bcf1", validFrom: "2024-11-01", commonName: "Generic Cert for WF Ovrd", company: "PNB", ca: "Symantec" },
-  { detectionDate: "2025-01-12", sha: "a3d24f1e9c78b02e5af890cde12b3f56781234a0", validFrom: "2024-10-15", commonName: "netbanking.pnbindia.in", company: "PNB", ca: "DigiCert" },
-  { detectionDate: "2025-01-10", sha: "c8f1b23d5a91e047d3b768f5e2c490a1d5678abc", validFrom: "2024-09-20", commonName: "corp.pnbindia.in", company: "PNB", ca: "Entrust" },
-  { detectionDate: "2025-01-08", sha: "e0a12f93cd561b3f8a20de54b7810c23a4096fed", validFrom: "2024-08-01", commonName: "api.pnbindia.in", company: "PNB", ca: "DigiCert" },
-  { detectionDate: "2025-01-06", sha: "91b4d0e7a2cf38c1e5f62907d80b43a196e57821", validFrom: "2024-07-11", commonName: "secure.pnbindia.in", company: "PNB", ca: "Symantec" },
-  { detectionDate: "2024-12-28", sha: "4f2a1c8d9b37e05c6f710d23a89b145c302ef780", validFrom: "2024-06-30", commonName: "mobile.pnbindia.in", company: "PNB", ca: "Entrust" },
-];
+const SSL_DATA: any[] = [];
 
-const IP_DATA = [
-  { detectionDate: "2025-01-14", ip: "103.107.224.10", ports: "80, 443", subnet: "103.107.224.0/22", asn: "AS9583", netname: "E2E-Networks-IN", location: "Nashik, India", company: "Punjab National Bank" },
-  { detectionDate: "2025-01-12", ip: "103.107.225.45", ports: "443, 2087", subnet: "103.107.224.0/22", asn: "AS9583", netname: "MSFT", location: "Chennai, India", company: "Punjab National Bank" },
-  { detectionDate: "2025-01-10", ip: "203.94.232.18", ports: "80, 587", subnet: "203.94.232.0/24", asn: "AS17813", netname: "Quantum-Link-Co", location: "Leh, India", company: "Punjab National Bank" },
-  { detectionDate: "2025-01-08", ip: "103.107.226.77", ports: "443", subnet: "103.107.224.0/22", asn: "AS9583", netname: "E2E-Networks-IN", location: "Mumbai, India", company: "Punjab National Bank" },
-  { detectionDate: "2025-01-06", ip: "45.112.160.35", ports: "80, 443, 8443", subnet: "45.112.160.0/22", asn: "AS134175", netname: "MSFT", location: "Delhi, India", company: "Punjab National Bank" },
-  { detectionDate: "2024-12-30", ip: "103.107.227.12", ports: "80", subnet: "103.107.224.0/22", asn: "AS9583", netname: "Quantum-Link-Co", location: "Bangalore, India", company: "Punjab National Bank" },
-  { detectionDate: "2024-12-28", ip: "202.131.160.90", ports: "443, 587", subnet: "202.131.160.0/24", asn: "AS4755", netname: "E2E-Networks-IN", location: "Hyderabad, India", company: "Punjab National Bank" },
-];
+const IP_DATA: any[] = [];
 
-const SOFTWARE_DATA = [
-  { detectionDate: "2025-01-14", product: "http_server", version: "2.4.54", type: "WebServer", port: "80", host: "pnb.bank.in", company: "PNB" },
-  { detectionDate: "2025-01-12", product: "Apache", version: "2.4.51", type: "WebServer", port: "443", host: "netbanking.pnbindia.in", company: "PNB" },
-  { detectionDate: "2025-01-10", product: "IIS 10.0", version: "10.0", type: "WebServer", port: "80", host: "corp.pnbindia.in", company: "PNB" },
-  { detectionDate: "2025-01-08", product: "Microsoft-IIS", version: "10.0.19041", type: "WebServer", port: "443", host: "api.pnbindia.in", company: "PNB" },
-  { detectionDate: "2025-01-06", product: "OpenResty", version: "1.27.1.1", type: "WebServer", port: "2087", host: "mobile.pnbindia.in", company: "PNB" },
-  { detectionDate: "2024-12-30", product: "nginx", version: "1.24.0", type: "WebServer", port: "587", host: "secure.pnbindia.in", company: "PNB" },
-  { detectionDate: "2024-12-28", product: "Apache", version: "2.4.58", type: "WebServer", port: "80", host: "loans.pnbindia.in", company: "PNB" },
-];
+const SOFTWARE_DATA: any[] = [];
 
 // Sub-filter counts (static demo)
 const SUB_COUNTS: Record<string, Record<SubFilter, number>> = {
-  Domains:           { New: 3, "False Positive": 2, Confirmed: 15, All: 20 },
-  SSL:               { New: 5, "False Positive": 1, Confirmed: 9,  All: 15 },
-  "IP Address/Subnets": { New: 8, "False Positive": 4, Confirmed: 22, All: 34 },
-  Software:          { New: 12,"False Positive": 6, Confirmed: 34, All: 52 },
+  Domains:           { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
+  SSL:               { New: 0, "False Positive": 0, Confirmed: 0,  All: 0 },
+  "IP Address/Subnets": { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
+  Software:          { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
 };
 
 // ── Column definitions ────────────────────────────────────────────────────────

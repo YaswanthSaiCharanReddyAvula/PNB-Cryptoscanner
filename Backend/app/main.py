@@ -19,9 +19,7 @@ from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.db.connection import connect_db, disconnect_db
-from app.db.init_db import init_db
-from app.api.routes import router as scanner_router          # existing v1 scanner
-from app.api.v2 import api_router                            # new assessment API
+from app.api.routes import router as scanner_router          # v1 scanner & all dashboard endpoints
 from app.api.v1.ws import router as ws_router               # real-time scan updates
 from app.utils.logger import get_logger
 
@@ -40,13 +38,6 @@ async def lifespan(app: FastAPI):
 
     # MongoDB (existing scanner pipeline)
     await connect_db()
-
-    # PostgreSQL — create tables + seed data
-    try:
-        await init_db()
-        logger.info("✅ PostgreSQL initialised.")
-    except Exception as exc:
-        logger.warning("⚠️  PostgreSQL init failed (check POSTGRES_URL): %s", exc)
 
     yield
 
@@ -100,11 +91,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ── Routes ───────────────────────────────────────────────────────
 
-# Legacy scanner routes — kept at /api/v1
+# Scanner routes & all dashboard endpoints
 app.include_router(scanner_router, prefix="/api/v1")
-
-# New Assessment System API — mounted at /api/v1 to merge with V1 namespace
-app.include_router(api_router, prefix="/api/v1")
 
 # WebSocket scan updates
 app.include_router(ws_router)

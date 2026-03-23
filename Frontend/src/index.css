@@ -6,50 +6,51 @@
 
 @layer base {
   :root {
-    --background: 220 20% 10%;
-    --foreground: 210 20% 92%;
+    --background: 342 100% 21%; /* #6B0020 Maroon background */
+    --foreground: 45 96% 51%; /* #FBBC09 Gold text default */
 
-    --card: 220 18% 13%;
-    --card-foreground: 210 20% 92%;
+    --card: 342 90% 18%;
+    --card-foreground: 45 96% 51%;
 
-    --popover: 220 18% 13%;
-    --popover-foreground: 210 20% 92%;
+    --popover: 342 90% 18%;
+    --popover-foreground: 45 96% 51%;
 
-    --primary: 45 96% 51%;
-    --primary-foreground: 220 20% 10%;
+    --primary: 45 96% 51%; /* Gold */
+    --primary-foreground: 342 100% 21%;
 
-    --secondary: 220 16% 18%;
-    --secondary-foreground: 210 20% 85%;
+    --secondary: 342 80% 25%;
+    --secondary-foreground: 45 96% 51%;
 
-    --muted: 220 14% 16%;
-    --muted-foreground: 215 15% 55%;
+    --muted: 342 85% 20%;
+    --muted-foreground: 45 70% 60%; /* Muted Gold/Rose */
 
-    --accent: 342 88% 35%;
-    --accent-foreground: 210 20% 95%;
+    --accent: 45 96% 51%; /* Gold */
+    --accent-foreground: 342 100% 21%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 220 14% 20%;
-    --input: 220 14% 20%;
+    --border: 342 70% 30%;
+    --input: 342 70% 30%;
     --ring: 45 96% 51%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 220 22% 8%;
-    --sidebar-foreground: 210 15% 70%;
-    --sidebar-primary: 45 96% 51%;
-    --sidebar-primary-foreground: 220 20% 10%;
-    --sidebar-accent: 220 16% 14%;
-    --sidebar-accent-foreground: 210 20% 92%;
-    --sidebar-border: 220 14% 16%;
+    /* Sidebar specifically mapped to the image */
+    --sidebar-background: 342 100% 21%; /* Maroon */
+    --sidebar-foreground: 45 70% 60%; /* Muted gold for inactive text */
+    --sidebar-primary: 45 96% 51%; /* Gold */
+    --sidebar-primary-foreground: 342 100% 21%; /* Maroon text on gold pill */
+    --sidebar-accent: 45 96% 51%; /* Gold for hover/active */
+    --sidebar-accent-foreground: 342 100% 21%;
+    --sidebar-border: 342 70% 30%;
     --sidebar-ring: 45 96% 51%;
 
     /* Custom tokens */
     --gold: 45 96% 51%;
     --gold-dim: 45 70% 40%;
-    --deep-red: 342 88% 35%;
-    --deep-red-dim: 342 60% 25%;
+    --deep-red: 342 100% 21%;
+    --deep-red-dim: 342 80% 15%;
     --success: 152 60% 45%;
     --warning: 38 92% 50%;
     --info: 210 80% 55%;
@@ -60,8 +61,8 @@
     --chart-5: 280 60% 55%;
 
     --gradient-gold: linear-gradient(135deg, hsl(45 96% 51%), hsl(38 92% 42%));
-    --gradient-red: linear-gradient(135deg, hsl(342 88% 35%), hsl(350 70% 28%));
-    --gradient-card: linear-gradient(145deg, hsl(220 18% 14%), hsl(220 18% 11%));
+    --gradient-red: linear-gradient(135deg, hsl(342 100% 21%), hsl(342 80% 15%));
+    --gradient-card: linear-gradient(145deg, hsl(342 90% 20%), hsl(342 90% 16%));
     --shadow-gold: 0 4px 20px -4px hsl(45 96% 51% / 0.2);
     --shadow-card: 0 4px 24px -8px hsl(0 0% 0% / 0.4);
     --shadow-glow-gold: 0 0 30px -5px hsl(45 96% 51% / 0.15);
