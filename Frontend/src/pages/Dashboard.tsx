@@ -61,15 +61,7 @@ const TOOLTIP_STYLE = {
   },
 };
 
-const CERT_EXPIRY_DATA: any[] = [];
 
-const IP_VERSION_DATA: any[] = [];
-
-const ASSET_RISK_DATA: any[] = [];
-
-const ACTIVITY_FEED: any[] = [];
-
-const GEO_PINS: any[] = [];
 
 const riskBadge = (risk: string) => {
   if (!risk) return null;
@@ -125,6 +117,13 @@ export default function Dashboard() {
   
   const [hndlCount, setHndlCount] = useState(0);
   const [totalAssetsCount, setTotalAssetsCount] = useState(0);
+  
+  // Chart and Feed States
+  const [certExpiryData, setCertExpiryData] = useState<any[]>([]);
+  const [ipVersionData, setIpVersionData] = useState<any[]>([]);
+  const [assetRiskData, setAssetRiskData] = useState<any[]>([]);
+  const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const [geoPins, setGeoPins] = useState<any[]>([]);
 
   const { isScanning, stageIndex, results, error, startScan } = useScan();
 
@@ -175,18 +174,19 @@ export default function Dashboard() {
 
   const refreshDashboardData = async (v1FallbackPayload: any = null) => {
     try {
-      const [sumRes, assetRes, dnsRes, cryptoRes] = await Promise.all([
+      const [sumRes, assetRes, dnsRes, cryptoRes, distRes] = await Promise.all([
         dashboardService.getSummary().catch(() => ({ data: null })),
         assetService.getAll({ page_size: 100 }).catch(() => ({ data: { items: [] } })),
         dnsService.getNameServerRecords().catch(() => ({ data: [] })),
-        cryptoService.getCryptoSecurityData().catch(() => ({ data: [] }))
+        cryptoService.getCryptoSecurityData().catch(() => ({ data: [] })),
+        assetService.getDistribution().catch(() => ({ data: [] }))
       ]);
 
       if (sumRes.data) setSummary(sumRes.data);
       if (dnsRes.data) setNameServerData(dnsRes.data);
+      if (distRes.data) setDistributionData(distRes.data);
       
       const assets = assetRes.data?.items || [];
-        
       const formattedInventory = assets.slice(0, 5).map((a: any) => ({
         name: a.asset_name,
         url: a.url,
@@ -196,18 +196,15 @@ export default function Dashboard() {
         owner: a.owner || "N/A",
         risk: a.risk || "Low",
         certStatus: a.certificate_status || "Valid",
-        keyLength: a.key_length ? a.key_length.toString() : "N/A",
+        keyLength: a.key_length && a.key_length !== "None" ? `${a.key_length}`.includes("-bit") ? a.key_length : `${a.key_length}-bit` : "Unknown",
         lastScan: a.last_scan ? new Date(a.last_scan).toLocaleDateString() : "Never",
         pqcStatus: determinePQCStatus(a.tls_version, a.cipher_suite, a.key_length?.toString()),
         hndlRisk: isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite),
       }));
       setAssetInventoryData(formattedInventory);
 
-      const distCount: Record<string, number> = {};
       let hCount = 0;
       assets.forEach((a: any) => {
-        const type = a.type || "Other";
-        distCount[type] = (distCount[type] || 0) + 1;
         if (isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite)) {
           hCount++;
         }
@@ -215,16 +212,40 @@ export default function Dashboard() {
       setHndlCount(hCount);
       setTotalAssetsCount(assets.length);
       
-      const distArray = Object.keys(distCount).map(k => ({
-        name: k,
-        value: distCount[k]
-      }));
-      setDistributionData(distArray.length > 0 ? distArray : [{ name: "No Data", value: 1 }]);
+      // IP Version Distribution
+      const ipv4Count = assets.filter((a: any) => a.ipv4 && !a.ipv6).length;
+      const ipv6Count = assets.filter((a: any) => a.ipv6).length;
+      const ipData = [];
+      if (ipv4Count > 0) ipData.push({ name: "IPv4", value: Math.round((ipv4Count / assets.length) * 100), color: "hsl(210, 80%, 55%)" });
+      if (ipv6Count > 0) ipData.push({ name: "IPv6", value: Math.round((ipv6Count / assets.length) * 100), color: "hsl(280, 60%, 55%)" });
+      setIpVersionData(ipData);
+
+      // Asset Risk Distribution
+      const riskCounts: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+      assets.forEach((a: any) => {
+        const r = a.risk || "Low";
+        if (riskCounts[r] !== undefined) riskCounts[r]++;
+      });
+      const riskColors: Record<string, string> = { Critical: "hsl(342, 88%, 35%)", High: "hsl(45, 96%, 51%)", Medium: "hsl(210, 80%, 55%)", Low: "hsl(152, 60%, 45%)" };
+      setAssetRiskData(Object.keys(riskCounts).map(k => ({ name: k, count: riskCounts[k], color: riskColors[k] })));
+
+      // Cert Expiry (Mock derived from status for now)
+      const expiryCounts: Record<string, number> = { "Expired": 0, "Soon": 0, "Valid": 0 };
+      assets.forEach((a: any) => {
+        if (a.certificate_status === "expired") expiryCounts["Expired"]++;
+        else if (a.certificate_status === "expiring_soon") expiryCounts["Soon"]++;
+        else expiryCounts["Valid"]++;
+      });
+      setCertExpiryData([
+        { name: "30 Days", count: expiryCounts["Soon"], color: "hsl(45, 96%, 51%)" },
+        { name: "90 Days", count: expiryCounts["Valid"], color: "hsl(210, 80%, 55%)" },
+        { name: "Expired", count: expiryCounts["Expired"], color: "hsl(342, 88%, 35%)" },
+      ]);
       
       if (cryptoRes.data) {
         const cryptoRecords = cryptoRes.data.map((c: any) => ({
           asset: c.asset,
-          keyLength: c.key_length ? `${c.key_length}-bit` : "Unknown",
+          keyLength: c.key_length && c.key_length !== "None" ? `${c.key_length}`.includes("-bit") ? c.key_length : `${c.key_length}-bit` : "Unknown",
           cipherSuite: c.cipher_suite || "Unknown",
           tlsVersion: c.tls_version || "Unknown",
           ca: c.certificate_authority || "Unknown",
@@ -389,6 +410,17 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* No scan yet banner */}
+      {summary && summary.total_assets === 0 && (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 flex items-center gap-3">
+          <Search className="h-5 w-5 text-primary flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">No scan data yet</p>
+            <p className="text-xs text-muted-foreground">Enter a domain above and click Scan to discover assets and populate this dashboard.</p>
+          </div>
+        </div>
+      )}
+
       {/* Charts Row — 4 cols */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         {/* Chart 1 — Assets Distribution (existing donut) */}
@@ -399,77 +431,98 @@ export default function Dashboard() {
             </div>
           )}
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Assets Distribution</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie data={distributionData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
-                {distributionData.map((_, i) => (
-                  <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215, 15%, 55%)" }} />
-            </PieChart>
-          </ResponsiveContainer>
+          {distributionData.length === 0 ? (
+            <div className="flex items-center justify-center h-[220px]">
+              <p className="text-sm text-muted-foreground text-center">Scan a domain to see asset distribution</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={distributionData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                  {distributionData.map((_, i) => (
+                    <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip {...TOOLTIP_STYLE} />
+                <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215, 15%, 55%)" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
-        {/* Chart 2 — IP Version Breakdown */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">IP Version Breakdown</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie
-                data={IP_VERSION_DATA}
-                cx="50%" cy="50%"
-                innerRadius={55} outerRadius={80}
-                dataKey="value"
-                strokeWidth={2}
-                stroke="hsl(220,22%,10%)"
-                label={({ cx, cy, value, name }) => (
-                  <>
-                    <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={22} fontWeight={700}>{value}%</text>
-                    <text x={cx} y={cy + 14} textAnchor="middle" fill="hsl(215,15%,55%)" fontSize={10}>{name}</text>
-                  </>
-                )}
-                labelLine={false}
-              >
-                {IP_VERSION_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Pie>
-              <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
-              <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215,15%,55%)" }} />
-            </PieChart>
-          </ResponsiveContainer>
+          {ipVersionData.length === 0 ? (
+            <div className="flex items-center justify-center h-[220px]">
+              <p className="text-sm text-muted-foreground text-center">Scan a domain to see IP breakdown</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={ipVersionData}
+                  cx="50%" cy="50%"
+                  innerRadius={55} outerRadius={80}
+                  dataKey="value"
+                  strokeWidth={2}
+                  stroke="hsl(220,22%,10%)"
+                  label={({ cx, cy, value, name }) => (
+                    <>
+                      <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={22} fontWeight={700}>{value}%</text>
+                      <text x={cx} y={cy + 14} textAnchor="middle" fill="hsl(215,15%,55%)" fontSize={10}>{name}</text>
+                    </>
+                  )}
+                  labelLine={false}
+                >
+                  {ipVersionData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Pie>
+                <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
+                <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215,15%,55%)" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
-        {/* Chart 3 — Certificate Expiry Timeline */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Cert Expiry Timeline</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={CERT_EXPIRY_DATA} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" horizontal={false} />
-              <XAxis type="number" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} width={72} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {CERT_EXPIRY_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {certExpiryData.every(d => d.count === 0) ? (
+            <div className="flex items-center justify-center h-[220px]">
+              <p className="text-sm text-muted-foreground text-center">Scan a domain to see expiry timeline</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={certExpiryData} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" horizontal={false} />
+                <XAxis type="number" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+                <YAxis type="category" dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} width={72} />
+                <Tooltip {...TOOLTIP_STYLE} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                  {certExpiryData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
-        {/* Chart 4 — Asset Risk Distribution */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Asset Risk Distribution</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={ASSET_RISK_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" />
-              <XAxis dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-              <YAxis tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {ASSET_RISK_DATA.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {assetRiskData.every(d => d.count === 0) ? (
+            <div className="flex items-center justify-center h-[220px]">
+              <p className="text-sm text-muted-foreground text-center">Scan a domain to see risk levels</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={assetRiskData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" />
+                <XAxis dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+                <YAxis tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
+                <Tooltip {...TOOLTIP_STYLE} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {assetRiskData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -553,66 +606,69 @@ export default function Dashboard() {
 
       {/* Activity Feed + Geo Map */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* Activity feed */}
         <div className="xl:col-span-1 rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Recent Scans &amp; Activity</h3>
-          <div className="space-y-2">
-            {ACTIVITY_FEED.map((item, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 p-3 rounded-lg"
-                style={{ backgroundColor: `${item.color}10`, border: `1px solid ${item.color}25` }}
-              >
-                <span className="text-lg leading-none flex-shrink-0" style={{ color: item.color }}>{item.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-foreground font-medium truncate">{item.msg}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{item.time}</p>
+          {activityFeed.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[200px] text-center">
+              <p className="text-xs text-muted-foreground">No recent activity found.<br/>Activity will appear here after your first scan.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activityFeed.map((item, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 p-3 rounded-lg"
+                  style={{ backgroundColor: `${item.color}10`, border: `1px solid ${item.color}25` }}
+                >
+                  <span className="text-lg leading-none flex-shrink-0" style={{ color: item.color }}>{item.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-foreground font-medium truncate">{item.msg}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{item.time}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Geo Map */}
         <div className="xl:col-span-2 rounded-xl border border-border bg-card p-5 overflow-hidden">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Geographic Asset Distribution</h3>
           <div className="relative w-full rounded-lg overflow-hidden" style={{ height: 200, backgroundColor: "hsl(220,22%,10%)" }}>
             {/* Simple SVG world outline */}
             <svg viewBox="0 0 800 400" className="absolute inset-0 w-full h-full opacity-20">
-              {/* Simplified continents as polygons */}
-              {/* North America */}
               <polygon points="80,80 200,70 220,160 160,200 80,180" fill="hsl(220,14%,40%)" />
-              {/* South America */}
               <polygon points="160,210 210,200 230,300 180,340 130,300" fill="hsl(220,14%,40%)" />
-              {/* Europe */}
               <polygon points="340,70 430,65 440,140 370,150 330,120" fill="hsl(220,14%,40%)" />
-              {/* Africa */}
               <polygon points="350,155 430,145 450,280 390,320 330,280 330,200" fill="hsl(220,14%,40%)" />
-              {/* Asia */}
               <polygon points="440,60 680,55 700,200 600,230 460,200 430,130" fill="hsl(220,14%,40%)" />
-              {/* Australia */}
               <polygon points="600,250 700,245 710,310 640,330 590,300" fill="hsl(220,14%,40%)" />
             </svg>
 
             {/* City pins */}
-            {GEO_PINS.map((pin) => (
-              <div
-                key={pin.city}
-                className="absolute flex flex-col items-center"
-                style={{ left: pin.x, top: pin.y, transform: "translate(-50%,-100%)" }}
-              >
-                <div
-                  className="w-3 h-3 rounded-full border-2 border-white shadow-lg"
-                  style={{ backgroundColor: "#FBBC09" }}
-                />
-                <div
-                  className="mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap"
-                  style={{ backgroundColor: "#FBBC09", color: "#111" }}
-                >
-                  {pin.city}
-                </div>
+            {geoPins.length === 0 ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <p className="text-xs text-muted-foreground">Scan assets to see geographic distribution</p>
               </div>
-            ))}
+            ) : (
+              geoPins.map((pin) => (
+                <div
+                  key={pin.city}
+                  className="absolute flex flex-col items-center"
+                  style={{ left: pin.x, top: pin.y, transform: "translate(-50%,-100%)" }}
+                >
+                  <div
+                    className="w-3 h-3 rounded-full border-2 border-white shadow-lg"
+                    style={{ backgroundColor: "#FBBC09" }}
+                  />
+                  <div
+                    className="mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap"
+                    style={{ backgroundColor: "#FBBC09", color: "#111" }}
+                  >
+                    {pin.city}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

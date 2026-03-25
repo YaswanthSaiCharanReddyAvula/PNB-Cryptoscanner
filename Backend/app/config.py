@@ -21,9 +21,6 @@ class Settings(BaseSettings):
     MONGO_URI: str = "mongodb://localhost:27017"
     MONGO_DB_NAME: str = "quantumshield"
 
-    # ── PostgreSQL (Assessment System API) ───────────────────────
-    POSTGRES_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quantumshield"
-
     # ── JWT Auth ─────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_SECRET"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # 8 hours
@@ -34,9 +31,10 @@ class Settings(BaseSettings):
     ]
 
     # ── Scanner defaults ─────────────────────────────────────────
-    SCAN_TIMEOUT: int = 36000          # seconds per host (10 hours)
-    TOOL_TIMEOUT: int = 300            # max seconds per individual binary (5 mins)
+    SCAN_TIMEOUT: int = 120            # seconds per full scan
+    TOOL_TIMEOUT: int = 30             # max seconds per individual tool binary
     DEFAULT_PORTS: str = "443,8443,8080,4443"
+    MAX_SUBDOMAINS: int = 50           # cap subdomains for fast demo scanning
 
     model_config = SettingsConfigDict(
         env_file=".env",

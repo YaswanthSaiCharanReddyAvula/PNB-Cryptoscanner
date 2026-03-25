@@ -94,9 +94,9 @@ export function DataTable<T extends Record<string, unknown>>({
               <TableRow>
                 <TableCell
                   colSpan={columns.length}
-                  className="text-center text-muted-foreground py-8 text-sm"
+                  className="text-center text-muted-foreground py-12 text-sm"
                 >
-                  No data available
+                  No data available — scan a domain to populate this table.
                 </TableCell>
               </TableRow>
             ) : (

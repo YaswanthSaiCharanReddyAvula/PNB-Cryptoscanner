@@ -68,7 +68,7 @@ export const assetService = {
 // ── Discovery ─────────────────────────────────────────────────────
 
 export const discoveryService = {
-  getNetworkGraph:  () => api.get("/discovery/network-graph"),
+  getNetworkGraph:  (domain?: string) => api.get("/discovery/network-graph", { params: { domain } }),
   getAssets:        () => api.get("/discovery/assets"),
 };
 

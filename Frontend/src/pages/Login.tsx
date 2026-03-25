@@ -115,7 +115,7 @@ export default function Login() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="hackathon_user@pnb.bank.in"
+                placeholder="Username or email (e.g. admin)"
                 className="bg-secondary border-border h-10"
                 autoComplete="username"
                 maxLength={100}

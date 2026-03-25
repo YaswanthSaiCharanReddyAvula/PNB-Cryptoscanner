@@ -164,6 +164,14 @@ class Recommendation(BaseModel):
     migration_notes: str = ""
 
 
+class NameServerInfo(BaseModel):
+    """DNS Name Server record metadata."""
+    hostname: str
+    type: str = "NS"
+    ip_address: Optional[str] = None
+    ttl: Optional[int] = None
+
+
 # ── Top-level request / response models ──────────────────────────
 
 class ScanRequest(BaseModel):
@@ -195,6 +203,7 @@ class ScanResult(BaseModel):
     # ── Enhanced fields ──
     headers_results: List[HeadersResult] = Field(default_factory=list)
     cve_findings: List[CVEFinding] = Field(default_factory=list)
+    dns_records: List[NameServerInfo] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -205,3 +214,15 @@ class CBOMReport(BaseModel):
     total_components: int = 0
     components: List[CryptoComponent] = Field(default_factory=list)
     risk_summary: Dict[str, int] = Field(default_factory=dict)
+
+
+# ── Auth & Users ────────────────────────────────────────────────
+class User(BaseModel):
+    """User account model stored in MongoDB."""
+    id: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    email: str
+    full_name: Optional[str] = None
+    hashed_password: str
+    role: str = "employee"  # admin | employee
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -7,7 +7,7 @@ Request / response models for all API v2 endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -16,8 +16,9 @@ from pydantic import BaseModel, EmailStr, Field
 # ── Auth ─────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: Union[EmailStr, str]   # accepts both email and plain username
     password: str
+    username: Optional[str] = None  # ignored, kept for frontend compatibility
 
 
 class TokenResponse(BaseModel):
@@ -167,10 +168,17 @@ class ProtocolDist(BaseModel):
     count: int
 
 
+class CipherUsage(BaseModel):
+    name: str
+    count: int
+    weak: bool = False   # True if cipher is known-weak (RC4, DES, MD5, NULL)
+
+
 class CBOMCharts(BaseModel):
     key_length_distribution: List[KeyLengthDist]
     top_certificate_authorities: List[CADist]
     encryption_protocols: List[ProtocolDist]
+    cipher_usage: List[CipherUsage] = []
 
 
 # ── PQC Posture ──────────────────────────────────────────────────
@@ -181,10 +189,34 @@ class VulnerableAlgorithm(BaseModel):
     risk: str
 
 
+class AssetPQCStatus(BaseModel):
+    asset_name: str
+    ip_address: Optional[str] = None
+    pqc_supported: bool
+    tls_version: Optional[str] = None
+    risk: Optional[str] = None
+    score: Optional[int] = None
+    status: str  # "Elite-PQC" | "Standard" | "Legacy" | "Critical"
+
+
 class PQCPosture(BaseModel):
     vulnerable_algorithms: List[VulnerableAlgorithm]
     pqc_ready_assets: int
     migration_score: float
+    # Classification grade breakdown (prototype requirement)
+    elite_pqc_pct: float = 0.0
+    standard_pct: float = 0.0
+    legacy_pct: float = 0.0
+    critical_pct: float = 0.0
+    critical_apps: int = 0
+    # Elite/Standard/Legacy asset counts
+    elite_count: int = 0
+    standard_count: int = 0
+    legacy_count: int = 0
+    # Per-asset PQC status list
+    asset_pqc_status: List[AssetPQCStatus] = []
+    # Improvement recommendations
+    recommendations: List[str] = []
 
 
 # ── Cyber Rating ─────────────────────────────────────────────────
@@ -195,10 +227,25 @@ class RiskFactor(BaseModel):
     detail: str
 
 
-class CyberRating(BaseModel):
+class TierInfo(BaseModel):
+    status: str
+    range: str
+
+
+class PerURLScore(BaseModel):
+    url: str
     score: int
-    grade: str
+
+
+class CyberRating(BaseModel):
+    score: int                          # out of 1000
+    max_score: int = 1000
+    tier: str                           # "Legacy" | "Standard" | "Elite-PQC"
+    tier_description: str
+    grade: str                          # A-F (kept for compatibility)
     risk_factors: List[RiskFactor]
+    tiers: List[TierInfo]
+    per_url_scores: List[PerURLScore] = []
 
 
 # ── Reports ──────────────────────────────────────────────────────

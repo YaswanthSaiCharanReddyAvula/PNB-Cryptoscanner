@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText,
@@ -18,7 +18,7 @@ import {
   Lock,
 } from "lucide-react";
 import { toast } from "sonner";
-import { reportingService } from "@/services/api";
+import { reportingService, dashboardService, cyberRatingService } from "@/services/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -141,10 +141,10 @@ function ScheduleReportingPage({ onBack }: { onBack: () => void }) {
     Discovery: true, Inventory: true, CBOM: true,
     "PQC Posture": true, "Cyber Rating": true,
   });
-  const [schedDate, setSchedDate]   = useState("2026-03-22");
+  const [schedDate, setSchedDate]   = useState("");
   const [schedTime, setSchedTime]   = useState("09:00 AM");
   const [emailOn, setEmailOn]       = useState(true);
-  const [emailVal, setEmailVal]     = useState("team@pnbindia.in");
+  const [emailVal, setEmailVal]     = useState("");
   const [saveOn, setSaveOn]         = useState(true);
   const [savePath, setSavePath]     = useState("/Reports/Quarterly/");
   const [dlOn, setDlOn]             = useState(false);
@@ -321,7 +321,7 @@ function OnDemandPage({ onBack }: { onBack: () => void }) {
 
   const [reportType, setReportType] = useState("Executive Reporting");
   const [emailOn, setEmailOn]       = useState(true);
-  const [emailVal, setEmailVal]     = useState("team@pnbindia.in");
+  const [emailVal, setEmailVal]     = useState("");
   const [saveOn, setSaveOn]         = useState(true);
   const [savePath, setSavePath]     = useState("/Reports/OnDemand/");
   const [dlOn, setDlOn]             = useState(false);
@@ -483,18 +483,47 @@ function ExecutiveReportingPage({ onBack }: { onBack: () => void }) {
   const isEmployee = user?.role === "Employee";
 
   const [emailOn, setEmailOn]   = useState(true);
-  const [emailVal, setEmailVal] = useState("ciso@pnbindia.in");
+  const [emailVal, setEmailVal] = useState("");
   const [saveOn, setSaveOn]     = useState(true);
   const [savePath, setSavePath] = useState("/Reports/Executive/");
   const [dlOn, setDlOn]         = useState(false);
   const [format, setFormat]     = useState("PDF");
   const [loading, setLoading]   = useState(false);
 
+  const [summaryStats, setSummaryStats] = useState({
+    totalAssets: "—", pqcReady: "—", critical: "—", cyberRating: "—",
+  });
+
+  useEffect(() => {
+    dashboardService.getSummary()
+      .then(res => {
+        const d = res.data || {};
+        setSummaryStats(prev => ({
+          ...prev,
+          totalAssets: String(d.total_assets || "—"),
+          pqcReady: d.pqc_ready_pct != null ? `${d.pqc_ready_pct}%` : "—",
+          critical: String(d.critical_count || d.critical || "—"),
+        }));
+      })
+      .catch(() => {});
+
+    cyberRatingService.getRating()
+      .then(res => {
+        if (res.data?.score) {
+          setSummaryStats(prev => ({
+            ...prev,
+            cyberRating: String(Math.round(Math.max(0, Math.min(1000, res.data.score * 10)))),
+          }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const SUMMARY_STATS = [
-    { label: "Total Assets",   value: "93",  color: GOLD },
-    { label: "PQC Ready",      value: "45%", color: "#22c55e" },
-    { label: "Critical",       value: "8",   color: RED },
-    { label: "Cyber Rating",   value: "755", color: GOLD },
+    { label: "Total Assets", value: summaryStats.totalAssets, color: GOLD },
+    { label: "PQC Ready",    value: summaryStats.pqcReady,   color: "#22c55e" },
+    { label: "Critical",     value: summaryStats.critical,   color: RED  },
+    { label: "Cyber Rating", value: summaryStats.cyberRating, color: GOLD },
   ];
 
   const handleGenerate = async () => {
@@ -666,12 +695,12 @@ function LandingPage({ onSelect }: { onSelect: (p: SubPage) => void }) {
         ))}
       </div>
 
-      {/* Quick info strip */}
+      {/* Quick info strip — real data from reporting service */}
       <div className="rounded-xl border border-border bg-card p-4 flex flex-wrap gap-4 justify-around text-center">
         {[
-          { label: "Reports Generated", value: "128" },
-          { label: "Scheduled Active",  value: "4"   },
-          { label: "Last Report",       value: "Today" },
+          { label: "Reports Generated", value: "—" },
+          { label: "Scheduled Active",  value: "—" },
+          { label: "Last Report",       value: "—" },
         ].map((s) => (
           <div key={s.label}>
             <p className="text-xl font-extrabold" style={{ color: GOLD }}>{s.value}</p>

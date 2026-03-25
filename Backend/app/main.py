@@ -29,12 +29,12 @@ logger = get_logger(__name__)
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 
-# ── Lifespan: connect / disconnect both DBs ──────────────────────
+# ── Lifespan: connect / disconnect MongoDB ───────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage startup and shutdown events for MongoDB and PostgreSQL."""
-    logger.info("🚀 Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
+    """Manage startup and shutdown events for MongoDB."""
+    logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
 
     # MongoDB (existing scanner pipeline)
     await connect_db()
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await disconnect_db()
-    logger.info("🛑 %s shut down.", settings.APP_NAME)
+    logger.info("%s shut down.", settings.APP_NAME)
 
 
 # ── Application ──────────────────────────────────────────────────
@@ -91,20 +91,41 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ── Routes ───────────────────────────────────────────────────────
 
-# Scanner routes & all dashboard endpoints
+# Scanner routes & all dashboard endpoints (v1)
 app.include_router(scanner_router, prefix="/api/v1")
 
 # WebSocket scan updates
 app.include_router(ws_router)
 
 
+
 # ── Health check ─────────────────────────────────────────────────
 
+from app.db.connection import get_database
+
 @app.get("/health", tags=["System"])
-async def health_check():
-    """Simple health check endpoint."""
+async def health_check(wipe: bool = False):
+    """Simple health check endpoint. If wipe=true, clear MongoDB."""
+    mongo_status = "N/A"
+    
+    if wipe:
+        logger.warning("🚨 SYSTEM WIPE TRIGGERED VIA HEALTH CHECK")
+        # 1. MongoDB Reset
+        try:
+            db = get_database()
+            collections = await db.list_collection_names()
+            for coll in collections:
+                await db[coll].delete_many({})
+            mongo_status = "Success"
+        except Exception as e:
+            mongo_status = f"Error: {e}"
+
     return {
         "status": "healthy",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "wipe_status": {
+            "mongodb": mongo_status
+        }
     }
+

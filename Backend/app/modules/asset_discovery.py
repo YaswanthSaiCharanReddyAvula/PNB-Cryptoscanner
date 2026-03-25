@@ -8,7 +8,8 @@ import uuid
 import time
 from typing import List, Set
 
-from app.db.models import DiscoveredAsset
+import dns.resolver
+from app.db.models import DiscoveredAsset, NameServerInfo
 from app.config import settings
 from app.utils.logger import get_logger
 
@@ -72,8 +73,10 @@ async def run_subfinder(domain: str) -> Set[str]:
     """Passive domain discovery using Subfinder."""
     logger.info("Running Subfinder (Passive) for %s...", domain)
     output = await _run_command(
-        ["subfinder", "-d", domain, "-silent", "-r", "8.8.8.8,1.1.1.1"], 
-        name="Subfinder"
+        ["subfinder", "-d", domain, "-silent", "-r", "8.8.8.8,1.1.1.1",
+         "--max-time", "30"],
+        name="Subfinder",
+        timeout=35,  # slightly above --max-time so subfinder can exit cleanly
     )
     subs = set()
     if output.strip():
@@ -206,6 +209,36 @@ async def scan_ports(target: str, ports: str | None = None) -> List[int]:
     return open_ports if open_ports else [443]
 
 
+async def get_ns_records(domain: str) -> List[NameServerInfo]:
+    """Fetch Name Server (NS) records for a domain."""
+    logger.info("Fetching NS records for %s", domain)
+    try:
+        # Use dnspython to resolve NS records
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = ['8.8.8.8', '1.1.1.1']
+        answers = resolver.resolve(domain, 'NS')
+        
+        records = []
+        for rdata in answers:
+            ns_host = str(rdata.target).rstrip('.')
+            try:
+                # Try to get IP address for the nameserver
+                ns_ip = socket.gethostbyname(ns_host)
+            except:
+                ns_ip = None
+                
+            records.append(NameServerInfo(
+                hostname=ns_host,
+                type="NS",
+                ip_address=ns_ip,
+                ttl=answers.ttl
+            ))
+        return records
+    except Exception as exc:
+        logger.error("Failed to fetch NS records for %s: %s", domain, exc)
+        return []
+
+
 async def discover_assets(domain: str, ports: str | None = None, broadcast_func = None) -> List[DiscoveredAsset]:
     """
     Refined Pipeline: Subfinder -> Amass -> DNSX -> HTTPX -> Nmap.
@@ -234,6 +267,11 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
     all_subs = list(subfinder_res | amass_res)
     if not all_subs:
         all_subs = [domain]
+
+    # Cap to MAX_SUBDOMAINS for fast demo/test scanning
+    if len(all_subs) > settings.MAX_SUBDOMAINS:
+        logger.info("Capping %d subdomains to MAX_SUBDOMAINS=%d", len(all_subs), settings.MAX_SUBDOMAINS)
+        all_subs = all_subs[:settings.MAX_SUBDOMAINS]
     
     # 2. DNSX (Live Check)
     await log_and_broadcast(f"Found {len(all_subs)} potential domains. Verifying live hosts with DNSX...")

@@ -11,7 +11,7 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { discoveryService } from "@/services/api";
+import { discoveryService, assetService, cryptoService, dnsService } from "@/services/api";
 import {
   Search,
   Network,
@@ -31,60 +31,48 @@ const GOLD_DARK = "#111111";
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SubFilter = "New" | "False Positive" | "Confirmed" | "All";
 
-// ── Sample Data ───────────────────────────────────────────────────────────────
-
-const DOMAIN_DATA: any[] = [];
-
-const SSL_DATA: any[] = [];
-
-const IP_DATA: any[] = [];
-
-const SOFTWARE_DATA: any[] = [];
-
-// Sub-filter counts (static demo)
-const SUB_COUNTS: Record<string, Record<SubFilter, number>> = {
-  Domains:           { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
-  SSL:               { New: 0, "False Positive": 0, Confirmed: 0,  All: 0 },
-  "IP Address/Subnets": { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
-  Software:          { New: 0, "False Positive": 0, Confirmed: 0, All: 0 },
-};
 
 // ── Column definitions ────────────────────────────────────────────────────────
 type ColDef<T> = { key: keyof T; header: string; className?: string };
 
-const DOMAIN_COLS: ColDef<typeof DOMAIN_DATA[0]>[] = [
-  { key: "detectionDate", header: "Detection Date" },
-  { key: "domainName", header: "Domain Name", className: "font-mono text-xs" },
+type DomainRow   = { detectionDate: string; domainName: string; registrationDate: string; registrar: string; company: string };
+type SslRow      = { detectionDate: string; sha: string; validFrom: string; commonName: string; company: string; ca: string };
+type IpRow       = { detectionDate: string; ip: string; ports: string; subnet: string; asn: string; netname: string; location: string; company: string };
+type SoftwareRow = { detectionDate: string; product: string; version: string; type: string; port: string; host: string; company: string };
+
+const DOMAIN_COLS: ColDef<DomainRow>[] = [
+  { key: "detectionDate",    header: "Detection Date" },
+  { key: "domainName",       header: "Domain Name", className: "font-mono text-xs" },
   { key: "registrationDate", header: "Registration Date" },
-  { key: "registrar", header: "Registrar" },
-  { key: "company", header: "Company Name" },
+  { key: "registrar",        header: "Registrar" },
+  { key: "company",          header: "Company Name" },
 ];
-const SSL_COLS: ColDef<typeof SSL_DATA[0]>[] = [
+const SSL_COLS: ColDef<SslRow>[] = [
   { key: "detectionDate", header: "Detection Date" },
-  { key: "sha", header: "SSL SHA Fingerprint", className: "font-mono text-[10px] max-w-[140px] truncate" },
-  { key: "validFrom", header: "Valid From" },
-  { key: "commonName", header: "Common Name" },
-  { key: "company", header: "Company Name" },
-  { key: "ca", header: "Certificate Authority" },
+  { key: "sha",           header: "SSL SHA Fingerprint", className: "font-mono text-[10px] max-w-[140px] truncate" },
+  { key: "validFrom",     header: "Valid From" },
+  { key: "commonName",    header: "Common Name" },
+  { key: "company",       header: "Company Name" },
+  { key: "ca",            header: "Certificate Authority" },
 ];
-const IP_COLS: ColDef<typeof IP_DATA[0]>[] = [
+const IP_COLS: ColDef<IpRow>[] = [
   { key: "detectionDate", header: "Detection Date" },
-  { key: "ip", header: "IP Address", className: "font-mono" },
-  { key: "ports", header: "Ports" },
-  { key: "subnet", header: "Subnet", className: "font-mono" },
-  { key: "asn", header: "ASN" },
-  { key: "netname", header: "Netname" },
-  { key: "location", header: "Location" },
-  { key: "company", header: "Company" },
+  { key: "ip",            header: "IP Address", className: "font-mono" },
+  { key: "ports",         header: "Ports" },
+  { key: "subnet",        header: "Subnet", className: "font-mono" },
+  { key: "asn",           header: "ASN" },
+  { key: "netname",       header: "Netname" },
+  { key: "location",      header: "Location" },
+  { key: "company",       header: "Company" },
 ];
-const SW_COLS: ColDef<typeof SOFTWARE_DATA[0]>[] = [
+const SW_COLS: ColDef<SoftwareRow>[] = [
   { key: "detectionDate", header: "Detection Date" },
-  { key: "product", header: "Product" },
-  { key: "version", header: "Version", className: "font-mono" },
-  { key: "type", header: "Type" },
-  { key: "port", header: "Port", className: "font-mono" },
-  { key: "host", header: "Host", className: "font-mono text-xs" },
-  { key: "company", header: "Company Name" },
+  { key: "product",       header: "Product" },
+  { key: "version",       header: "Version", className: "font-mono" },
+  { key: "type",          header: "Type" },
+  { key: "port",          header: "Port", className: "font-mono" },
+  { key: "host",          header: "Host", className: "font-mono text-xs" },
+  { key: "company",       header: "Company Name" },
 ];
 
 // ── Generic Sortable Table ─────────────────────────────────────────────────────
@@ -256,6 +244,89 @@ export default function AssetDiscovery() {
   const [endDate, setEndDate] = useState("");
   const [showGraph, setShowGraph] = useState(false);
 
+  // API-driven state
+  const [domainData,   setDomainData]   = useState<any[]>([]);
+  const [sslData,      setSslData]      = useState<any[]>([]);
+  const [ipData,       setIpData]       = useState<any[]>([]);
+  const [softwareData, setSoftwareData] = useState<any[]>([]);
+
+  // Dynamic SUB_COUNTS derived from live data
+  const SUB_COUNTS: Record<string, Record<SubFilter, number>> = {
+    Domains:              { New: domainData.length, "False Positive": 0, Confirmed: domainData.length, All: domainData.length },
+    SSL:                  { New: sslData.length,    "False Positive": 0, Confirmed: sslData.length,   All: sslData.length    },
+    "IP Address/Subnets": { New: ipData.length,     "False Positive": 0, Confirmed: ipData.length,    All: ipData.length     },
+    Software:             { New: softwareData.length, "False Positive": 0, Confirmed: softwareData.length, All: softwareData.length },
+  };
+
+  // Fetch API data on mount
+  useEffect(() => {
+    // Domains from asset inventory
+    assetService.getInventory()
+      .then(res => {
+        const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+        setDomainData(items.map((a: any) => ({
+          detectionDate:    a.last_seen?.split("T")[0] || "—",
+          domainName:       a.asset || a.name || "—",
+          registrationDate: "—",
+          registrar:        "—",
+          company:          "PNB",
+        })));
+      })
+      .catch(() => setDomainData([]));
+
+    // SSL from crypto security data
+    cryptoService.getCryptoSecurityData()
+      .then(res => {
+        const items = Array.isArray(res.data) ? res.data : [];
+        setSslData(items.map((c: any) => ({
+          detectionDate: "—",
+          sha:           c.certificate_sha256 || c.cert_sha || "—",
+          validFrom:     c.cert_valid_from    || "—",
+          commonName:    c.asset              || "—",
+          company:       "PNB",
+          ca:            c.certificate_authority || "—",
+        })));
+      })
+      .catch(() => setSslData([]));
+
+    // IP data from asset-discovery
+    assetService.getAll()
+      .then(res => {
+        const items = Array.isArray(res.data) ? res.data : [];
+        setIpData(items
+          .filter((a: any) => a.ip_address)
+          .map((a: any) => ({
+            detectionDate: a.last_seen?.split("T")[0] || "—",
+            ip:            a.ip_address  || "—",
+            ports:         a.open_ports?.join(", ") || "—",
+            subnet:        "—",
+            asn:           a.asn         || "—",
+            netname:       a.netname     || "—",
+            location:      a.country     || "—",
+            company:       "PNB",
+          })));
+      })
+      .catch(() => setIpData([]));
+
+    // Software from DNS / name-server records
+    dnsService.getNameServerRecords()
+      .then(res => {
+        const items = Array.isArray(res.data) ? res.data : (res.data?.records || []);
+        setSoftwareData(items.map((d: any) => ({
+          detectionDate: "—",
+          product:       d.software || d.type || "DNS Server",
+          version:       d.version  || "—",
+          type:          d.record_type || "NS",
+          port:          "53",
+          host:          d.host || d.name || "—",
+          company:       "PNB",
+        })));
+      })
+      .catch(() => setSoftwareData([]));
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ReactFlow state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -263,7 +334,7 @@ export default function AssetDiscovery() {
   useEffect(() => {
     if (!showGraph) return;
     discoveryService
-      .getNetworkGraph()
+      .getNetworkGraph(search)
       .then((res) => {
         const data = res.data;
         if (data.nodes && data.edges) {
@@ -296,24 +367,27 @@ export default function AssetDiscovery() {
       })
       .catch((err) => console.error("Could not fetch discovery graph", err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showGraph]);
+  }, [showGraph, search]);
+
 
   // Apply date filter helper
   const applyDateFilter = <T extends { detectionDate: string }>(data: T[]): T[] => {
     return data.filter((row) => {
       if (startDate && row.detectionDate < startDate) return false;
-      if (endDate && row.detectionDate > endDate) return false;
+      if (endDate   && row.detectionDate > endDate)   return false;
       return true;
     });
   };
 
   const currentData = useMemo(() => {
-    if (activeTab === "Domains") return applyDateFilter(DOMAIN_DATA);
-    if (activeTab === "SSL") return applyDateFilter(SSL_DATA);
-    if (activeTab === "IP Address/Subnets") return applyDateFilter(IP_DATA);
-    return applyDateFilter(SOFTWARE_DATA);
+    if (activeTab === "Domains")           return applyDateFilter(domainData);
+    if (activeTab === "SSL")               return applyDateFilter(sslData);
+    if (activeTab === "IP Address/Subnets") return applyDateFilter(ipData);
+    return applyDateFilter(softwareData);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, startDate, endDate]);
+  }, [activeTab, startDate, endDate, domainData, sslData, ipData, softwareData]);
+
+  const totalDiscovered = domainData.length + sslData.length + ipData.length + softwareData.length;
 
   return (
     <div className="space-y-5">
@@ -413,6 +487,15 @@ export default function AssetDiscovery() {
           </div>
         </div>
       </div>
+
+      {/* Empty state */}
+      {totalDiscovered === 0 && (
+        <div className="text-center py-12 text-muted-foreground">
+          <Network className="h-12 w-12 mx-auto mb-4 opacity-30" />
+          <p className="text-lg font-medium">No assets discovered yet</p>
+          <p className="text-sm">Scan a domain from the Home page to populate this view.</p>
+        </div>
+      )}
 
       {/* Main Tab Card */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">

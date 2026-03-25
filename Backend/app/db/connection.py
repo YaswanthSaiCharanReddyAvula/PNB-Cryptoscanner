@@ -72,7 +72,7 @@ async def connect_db() -> None:
         await _client.admin.command("ping")
         logger.info("MongoDB connection established — database: %s", settings.MONGO_DB_NAME)
     except Exception as exc:
-        logger.warning("⚠️  MongoDB unavailable (%s). App will start but scan storage will fail.", exc)
+        logger.warning("MongoDB unavailable (%s). App will start but scan storage will fail.", exc)
         _client = None
         _database = None
 
