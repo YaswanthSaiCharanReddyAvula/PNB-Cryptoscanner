@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QuantumShield | Admin &amp; Reporting</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "tertiary-fixed-dim": "#89ceff",
+              "secondary-fixed-dim": "#b9c7e0",
+              "surface-container-high": "#e6e8ea",
+              "surface-container-lowest": "#ffffff",
+              "on-secondary-fixed-variant": "#3a485c",
+              "on-primary-fixed-variant": "#3f465c",
+              "inverse-primary": "#bec6e0",
+              "error-container": "#ffdad6",
+              "on-primary-fixed": "#131b2e",
+              "surface-dim": "#d8dadc",
+              "secondary-container": "#d5e3fd",
+              "on-surface": "#191c1e",
+              "outline-variant": "#c6c6cd",
+              "on-error": "#ffffff",
+              "error": "#ba1a1a",
+              "on-tertiary-fixed-variant": "#004c6e",
+              "inverse-on-surface": "#eff1f3",
+              "background": "#f7f9fb",
+              "surface-variant": "#e0e3e5",
+              "secondary": "#515f74",
+              "on-tertiary-fixed": "#001e2f",
+              "on-secondary": "#ffffff",
+              "primary-fixed-dim": "#bec6e0",
+              "on-tertiary-container": "#008cc7",
+              "on-surface-variant": "#45464d",
+              "surface-tint": "#565e74",
+              "tertiary-fixed": "#c9e6ff",
+              "secondary-fixed": "#d5e3fd",
+              "surface-container": "#eceef0",
+              "surface-container-low": "#f2f4f6",
+              "surface-container-highest": "#e0e3e5",
+              "outline": "#76777d",
+              "on-error-container": "#93000a",
+              "tertiary-container": "#001e2f",
+              "on-primary-container": "#7c839b",
+              "on-tertiary": "#ffffff",
+              "on-background": "#191c1e",
+              "primary-fixed": "#dae2fd",
+              "inverse-surface": "#2d3133",
+              "tertiary": "#000000",
+              "primary": "#000000",
+              "on-secondary-container": "#57657b",
+              "primary-container": "#131b2e",
+              "surface": "#f7f9fb",
+              "on-secondary-fixed": "#0d1c2f",
+              "surface-bright": "#f7f9fb",
+              "on-primary": "#ffffff"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .font-variation-fill {
+            font-variation-settings: 'FILL' 1;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Manrope', sans-serif; }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen">
+<!-- Sidebar Navigation -->
+<aside class="flex flex-col h-screen fixed left-0 top-0 border-r border-slate-200/15 dark:border-slate-800/15 bg-slate-50 dark:bg-slate-950 w-64 z-50">
+<div class="p-6">
+<div class="flex items-center gap-3 mb-8">
+<div class="w-8 h-8 bg-primary rounded-sm flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-xl">shield</span>
+</div>
+<div>
+<h1 class="text-lg font-black tracking-tighter text-slate-950 dark:text-white">The Sentinel</h1>
+<p class="text-[10px] font-bold tracking-widest uppercase text-slate-500">Intelligence Dossier</p>
+</div>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">history</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Inventory Runs</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">inventory_2</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">CBOM</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">map</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Threat Map</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">warning</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">HNDL Exposure</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">verified_user</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Waivers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">gavel</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Policy</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-950 dark:text-white border-r-2 border-slate-950 dark:border-white font-bold bg-slate-200/50 dark:bg-slate-800/50 transition-all duration-200 rounded-sm" href="#">
+<span class="material-symbols-outlined text-[20px]">analytics</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Admin</span>
+</a>
+</nav>
+<button class="w-full mt-8 bg-primary text-white py-3 rounded-sm text-[11px] font-bold tracking-widest uppercase hover:opacity-90 transition-opacity">
+                New Scan
+            </button>
+</div>
+<div class="mt-auto p-6 space-y-4 border-t border-slate-200/15">
+<a class="flex items-center gap-3 text-slate-500 hover:text-slate-900 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">contact_support</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Support</span>
+</a>
+<a class="flex items-center gap-3 text-slate-500 hover:text-slate-900 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">description</span>
+<span class="text-[11px] font-bold tracking-widest uppercase">Documentation</span>
+</a>
+</div>
+</aside>
+<!-- Top Navigation Bar -->
+<header class="ml-64 flex justify-between items-center w-[calc(100%-16rem)] px-8 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200/15 fixed top-0 z-40">
+<div class="flex items-center gap-4">
+<h2 class="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-50">QuantumShield</h2>
+<div class="h-4 w-[1px] bg-outline-variant/30"></div>
+<span class="text-sm font-medium text-on-surface-variant">Admin &amp; Reporting Exports</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex gap-4">
+<button class="text-slate-500 hover:text-slate-900 transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-slate-500 hover:text-slate-900 transition-colors">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="text-slate-500 hover:text-slate-900 transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+<div class="flex items-center gap-3">
+<div class="text-right">
+<p class="text-xs font-bold text-slate-900">Alex Vane</p>
+<p class="text-[10px] text-slate-500 uppercase tracking-tighter">Security Analyst</p>
+</div>
+<img alt="Security Analyst Profile" class="w-8 h-8 rounded-full border border-outline-variant/20" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBL92ASAZ5BWlkD8Msh5lJmPz7FrDhLbi7wJB8hW6Gw7KgAs9nSrRKHLXKpc3wU3QxafowHQleYuHU93kLP6pQHLQi7CI8U_C3nbEjb-hQ2dCPhXq4sj98TkT4Ls0nJGOuqUoStrusD8ivXYva2Z5ffiFEqOqKZRGEow1a-KlFOFxpJPZ2LM_TeqJNq0dqGJybLfghxdTNhbLCXcfW-F4KMAxnLzznKBNNOzGYx3yAEsW_kQ8S9yqaevgtUTP4t4PJMrM3GExoCiRWW"/>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-24 p-8 min-h-screen">
+<div class="max-w-7xl mx-auto space-y-12">
+<!-- Hero Header Section -->
+<section class="space-y-2">
+<h3 class="text-4xl font-extrabold tracking-tight text-primary uppercase">Console Management</h3>
+<p class="text-on-surface-variant max-w-2xl">Configure external intelligence streams and generate high-fidelity audit dossiers for executive stakeholders.</p>
+</section>
+<!-- Integration Settings: Bento Grid -->
+<section class="space-y-6">
+<div class="flex justify-between items-end">
+<div>
+<span class="text-[10px] font-bold tracking-[0.2em] uppercase text-on-surface-variant">Systems Architecture</span>
+<h4 class="text-2xl font-bold tracking-tight">Integration Settings</h4>
+</div>
+<button class="px-4 py-2 bg-surface-container-highest text-on-surface text-xs font-bold uppercase tracking-widest rounded-sm hover:bg-surface-variant transition-colors">
+                        Add New Provider
+                    </button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- GitHub Integration -->
+<div class="bg-surface-container-low p-6 flex flex-col justify-between min-h-[220px] transition-all hover:bg-surface-container-high group">
+<div class="flex justify-between items-start">
+<div class="p-3 bg-surface-container-highest rounded-sm">
+<span class="material-symbols-outlined text-3xl">code</span>
+</div>
+<span class="flex items-center gap-2 px-3 py-1 bg-emerald-100 text-emerald-900 rounded-full text-[10px] font-bold tracking-wider uppercase">
+<span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                                Connected
+                            </span>
+</div>
+<div class="mt-4">
+<h5 class="font-bold text-lg mb-1">GitHub Enterprise</h5>
+<p class="text-xs text-on-surface-variant leading-relaxed">Source code vulnerability scanning and repository inventory synchronization.</p>
+</div>
+<div class="mt-6 flex justify-between items-center">
+<span class="text-[10px] text-on-surface-variant uppercase tracking-widest font-bold">Updated 2m ago</span>
+<button class="text-primary text-[11px] font-black uppercase tracking-[0.1em] group-hover:underline underline-offset-4">Configure</button>
+</div>
+</div>
+<!-- Jira Integration -->
+<div class="bg-surface-container-low p-6 flex flex-col justify-between min-h-[220px] transition-all hover:bg-surface-container-high group">
+<div class="flex justify-between items-start">
+<div class="p-3 bg-surface-container-highest rounded-sm">
+<span class="material-symbols-outlined text-3xl">task_alt</span>
+</div>
+<span class="flex items-center gap-2 px-3 py-1 bg-emerald-100 text-emerald-900 rounded-full text-[10px] font-bold tracking-wider uppercase">
+<span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                                Active
+                            </span>
+</div>
+<div class="mt-4">
+<h5 class="font-bold text-lg mb-1">Atlassian Jira</h5>
+<p class="text-xs text-on-surface-variant leading-relaxed">Automated ticketing for identified CVEs and policy compliance violations.</p>
+</div>
+<div class="mt-6 flex justify-between items-center">
+<span class="text-[10px] text-on-surface-variant uppercase tracking-widest font-bold">v3.1.0 Api</span>
+<button class="text-primary text-[11px] font-black uppercase tracking-[0.1em] group-hover:underline underline-offset-4">Configure</button>
+</div>
+</div>
+<!-- AWS KMS Integration -->
+<div class="bg-surface-container-low p-6 flex flex-col justify-between min-h-[220px] transition-all hover:bg-surface-container-high group">
+<div class="flex justify-between items-start">
+<div class="p-3 bg-surface-container-highest rounded-sm">
+<span class="material-symbols-outlined text-3xl">key</span>
+</div>
+<span class="flex items-center gap-2 px-3 py-1 bg-error-container text-on-error-container rounded-full text-[10px] font-bold tracking-wider uppercase">
+<span class="w-2 h-2 bg-error rounded-full"></span>
+                                Attention Required
+                            </span>
+</div>
+<div class="mt-4">
+<h5 class="font-bold text-lg mb-1">AWS KMS</h5>
+<p class="text-xs text-on-surface-variant leading-relaxed">Cloud infrastructure key management and cryptographic material auditing.</p>
+</div>
+<div class="mt-6 flex justify-between items-center">
+<span class="text-[10px] text-error font-bold uppercase tracking-widest">Auth Failed</span>
+<button class="text-primary text-[11px] font-black uppercase tracking-[0.1em] group-hover:underline underline-offset-4">Configure</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Export Center Section -->
+<section class="space-y-6">
+<div class="flex items-end gap-4">
+<div>
+<span class="text-[10px] font-bold tracking-[0.2em] uppercase text-on-surface-variant">Intelligence Dissemination</span>
+<h4 class="text-2xl font-bold tracking-tight">Export Center</h4>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+<!-- Report Generation Card -->
+<div class="bg-primary p-8 rounded-sm relative overflow-hidden flex flex-col">
+<div class="relative z-10">
+<h5 class="text-white text-xl font-bold mb-2">Executive Reporting</h5>
+<p class="text-slate-400 text-sm max-w-sm mb-8">Generate comprehensive PDF or raw JSON data dossiers for board-level security posture reviews.</p>
+<div class="space-y-4">
+<div class="bg-white/5 p-4 rounded-sm border border-white/10 flex justify-between items-center">
+<div>
+<p class="text-white text-xs font-bold uppercase tracking-widest mb-1">Quarterly Risk Summary</p>
+<p class="text-slate-400 text-[10px]">PDF · 12.4 MB · Compiled 01 Oct 2023</p>
+</div>
+<button class="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors">
+<span class="material-symbols-outlined">download</span>
+</button>
+</div>
+<div class="bg-white/5 p-4 rounded-sm border border-white/10 flex justify-between items-center">
+<div>
+<p class="text-white text-xs font-bold uppercase tracking-widest mb-1">Full Inventory CBOM</p>
+<p class="text-slate-400 text-[10px]">JSON · 84.1 MB · Dynamic Generation</p>
+</div>
+<button class="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors">
+<span class="material-symbols-outlined">api</span>
+</button>
+</div>
+</div>
+<div class="mt-10 flex gap-4">
+<button class="px-6 py-3 bg-white text-primary text-[11px] font-black uppercase tracking-widest rounded-sm hover:bg-slate-100 transition-colors">
+                                    Request Custom Export
+                                </button>
+<button class="px-6 py-3 border border-white/20 text-white text-[11px] font-black uppercase tracking-widest rounded-sm hover:bg-white/5 transition-colors">
+                                    View Schedule
+                                </button>
+</div>
+</div>
+<!-- Abstract Graphic -->
+<div class="absolute -right-16 -bottom-16 w-64 h-64 bg-slate-800/30 rounded-full blur-3xl"></div>
+<div class="absolute right-12 top-12 opacity-10">
+<span class="material-symbols-outlined text-[120px] text-white">summarize</span>
+</div>
+</div>
+<!-- Task Exporting Card -->
+<div class="bg-surface-container-lowest p-8 rounded-sm shadow-sm border border-outline-variant/10 flex flex-col border-l-[6px] border-l-primary">
+<h5 class="text-xl font-bold mb-2">Task Automation Hub</h5>
+<p class="text-on-surface-variant text-sm mb-8">Synchronize identified remediation steps with your organization's engineering workflow.</p>
+<div class="flex-grow space-y-6">
+<div class="flex items-center justify-between group cursor-pointer border-b border-outline-variant/10 pb-4">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary">outbound</span>
+<div>
+<p class="font-bold text-sm">Critical CVE Patching</p>
+<p class="text-[10px] text-on-surface-variant uppercase tracking-widest font-medium">Exporting to: Jira Platform</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-sm font-bold">14 Tasks</p>
+<p class="text-[10px] text-emerald-600 font-bold uppercase tracking-tighter">Ready for sync</p>
+</div>
+</div>
+<div class="flex items-center justify-between group cursor-pointer border-b border-outline-variant/10 pb-4">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary">outbound</span>
+<div>
+<p class="font-bold text-sm">Policy Deviation Remediation</p>
+<p class="text-[10px] text-on-surface-variant uppercase tracking-widest font-medium">Exporting to: ServiceNow</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-sm font-bold">3 Tasks</p>
+<p class="text-[10px] text-secondary font-bold uppercase tracking-tighter">Scheduled: 00:00 UTC</p>
+</div>
+</div>
+</div>
+<div class="mt-8">
+<label class="block text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-3">Target System Selection</label>
+<div class="flex gap-2 overflow-x-auto pb-2">
+<button class="px-4 py-2 bg-surface-container text-[10px] font-bold uppercase tracking-widest border border-outline-variant rounded-sm whitespace-nowrap">Jira Service</button>
+<button class="px-4 py-2 bg-surface-container text-[10px] font-bold uppercase tracking-widest border border-outline-variant rounded-sm whitespace-nowrap">ServiceNow ITOM</button>
+<button class="px-4 py-2 bg-surface-container text-[10px] font-bold uppercase tracking-widest border border-outline-variant rounded-sm whitespace-nowrap">Azure DevOps</button>
+<button class="px-4 py-2 bg-surface-container text-[10px] font-bold uppercase tracking-widest border border-outline-variant rounded-sm whitespace-nowrap">GitHub Issues</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Recent History Tonal Layering List -->
+<section class="bg-surface-container-low rounded-sm overflow-hidden">
+<div class="p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container">
+<h4 class="text-sm font-bold tracking-widest uppercase">Export &amp; Sync History</h4>
+<span class="text-[10px] font-bold text-on-surface-variant">Showing last 24 hours</span>
+</div>
+<div class="p-0">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-highest">
+<th class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Timestamp</th>
+<th class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Action Entity</th>
+<th class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Destination</th>
+<th class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Status</th>
+<th class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Operator</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/5">
+<tr class="hover:bg-surface-container-highest transition-colors">
+<td class="px-6 py-4 text-xs font-mono">2023-10-24 14:22:11</td>
+<td class="px-6 py-4 text-xs font-bold">Executive_Q3_Compliance.pdf</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Local Download</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-emerald-100 text-emerald-900 text-[9px] font-bold uppercase rounded-sm">Completed</span>
+</td>
+<td class="px-6 py-4 text-xs">alex_vane</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors">
+<td class="px-6 py-4 text-xs font-mono">2023-10-24 12:05:45</td>
+<td class="px-6 py-4 text-xs font-bold">Vuln_Remediation_Batch_42</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Jira Enterprise</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-emerald-100 text-emerald-900 text-[9px] font-bold uppercase rounded-sm">Synced</span>
+</td>
+<td class="px-6 py-4 text-xs">system_auto</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors">
+<td class="px-6 py-4 text-xs font-mono">2023-10-24 09:12:33</td>
+<td class="px-6 py-4 text-xs font-bold">Full_Audit_Export.json</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">AWS S3 Archival</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 bg-emerald-100 text-emerald-900 text-[9px] font-bold uppercase rounded-sm">Uploaded</span>
+</td>
+<td class="px-6 py-4 text-xs">sarah_kerrigan</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</div>
+</main>
+<!-- Visual Identity Background Elements -->
+<div class="fixed top-0 right-0 -z-10 opacity-[0.03]">
+<svg fill="none" height="600" viewbox="0 0 600 600" width="600" xmlns="http://www.w3.org/2000/svg">
+<circle cx="300" cy="300" r="300" stroke="currentColor" stroke-width="2"></circle>
+<circle cx="300" cy="300" r="240" stroke="currentColor" stroke-width="1.5"></circle>
+<circle cx="300" cy="300" r="180" stroke="currentColor" stroke-width="1"></circle>
+<path d="M300 0V600M0 300H600" stroke="currentColor" stroke-width="1"></path>
+</svg>
+</div>
+</body></html>

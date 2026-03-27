@@ -6,6 +6,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { pqcService } from "@/services/api";
 
 const GOLD  = "#FBBC09";
@@ -82,6 +84,12 @@ export default function PQCPosture() {
     { label: "Standard",        value: `${posture.standard_pct  || 0}%`, color: GOLD  },
     { label: "Legacy",          value: `${posture.legacy_pct    || 0}%`, color: "#f97316" },
     { label: "Critical Apps",   value: `${posture.critical_apps || 0}`,  color: RED   },
+    ...(typeof posture.pqc_kem_endpoints === "number"
+      ? [{ label: "PQ/hybrid signals", value: String(posture.pqc_kem_endpoints), color: GREEN }]
+      : []),
+    ...(typeof posture.tls_modern_endpoints === "number"
+      ? [{ label: "TLS modern (1.3)", value: String(posture.tls_modern_endpoints), color: NAVY }]
+      : []),
   ] : [];
 
   if (loading) {
@@ -99,7 +107,12 @@ export default function PQCPosture() {
       <div className="text-center py-16 text-muted-foreground">
         <Lock className="h-12 w-12 mx-auto mb-4 opacity-30" />
         <p className="text-lg font-medium">No PQC posture data yet</p>
-        <p className="text-sm">Scan a domain from the Home page to see quantum readiness.</p>
+        <p className="text-sm max-w-md mx-auto">
+          Run a scan from the dashboard. Posture is derived from the latest completed scan (TLS and inventory).
+        </p>
+        <Button asChild variant="outline" className="mt-6 border-[#FBBC09]/40 text-[#FBBC09]">
+          <Link to="/">Open dashboard</Link>
+        </Button>
       </div>
     );
   }
@@ -112,6 +125,10 @@ export default function PQCPosture() {
           <div>
             <h1 className="text-lg font-bold text-white tracking-wide">PQC Compliance Dashboard</h1>
             <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Readiness Assessment</p>
+            <p className="text-[11px] text-white/55 mt-2 max-w-2xl leading-relaxed">
+              &quot;Elite&quot; includes TLS 1.3-class endpoints; &quot;PQC / hybrid signal&quot; means Kyber-like strings in
+              cipher/KEX names from the scanner — verify in your environment. Not a guarantee of NIST PQC in production.
+            </p>
           </div>
           {statsText.length > 0 && (
             <div className="flex flex-wrap items-center gap-0 text-xs divide-x divide-white/10 rounded-lg overflow-hidden border border-white/10">

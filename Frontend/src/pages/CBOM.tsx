@@ -10,7 +10,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { cbomService, cryptoService, pqcService } from "@/services/api";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { cbomService, cryptoService, pqcService, reportingService } from "@/services/api";
 import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
 import { CheckCircle } from "lucide-react";
 
@@ -87,83 +89,91 @@ export default function CBOM() {
   const [loading,     setLoading]     = useState(true);
 
   useEffect(() => {
-    // Fetch Summary
-    cbomService.getSummary()
-      .then(res => setSummary(res.data))
-      .catch(err => console.error("Could not fetch CBOM summary", err));
+    let cancelled = false;
 
-    // Fetch Charts + cipher_usage
-    cbomService.getCharts()
-      .then(res => {
-        const data = res.data;
-        if (data.key_length_distribution) {
-          setKeyLengthData(data.key_length_distribution.map((k: any) => ({
-            name: `${k.key_length}-bit`,
-            count: k.count
-          })));
-        }
-        if (data.top_certificate_authorities) {
-          setCaData(data.top_certificate_authorities.map((c: any) => ({
-            name: c.certificate_authority,
-            value: c.count
-          })));
-        }
-        if (data.encryption_protocols) {
-          setProtocolData(data.encryption_protocols.map((p: any) => ({
-            name: p.tls_version,
-            value: p.count
-          })));
-        }
-        const cu = Array.isArray(data.cipher_usage) ? data.cipher_usage : [];
-        setCipherUsage(cu);
-      })
-      .catch(err => console.error("Could not fetch CBOM charts", err));
+    cbomService
+      .getSummary()
+      .then((summaryRes) => {
+        if (cancelled) return;
+        const summaryData = summaryRes.data;
+        setSummary(summaryData);
+        const domain = summaryData?.domain as string | undefined;
 
-    // Fetch per-app CBOM components directly from the backend report
-    pqcService.getPerAppCbom()
-      .then(res => {
-        const components = Array.isArray(res.data) ? res.data : [];
-        const mapped = components.map((c: any) => ({
-          application:         summary?.domain || "testssl.sh",
-          keyLength:           c.key_size ? `${c.key_size}-bit` : "N/A",
-          cipherSuite:         c.name,
-          ca:                  "—", // CAs are at the host level, not component level in CBOM
-          algorithmOid:        c.details?.includes("OID") ? c.details.split("OID:")[1] : "—",
-          keyState:            "Active",
-          keyCreationDate:     "—",
-          sigAlgorithm:        c.category === "cipher" ? c.name : "—",
-          weak:                c.risk_level === "critical" || c.risk_level === "high" || c.risk_level === "low",
-          pqcStatus:           c.quantum_status,
-          assetName:           c.name,
-          url:                 summary?.domain || "testssl.sh",
-          assetType:           c.category
-        }));
-        setPerAppCbom(mapped);
-      })
-      .catch(err => console.error("Could not fetch per-app CBOM", err));
+        return Promise.all([
+          cbomService.getCharts(domain),
+          pqcService.getPerAppCbom(domain),
+          cryptoService.getCryptoSecurityData(),
+        ]).then(([chartsRes, perAppRes, cryptoRes]) => {
+          if (cancelled) return;
+          const displayDomain = domain ?? "";
 
-    // Fetch crypto records → drives PQC stats + asset
-    cryptoService.getCryptoSecurityData()
-      .then(res => {
-        const records = Array.isArray(res.data) ? res.data : [];
+          const data = chartsRes.data;
+          if (data.key_length_distribution) {
+            setKeyLengthData(data.key_length_distribution.map((k: any) => ({
+              name: `${k.key_length}-bit`,
+              count: k.count
+            })));
+          }
+          if (data.top_certificate_authorities) {
+            setCaData(data.top_certificate_authorities.map((c: any) => ({
+              name: c.certificate_authority,
+              value: c.count
+            })));
+          }
+          if (data.encryption_protocols) {
+            setProtocolData(data.encryption_protocols.map((p: any) => ({
+              name: p.tls_version,
+              value: p.count
+            })));
+          }
+          const cu = Array.isArray(data.cipher_usage) ? data.cipher_usage : [];
+          setCipherUsage(cu);
 
-        let safe = 0, ready = 0, vuln = 0, hndl = 0;
-        const mapped = records.map((r: any) => {
-          const status = determinePQCStatus(r.tls_version, r.cipher_suite, r.key_length?.toString());
-          if (status === "quantum-safe") safe++;
-          else if (status === "pqc-ready") ready++;
-          else if (status === "vulnerable") vuln++;
-          else if (status === "hndl-risk") hndl++;
-          return mapCryptoToCbomAsset(r);
+          const components = Array.isArray(perAppRes.data) ? perAppRes.data : [];
+          const mapped = components.map((c: any) => ({
+            application:         displayDomain || "—",
+            keyLength:           c.key_size ? `${c.key_size}-bit` : "N/A",
+            cipherSuite:         c.name,
+            ca:                  "—",
+            algorithmOid:        c.details?.includes("OID") ? c.details.split("OID:")[1] : "—",
+            keyState:            "Active",
+            keyCreationDate:     "—",
+            sigAlgorithm:        c.category === "cipher" ? c.name : "—",
+            weak:                c.risk_level === "critical" || c.risk_level === "high",
+            pqcStatus:           c.quantum_status,
+            assetName:           c.name,
+            url:                 displayDomain || "—",
+            assetType:           c.category,
+            threatVector:        c.threat_vector ? String(c.threat_vector) : "",
+            nistPrimary:         c.nist_primary_recommendation || "",
+            nistSummary:         c.nist_summary || "",
+            nistRefs:            Array.isArray(c.nist_reference_urls) ? c.nist_reference_urls : [],
+          }));
+          setPerAppCbom(mapped);
+
+          const records = Array.isArray(cryptoRes.data) ? cryptoRes.data : [];
+          let safe = 0, ready = 0, vuln = 0, hndl = 0;
+          const cryptoMapped = records.map((r: any) => {
+            const status = determinePQCStatus(r.tls_version, r.cipher_suite, r.key_length?.toString());
+            if (status === "quantum-safe") safe++;
+            else if (status === "pqc-ready") ready++;
+            else if (status === "vulnerable") vuln++;
+            else if (status === "hndl-risk") hndl++;
+            return mapCryptoToCbomAsset(r);
+          });
+          setPqcStats({ safe, ready, vuln, hndl });
+          setCbomAssets(cryptoMapped);
+          setLoading(false);
         });
-        setPqcStats({ safe, ready, vuln, hndl });
-        setCbomAssets(mapped);
-        setLoading(false);
       })
-      .catch(err => {
-        console.error("Could not fetch crypto data for PQC stats", err);
+      .catch((err) => {
+        console.error("Could not load CBOM page data", err);
         setLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const CIPHER_MAX = cipherUsage.length
@@ -231,6 +241,25 @@ export default function CBOM() {
 
   const handleExportPDF = () => window.print();
 
+  const handleExportServerBundle = async () => {
+    try {
+      const domain = summary?.domain as string | undefined;
+      const res = await reportingService.exportBundle(domain);
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `scan_bundle_${(domain || "latest").replace(/[^\w.-]+/g, "_")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Scan bundle downloaded");
+    } catch {
+      toast.error("No completed scan to export, or the API is unreachable.");
+    }
+  };
+
   // Empty state
   const emptyState = !loading && cbomAssets.length === 0;
 
@@ -278,7 +307,10 @@ export default function CBOM() {
         <div className="text-center py-16 text-muted-foreground">
           <ShieldCheck className="h-12 w-12 mx-auto mb-4 opacity-30" />
           <p className="text-lg font-medium">No CBOM data yet</p>
-          <p className="text-sm">Scan a domain from the Home page to populate this view.</p>
+          <p className="text-sm max-w-md mx-auto">Complete a scan from the dashboard to populate CBOM charts and inventory.</p>
+          <Button asChild variant="outline" className="mt-6 border-[#FBBC09]/40 text-[#FBBC09]">
+            <Link to="/">Open dashboard</Link>
+          </Button>
         </div>
       )}
 
@@ -422,7 +454,10 @@ export default function CBOM() {
                   <option value="PQC Ready">PQC Ready Only</option>
                   <option value="Vulnerable">Vulnerable Only</option>
                 </select>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={handleExportServerBundle} variant="outline" className="gap-2 border-primary/40" title="Raw JSON from latest completed scan (server)">
+                    <Download className="w-4 h-4" /> Server bundle
+                  </Button>
                   <Button onClick={handleExportJSON} variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export JSON</Button>
                   <Button onClick={handleExportCSV}  variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export CSV</Button>
                   <Button onClick={handleExportPDF}  className="gap-2 bg-primary"><Download className="w-4 h-4" /> Export PDF</Button>
@@ -455,7 +490,9 @@ export default function CBOM() {
           <div className="rounded-xl border border-border bg-card overflow-hidden no-print">
             <div className="px-6 py-4 border-b border-border">
               <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">Per-Application CBOM</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">CERT-IN compliance fields — Algorithm OID, Key State, Key Creation Date, Signature Algorithm</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                CERT-IN fields plus Phase 3 threat/NIST mapping (indicative — not certification advice).
+              </p>
             </div>
             {perAppCbom.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground text-sm">
@@ -466,8 +503,21 @@ export default function CBOM() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr style={{ backgroundColor: "#FBBC09" }}>
-                      {["Application","Key Length","Cipher Suite","Certificate Authority","Algorithm OID","Key State","Key Creation Date","Signature Algorithm"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left font-bold uppercase tracking-wide" style={{ color: "#111" }}>{h}</th>
+                      {[
+                        "Application",
+                        "Key Length",
+                        "Cipher Suite",
+                        "Certificate Authority",
+                        "Algorithm OID",
+                        "Key State",
+                        "Key Creation Date",
+                        "Signature Algorithm",
+                        "Threat",
+                        "NIST (indicative)",
+                        "Guidance",
+                        "Refs",
+                      ].map((h) => (
+                        <th key={h} className="px-4 py-3 text-left font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: "#111" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -496,6 +546,37 @@ export default function CBOM() {
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground">{row.keyCreationDate}</td>
                         <td className="px-4 py-2.5 font-mono text-muted-foreground">{row.sigAlgorithm}</td>
+                        <td className="px-4 py-2.5 text-[11px] uppercase text-muted-foreground">
+                          {row.threatVector || "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-[11px] text-foreground max-w-[140px]" title={row.nistPrimary}>
+                          {row.nistPrimary || "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-[11px] text-muted-foreground max-w-[200px] leading-snug" title={row.nistSummary}>
+                          {row.nistSummary ? `${row.nistSummary.slice(0, 120)}${row.nistSummary.length > 120 ? "…" : ""}` : "—"}
+                        </td>
+                        <td className="px-4 py-2.5 align-top">
+                          {row.nistRefs?.length ? (
+                            <div className="flex flex-col gap-1">
+                              {row.nistRefs.map((ref: { label?: string; url?: string }, j: number) => (
+                                ref.url ? (
+                                  <a
+                                    key={j}
+                                    href={ref.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] text-primary underline underline-offset-2 truncate max-w-[160px]"
+                                    title={ref.label}
+                                  >
+                                    {ref.label || ref.url}
+                                  </a>
+                                ) : null
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

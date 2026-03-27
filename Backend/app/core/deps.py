@@ -28,19 +28,28 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Demo tokens are not JWTs — must run before decode_access_token (which always fails on them)
+    if token.startswith("demo-token-"):
+        parts = token.split("-")
+        uname = parts[2] if len(parts) > 2 else "user"
+        if uname == "scanner":
+            return User(
+                email="scanner@example.com",
+                full_name="Scanner Operator",
+                hashed_password="",
+                role="admin",
+            )
+        return User(
+            email=f"{uname}@pnb.bank.in",
+            full_name=uname.capitalize(),
+            hashed_password="",
+            role="admin" if uname == "admin" else "employee",
+        )
+
     user_id = decode_access_token(token)
     if not user_id:
         raise credentials_exception
-
-    # For hackathon demo, if token is "demo-token-...", we can bypass DB or return a mock
-    if token.startswith("demo-token-"):
-        username = token.split("-")[2]
-        return User(
-            email=f"{username}@pnb.bank.in",
-            full_name=username.capitalize(),
-            hashed_password="",
-            role="admin" if username == "admin" else "employee",
-        )
 
     db = get_database()
     user_doc = await db[USERS_COLLECTION].find_one({"id": user_id})

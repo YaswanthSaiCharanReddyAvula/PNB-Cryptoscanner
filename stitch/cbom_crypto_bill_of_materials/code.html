@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QuantumShield | CBOM Inventory</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Manrope:wght@700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary-fixed-dim": "#89ceff",
+                        "secondary-fixed-dim": "#b9c7e0",
+                        "surface-container-high": "#e6e8ea",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary-fixed-variant": "#3a485c",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "inverse-primary": "#bec6e0",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed": "#131b2e",
+                        "surface-dim": "#d8dadc",
+                        "secondary-container": "#d5e3fd",
+                        "on-surface": "#191c1e",
+                        "outline-variant": "#c6c6cd",
+                        "on-error": "#ffffff",
+                        "error": "#ba1a1a",
+                        "on-tertiary-fixed-variant": "#004c6e",
+                        "inverse-on-surface": "#eff1f3",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "secondary": "#515f74",
+                        "on-tertiary-fixed": "#001e2f",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed-dim": "#bec6e0",
+                        "on-tertiary-container": "#008cc7",
+                        "on-surface-variant": "#45464d",
+                        "surface-tint": "#565e74",
+                        "tertiary-fixed": "#c9e6ff",
+                        "secondary-fixed": "#d5e3fd",
+                        "surface-container": "#eceef0",
+                        "surface-container-low": "#f2f4f6",
+                        "surface-container-highest": "#e0e3e5",
+                        "outline": "#76777d",
+                        "on-error-container": "#93000a",
+                        "tertiary-container": "#001e2f",
+                        "on-primary-container": "#7c839b",
+                        "on-tertiary": "#ffffff",
+                        "on-background": "#191c1e",
+                        "primary-fixed": "#dae2fd",
+                        "inverse-surface": "#2d3133",
+                        "tertiary": "#000000",
+                        "primary": "#000000",
+                        "on-secondary-container": "#57657b",
+                        "primary-container": "#131b2e",
+                        "surface": "#f7f9fb",
+                        "on-secondary-fixed": "#0d1c2f",
+                        "surface-bright": "#f7f9fb",
+                        "on-primary": "#ffffff"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .quantum-pulse {
+            position: relative;
+        }
+        .quantum-pulse::after {
+            content: '';
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #10b981;
+            border-radius: 50%;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            box-shadow: 0 0 8px #10b981;
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface">
+<!-- SideNavBar (Shared Component) -->
+<aside class="flex flex-col h-screen fixed left-0 top-0 border-r border-slate-200/15 dark:border-slate-800/15 bg-slate-50 dark:bg-slate-950 w-64 z-50">
+<div class="p-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-primary flex items-center justify-center rounded-sm">
+<span class="material-symbols-outlined text-white text-sm" data-icon="shield">shield</span>
+</div>
+<div>
+<h1 class="text-lg font-black tracking-tighter text-slate-950 dark:text-white uppercase leading-none">The Sentinel</h1>
+<p class="text-[10px] font-bold tracking-widest uppercase text-slate-500 mt-1">Intelligence Dossier</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 px-4 py-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="history">history</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Inventory Runs</span>
+</a>
+<!-- Active State for CBOM -->
+<a class="flex items-center gap-3 px-3 py-2 text-slate-950 dark:text-white border-r-2 border-slate-950 dark:border-white font-bold bg-slate-200/50 dark:bg-slate-800/50 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="inventory_2">inventory_2</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">CBOM</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="map">map</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Threat Map</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="warning">warning</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">HNDL Exposure</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="verified_user">verified_user</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Waivers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="gavel">gavel</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Policy</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="analytics">analytics</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Admin</span>
+</a>
+</nav>
+<div class="p-4 mt-auto space-y-4">
+<button class="w-full bg-primary text-on-primary py-3 px-4 rounded-md font-bold text-xs tracking-widest uppercase flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span>
+                New Scan
+            </button>
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="contact_support">contact_support</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Support</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="description">description</span>
+<span class="text-[11px] font-bold tracking-widest uppercase font-label">Documentation</span>
+</a>
+</div>
+</div>
+</aside>
+<main class="ml-64 min-h-screen flex flex-col">
+<!-- TopAppBar (Shared Component) -->
+<header class="flex justify-between items-center w-full px-8 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200/15 dark:border-slate-800/15 sticky top-0 z-40">
+<div class="flex items-center gap-8">
+<h2 class="text-xl font-headline font-bold tracking-tight text-slate-900">QuantumShield</h2>
+<div class="relative group">
+<span class="absolute inset-y-0 left-3 flex items-center text-slate-400">
+<span class="material-symbols-outlined text-lg" data-icon="search">search</span>
+</span>
+<input class="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-md text-sm focus:ring-1 focus:ring-primary w-64 transition-all" placeholder="Search components..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+</button>
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<div class="h-8 w-px bg-slate-200 mx-2"></div>
+<div class="flex items-center gap-3">
+<div class="text-right">
+<p class="text-xs font-bold text-slate-900 leading-tight">A. Sterling</p>
+<p class="text-[10px] text-slate-500 uppercase tracking-tighter">Security Analyst</p>
+</div>
+<img class="w-8 h-8 rounded-full border border-slate-200 object-cover" data-alt="Security Analyst Profile" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA5pN1LXiiHMED8LPOfZq-qZL4grqnGdK1lZH9z1_yRPve-CIPsTOVPpa8B3HHpEi5lcWHOTbTPFRF_aU1kKW0vaU7sZPZ1qprC8DkopDeNEHQx34ulmf3L0ZsYbMyuS5XsO3m-ijydBgTu5wi1qBZg03hJO9zlKoei7BCvERLnkEvSyxVSdkkbKr6PGA4wfltJaNeQ1N-Cc88j9B41JhbHfwoOXGJ_ohg5OI62KXbtQ6KVIPQqP8b_IULMqE3v3e_mT8j8Nd5ZmR6g"/>
+</div>
+</div>
+</header>
+<!-- Content Canvas -->
+<div class="p-8 flex-1">
+<!-- Header Section -->
+<div class="flex justify-between items-end mb-10">
+<div>
+<h3 class="text-4xl font-headline font-extrabold tracking-tight mb-2">Crypto Bill of Materials</h3>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="flex items-center gap-1.5 text-xs font-medium bg-surface-container px-2 py-1 rounded">
+<span class="material-symbols-outlined text-sm" data-icon="inventory">inventory</span>
+                            Inventory ID: QS-9921-X
+                        </span>
+<span class="flex items-center gap-1.5 text-xs font-medium">
+<span class="material-symbols-outlined text-sm" data-icon="calendar_today">calendar_today</span>
+                            Run: Oct 24, 2023 · 14:22 GMT
+                        </span>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center bg-surface-container p-1 rounded-lg mr-4">
+<button class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest bg-white shadow-sm rounded">Standard View</button>
+<button class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-900 transition-colors">Compare Runs</button>
+</div>
+<button class="flex items-center gap-2 px-4 py-2 bg-surface-container-highest hover:bg-surface-container-high text-on-surface font-bold text-xs uppercase tracking-widest rounded transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+                        Export CBOM JSON
+                    </button>
+</div>
+</div>
+<!-- Dashboard Overview (Bento Style) -->
+<div class="grid grid-cols-12 gap-6 mb-10">
+<div class="col-span-12 lg:col-span-3 p-6 bg-primary-container rounded-xl text-white relative overflow-hidden">
+<div class="relative z-10">
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60 mb-1">Global Security Score</p>
+<h4 class="text-5xl font-headline font-extrabold mb-4 tracking-tighter">98.2</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-emerald-400 text-sm" data-icon="trending_up">trending_up</span>
+<span class="text-xs font-medium text-emerald-400">+1.4% from last run</span>
+</div>
+</div>
+<div class="absolute -right-4 -bottom-4 opacity-10">
+<span class="material-symbols-outlined text-9xl" data-icon="verified">verified</span>
+</div>
+</div>
+<div class="col-span-12 lg:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-6">
+<div class="p-6 bg-surface-container-low rounded-xl">
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-4">Total Components</p>
+<p class="text-3xl font-headline font-extrabold">1,248</p>
+<div class="mt-4 h-1 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary w-3/4"></div>
+</div>
+</div>
+<div class="p-6 bg-surface-container-low rounded-xl">
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-4">Risk Assets</p>
+<p class="text-3xl font-headline font-extrabold text-error">14</p>
+<p class="text-[10px] mt-2 font-medium text-on-surface-variant">4 CRITICAL · 10 MEDIUM</p>
+</div>
+<div class="p-6 bg-surface-container-low rounded-xl">
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-4">Quantum Ready</p>
+<p class="text-3xl font-headline font-extrabold">88%</p>
+<div class="mt-4 flex items-center gap-2">
+<span class="quantum-pulse ml-3 text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Active Guard</span>
+</div>
+</div>
+<div class="p-6 bg-surface-container-low rounded-xl">
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-4">Cert Expiry</p>
+<p class="text-3xl font-headline font-extrabold text-on-secondary-fixed-variant">12</p>
+<p class="text-[10px] mt-2 font-medium text-on-surface-variant">EXPIRES IN &lt; 30 DAYS</p>
+</div>
+</div>
+</div>
+<!-- Inventory Section -->
+<div class="space-y-8">
+<!-- Category: Key Exchange -->
+<section>
+<div class="flex items-center gap-4 mb-4">
+<h4 class="text-xs font-bold uppercase tracking-[0.15em] py-1 border-b-2 border-primary">Key Exchange</h4>
+<span class="text-xs text-on-surface-variant font-medium">8 Components Found</span>
+<div class="h-px flex-1 bg-surface-container"></div>
+</div>
+<div class="bg-surface-container-low rounded-xl overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead class="bg-surface-container-low">
+<tr>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Component Name</th>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Asset Type</th>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Environment</th>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Risk Level</th>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Status</th>
+<th class="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Last Scanned</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container/50">
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-variant flex items-center justify-center text-on-surface-variant group-hover:bg-primary group-hover:text-white transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="key">key</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-900">ECDHE_RSA_P256</p>
+<p class="text-[10px] text-on-surface-variant">Elliptic Curve Diffie-Hellman</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-medium text-slate-700 uppercase tracking-tighter">TLS Handshake</td>
+<td class="px-6 py-4">
+<span class="text-xs font-bold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Production</span>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-1 rounded-sm text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200">Quantum_Safe</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs font-bold uppercase tracking-tight text-emerald-700">Verified</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">2h ago</td>
+</tr>
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-variant flex items-center justify-center text-on-surface-variant group-hover:bg-primary group-hover:text-white transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="key">key</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-900">RSA_2048</p>
+<p class="text-[10px] text-on-surface-variant">Traditional Public Key</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-medium text-slate-700 uppercase tracking-tighter">Legacy Auth</td>
+<td class="px-6 py-4">
+<span class="text-xs font-bold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Staging</span>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-1 rounded-sm text-[10px] font-black uppercase tracking-widest bg-error-container text-on-error-container">Critical</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-error"></span>
+<span class="text-xs font-bold uppercase tracking-tight text-error">HNDL Risk</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">5h ago</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<!-- Category: Signatures -->
+<section>
+<div class="flex items-center gap-4 mb-4">
+<h4 class="text-xs font-bold uppercase tracking-[0.15em] py-1 border-b-2 border-primary">Signatures</h4>
+<span class="text-xs text-on-surface-variant font-medium">12 Components Found</span>
+<div class="h-px flex-1 bg-surface-container"></div>
+</div>
+<div class="bg-surface-container-low rounded-xl overflow-hidden">
+<table class="w-full text-left border-collapse">
+<tbody class="divide-y divide-surface-container/50">
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="px-6 py-4 w-1/4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-variant flex items-center justify-center text-on-surface-variant group-hover:bg-primary group-hover:text-white transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="draw">draw</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-900">Dilithium-5</p>
+<p class="text-[10px] text-on-surface-variant">Post-Quantum Signature</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-medium text-slate-700 uppercase tracking-tighter">API Gateway</td>
+<td class="px-6 py-4">
+<span class="text-xs font-bold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Multi-Cloud</span>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-1 rounded-sm text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200">Quantum_Safe</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs font-bold uppercase tracking-tight text-emerald-700">Verified</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Just now</td>
+</tr>
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="px-6 py-4 w-1/4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-variant flex items-center justify-center text-on-surface-variant group-hover:bg-primary group-hover:text-white transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="draw">draw</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-900">Ed25519</p>
+<p class="text-[10px] text-on-surface-variant">Edwards-curve Signature</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-medium text-slate-700 uppercase tracking-tighter">Container Sign</td>
+<td class="px-6 py-4">
+<span class="text-xs font-bold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Production</span>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-1 rounded-sm text-[10px] font-black uppercase tracking-widest bg-secondary-container text-on-secondary-container">Medium</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+<span class="text-xs font-bold uppercase tracking-tight text-secondary">Warning</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">12m ago</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<!-- Category: Ciphers -->
+<section>
+<div class="flex items-center gap-4 mb-4">
+<h4 class="text-xs font-bold uppercase tracking-[0.15em] py-1 border-b-2 border-primary">Ciphers</h4>
+<span class="text-xs text-on-surface-variant font-medium">32 Components Found</span>
+<div class="h-px flex-1 bg-surface-container"></div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="p-6 bg-surface-container-low rounded-xl flex items-center justify-between group hover:bg-surface-container transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="lock">lock</span>
+</div>
+<div>
+<p class="text-sm font-bold">AES-256-GCM</p>
+<p class="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Symmetric Encryption</p>
+</div>
+</div>
+<div class="text-right">
+<span class="block text-xs font-bold text-emerald-600">SAFE</span>
+<span class="text-[10px] text-on-surface-variant">Used in 143 Assets</span>
+</div>
+</div>
+<div class="p-6 bg-surface-container-low rounded-xl flex items-center justify-between group hover:bg-surface-container transition-colors cursor-pointer border-l-4 border-error">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full bg-error-container flex items-center justify-center text-on-error-container">
+<span class="material-symbols-outlined" data-icon="gpp_maybe">gpp_maybe</span>
+</div>
+<div>
+<p class="text-sm font-bold">3DES (Triple DES)</p>
+<p class="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Legacy Encryption</p>
+</div>
+</div>
+<div class="text-right">
+<span class="block text-xs font-bold text-error">DEPRECATED</span>
+<span class="text-[10px] text-on-surface-variant">Used in 2 Assets</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Floating Visual Aid (Dossier Look) -->
+<div class="mt-16 p-8 bg-surface-container border border-outline-variant/10 rounded-xl relative overflow-hidden">
+<div class="absolute top-0 right-0 w-64 h-full">
+<img class="w-full h-full object-cover opacity-10 mix-blend-multiply" data-alt="Cybersecurity server room with glowing blue data cables and futuristic network nodes in dark environment" src="https://lh3.googleusercontent.com/aida-public/AB6AXuADdjkeWOJp4MEerxSHRZEvRcbM_avlSBnfsw8hLkxlzZweVVl0JAqCi4nZrwBkBTStxKt_40HBk4ElQwHYosmP2dTZL2iFL7YmyrL2dT5mjQxDsMjZN1q-DFpJxxNXYoqYO12eLJ1YcWeoEhHQLavOikQ18g4SbGqGT499fpyOLkO3ZnCauttycBeLD_COB2UWHJjIh3yU_EBrMW9m0vabL6RjTBC8jeC49XH4yUJAjWe4LFT7Z_Gvy75-yj-WYY5U7m-OnqgDMrJj"/>
+</div>
+<div class="relative z-10 max-w-2xl">
+<h5 class="text-xs font-bold uppercase tracking-[0.25em] text-primary mb-2">Architectural Intelligence Note</h5>
+<p class="text-sm leading-relaxed text-on-surface-variant italic">
+                        The current inventory reflects a 12% increase in post-quantum cryptographic primitives compared to the Q3 baseline. Critical risks identified in "Legacy Auth" environments are flagged for immediate rotation to Kyber-based KEM or Dilithium signatures to mitigate Harvest Now, Decrypt Later (HNDL) exposure.
+                    </p>
+<div class="mt-6 flex gap-4">
+<div class="px-4 py-2 bg-white rounded-lg shadow-sm">
+<p class="text-[10px] font-bold uppercase text-slate-400">Scan Precision</p>
+<p class="text-sm font-bold">99.98% High-Fidelity</p>
+</div>
+<div class="px-4 py-2 bg-white rounded-lg shadow-sm">
+<p class="text-[10px] font-bold uppercase text-slate-400">Vulnerability Link</p>
+<p class="text-sm font-bold">Linked to NIST SP 800-208</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<footer class="p-8 border-t border-slate-200/15 text-[10px] font-bold uppercase tracking-widest text-slate-400 flex justify-between items-center">
+<div>QuantumShield Intelligence Dossier © 2024 · All Rights Reserved</div>
+<div class="flex items-center gap-4">
+<a class="hover:text-primary transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-primary transition-colors" href="#">Compliance Audit</a>
+<div class="flex items-center gap-1.5 text-emerald-600">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    System Online
+                </div>
+</div>
+</footer>
+</main>
+</body></html>

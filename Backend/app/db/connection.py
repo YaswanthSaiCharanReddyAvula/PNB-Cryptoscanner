@@ -15,6 +15,19 @@ _client: AsyncIOMotorClient | None = None
 _database: AsyncIOMotorDatabase | None = None
 
 
+class DatabaseUnavailableError(Exception):
+    """Raised when MongoDB was not connected at startup (or after disconnect)."""
+
+
+def get_database() -> AsyncIOMotorDatabase:
+    """Return the active database handle. Raises DatabaseUnavailableError if not connected."""
+    if _database is None:
+        raise DatabaseUnavailableError(
+            "MongoDB is not connected. Check MONGO_URI and that mongod is running."
+        )
+    return _database
+
+
 async def _ensure_mongodb_running() -> None:
     """Attempt to start the MongoDB service if connecting locally."""
     if "localhost" in settings.MONGO_URI or "127.0.0.1" in settings.MONGO_URI:
@@ -87,8 +100,3 @@ async def disconnect_db() -> None:
         logger.info("MongoDB connection closed.")
 
 
-def get_database() -> AsyncIOMotorDatabase:
-    """Return the active database handle. Raises if not connected."""
-    if _database is None:
-        raise RuntimeError("Database not initialised — call connect_db() first.")
-    return _database

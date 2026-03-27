@@ -6,6 +6,8 @@ import {
   Lock,
   Star,
   FileText,
+  Settings,
+  ClipboardList,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -33,6 +35,8 @@ const navItems = [
   { title: "PQC Posture", url: "/pqc-posture", icon: Lock },
   { title: "Cyber Rating", url: "/cyber-rating", icon: Star },
   { title: "Reporting", url: "/reporting", icon: FileText },
+  { title: "Migration", url: "/migration", icon: ClipboardList },
+  { title: "Admin", url: "/admin", icon: Settings },
 ];
 
 // Mini PQC shield for sidebar header

@@ -13,6 +13,8 @@ import CBOM from "./pages/CBOM";
 import PQCPosture from "./pages/PQCPosture";
 import CyberRating from "./pages/CyberRating";
 import Reporting from "./pages/Reporting";
+import Admin from "./pages/Admin";
+import Migration from "./pages/Migration";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -61,6 +63,8 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+      <Route path="/migration" element={<ProtectedRoute><Migration /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

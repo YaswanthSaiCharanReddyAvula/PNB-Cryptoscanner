@@ -64,10 +64,29 @@ Create a `.env` file in the `Backend/` directory:
 ```env
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=quantumshield
-CORS_ORIGINS=["http://localhost:3000","http://localhost:5173"]
+# "*" allows any browser origin (default). Or use comma-separated origins.
+CORS_ORIGINS=*
 LOG_LEVEL=INFO
 SCAN_TIMEOUT=120
 ```
+
+### Backend on Kali VM, frontend on Windows
+
+1. On **Kali**, bind the API to all interfaces: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload` (MongoDB must be reachable from Kali, usually `localhost`).
+2. Note the VM IP from Windows (e.g. `192.168.56.102` for VirtualBox host-only).
+3. On **Windows**, set `VITE_API_BASE_URL=http://<VM_IP>:8000/api/v1` in `Frontend/.env.local` (recommended) or `Frontend/.env`, then restart `npm run dev`.
+4. In **Kali** `Backend/.env`, use `CORS_ORIGINS=*` for any dev URL, or list the exact browser origins comma-separated if you need credentialed CORS.
+5. Allow the port through the VM firewall if needed: `sudo ufw allow 8000/tcp` (or equivalent).
+
+### Shared folder (same repo on Windows + Kali)
+
+| Do | Avoid |
+|----|--------|
+| Copy `Backend/.env.example` → `Backend/.env` on Kali; use `Backend/.env.local` on Kali for overrides only | Sharing one **Python `venv`** between OSes — create the venv only on Linux (`python3 -m venv .venv && source .venv/bin/activate`) |
+| Run `npm install` / `npm run dev` on **Windows** for the frontend | Committing `node_modules` — it is gitignored; reinstall after sync if needed |
+| Use `Frontend/.env.local` for the Windows-only API URL | Putting secrets in tracked `.env` files — add `Backend/.env` / `Frontend/.env` to git only if your team policy allows (defaults are gitignored in this repo) |
+
+After cloning or changing branches on Kali: `pip install -r requirements.txt` inside your Linux venv. On Windows: `npm ci` or `npm install` in `Frontend/`.
 
 ## API Endpoints
 
@@ -78,7 +97,16 @@ SCAN_TIMEOUT=120
 | `GET` | `/api/v1/cbom/{domain}` | Get Cryptographic Bill of Materials |
 | `GET` | `/api/v1/quantum-score/{domain}` | Get quantum readiness score + PQC recommendations |
 | `GET` | `/health` | Health check |
+| `GET` | `/api/v1/reports/export-bundle` | JSON bundle: CBOM report, TLS, quantum score, assets (latest completed scan; optional `?domain=`) |
+| `GET` | `/api/v1/migration/roadmap` | Phased migration waves derived from scan signals (optional `?domain=`) |
+| `GET` | `/api/v1/threat-model/summary` | Shor / Grover / HNDL context plus counts from latest scan (optional `?domain=`) |
 
+### Demo flow (local)
+
+1. Start MongoDB, then from `Backend/`: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`.
+2. Confirm `GET http://localhost:8000/health` returns `"status": "healthy"`.
+3. From `Frontend/`: `npm run dev` (default port **8080**). Set `VITE_API_BASE_URL=http://localhost:8000/api/v1` if needed.
+4. Open the app, sign in, run **Scan** on a domain from the dashboard; then open **CBOM**, **PQC Posture**, and **Cyber Rating**. The top bar shows **API: connected** when the backend is reachable.
 
 ## Detailed File Descriptions
 
@@ -226,7 +254,7 @@ The backend runs on **Kali Linux** and communicates with the React frontend on *
    uvicorn app.main:app --host 0.0.0.0 --port 8000
    ```
 2. On Windows, configure the React frontend to point to `http://<kali-ip>:8000`
-3. Add the Windows host origin to `CORS_ORIGINS` in `.env`
+3. Use `CORS_ORIGINS=*` in `Backend/.env`, or add the Windows browser origin explicitly if not using `*`
 
 ## Tech Stack
 

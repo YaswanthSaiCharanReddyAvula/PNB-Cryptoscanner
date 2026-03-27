@@ -115,7 +115,7 @@ export default function Login() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Username or email (e.g. admin)"
+                placeholder="scanner@example.com"
                 className="bg-secondary border-border h-10"
                 autoComplete="username"
                 maxLength={100}
@@ -192,7 +192,7 @@ export default function Login() {
             </Button>
 
             <p className="text-center text-[10px] text-muted-foreground mt-4">
-              Demo: admin@quantumshield.com / admin123
+              Demo: scanner@example.com / pass123
             </p>
           </form>
         </div>

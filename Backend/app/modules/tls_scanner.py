@@ -21,6 +21,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from app.db.models import CertChainEntry, CertificateInfo, TLSInfo, ConfidenceLevel
 from app.config import settings
+from app.modules.tls_pqc_signals import enrich_tls_info
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -297,8 +298,8 @@ async def scan_tls(host: str, port: int) -> TLSInfo:
             "TLS external scan complete for %s:%d — Conf: %s / %d ciphers / %d protocols",
             host, port, confidence.value, len(result.all_supported_ciphers), len(result.all_supported_protocols)
         )
-        
-        return result
+
+        return enrich_tls_info(result)
     except Exception as exc:
         logger.error("Unhandled internal TLS scan exception on %s:%d : %s", host, port, exc, exc_info=True)
         return TLSInfo(host=host, port=port, error=f"Unhandled internal TLS scan exception: {str(exc)}")

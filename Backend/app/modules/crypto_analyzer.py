@@ -49,6 +49,26 @@ QUANTUM_VULNERABLE_SIG = {
 
 SAFE_PROTOCOLS = {"TLSv1.3", "TLSv1.2"}
 
+_PQC_KX_HINTS = ("kyber", "ml-kem", "mlkem", "crystals", "pqtls", "kemtls")
+
+
+def _primary_threat(category: AlgorithmCategory) -> str:
+    """Map CBOM category to dominant quantum threat model."""
+    if category in (AlgorithmCategory.KEY_EXCHANGE, AlgorithmCategory.SIGNATURE):
+        return "shor"
+    if category in (AlgorithmCategory.CIPHER, AlgorithmCategory.HASH):
+        return "grover"
+    return "hndl"  # protocol
+
+
+def _tag_component(comp: CryptoComponent, host: str) -> CryptoComponent:
+    return comp.model_copy(
+        update={
+            "host": host,
+            "primary_quantum_threat": _primary_threat(comp.category),
+        }
+    )
+
 
 def _classify_protocol(tls_version: str | None) -> CryptoComponent:
     """Assess the TLS protocol version."""
@@ -100,7 +120,15 @@ def _classify_cipher(cipher_suite: str | None, bits: int | None) -> CryptoCompon
 def _classify_key_exchange(kx: str | None) -> CryptoComponent:
     """Assess the key-exchange algorithm."""
     name = kx or "UNKNOWN"
-    quantum = QuantumStatus.VULNERABLE if name.upper() in QUANTUM_VULNERABLE_KX else QuantumStatus.QUANTUM_SAFE
+    name_l = name.lower()
+    pqc_hint = any(h in name_l for h in _PQC_KX_HINTS)
+    quantum = (
+        QuantumStatus.QUANTUM_SAFE
+        if pqc_hint
+        else (
+            QuantumStatus.VULNERABLE if name.upper() in QUANTUM_VULNERABLE_KX else QuantumStatus.QUANTUM_SAFE
+        )
+    )
 
     if name.upper() in ("RSA",):
         risk = RiskLevel.HIGH  # Static RSA key exchange — no forward secrecy
@@ -115,7 +143,11 @@ def _classify_key_exchange(kx: str | None) -> CryptoComponent:
         usage_context="TLS key exchange",
         risk_level=risk,
         quantum_status=quantum,
-        details="Quantum-vulnerable" if quantum == QuantumStatus.VULNERABLE else "Classically secure",
+        details=(
+            "PQC/hybrid KEM signal in name (verify deployment)"
+            if pqc_hint
+            else ("Quantum-vulnerable" if quantum == QuantumStatus.VULNERABLE else "Classically secure")
+        ),
     )
 
 
@@ -231,11 +263,13 @@ def analyze(tls_info: TLSInfo) -> List[CryptoComponent]:
             components.append(_classify_cipher(cipher_name, cipher.get("bits")))
             seen_ciphers.add(cipher_name)
 
+    tagged = [_tag_component(c, tls_info.host) for c in components]
+
     logger.info(
         "Crypto analysis complete for %s:%d — %d components, highest risk: %s",
         tls_info.host,
         tls_info.port,
-        len(components),
-        max(c.risk_level for c in components) if components else "N/A",
+        len(tagged),
+        max(c.risk_level for c in tagged) if tagged else "N/A",
     )
-    return components
+    return tagged

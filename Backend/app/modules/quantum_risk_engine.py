@@ -4,6 +4,21 @@ QuantumShield — Quantum Risk Engine
 Evaluates a set of cryptographic components against post-quantum
 cryptography (PQC) standards and computes a Quantum Readiness
 Score from 0 (fully vulnerable) to 100 (quantum-safe).
+
+Scoring formula (documented for audits)
+---------------------------------------
+1. Each `CryptoComponent` is mapped to a 0–100 sub-score by category
+   (key exchange, signature, cipher, protocol).
+2. For each category present in the scan, the **minimum** sub-score
+   is taken (weakest link within that category).
+3. The final score is a **weighted mean** of those category minima:
+   - key_exchange: 40%
+   - signature:    30%
+   - cipher:       20%
+   - protocol:     10%
+
+Optional tuning via env is not implemented; weights are fixed in
+`CATEGORY_WEIGHTS` below.
 """
 
 from typing import List
@@ -94,6 +109,11 @@ def _score_component(component: CryptoComponent) -> float:
 
     match component.category:
         case AlgorithmCategory.KEY_EXCHANGE:
+            if any(
+                k in name_lower
+                for k in ("kyber", "mlkem", "crystals", "pqtls", "kemtls")
+            ):
+                return 95
             return KX_SCORES.get(name, 30)
 
         case AlgorithmCategory.SIGNATURE:

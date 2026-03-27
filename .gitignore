@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs and local scratch
+*.log
+output.txt
+rec.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Per-machine env (shared folder / VM: keep secrets & host-specific values out of git)
+Backend/.env
+Backend/.env.local
+Frontend/.env
+Frontend/.env.local

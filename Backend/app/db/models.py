@@ -52,6 +52,10 @@ class DiscoveredAsset(BaseModel):
     subdomain: str
     ip: Optional[str] = None
     open_ports: List[int] = Field(default_factory=list)
+    # Phase 2: optional org metadata (from inventory import or UI)
+    owner: Optional[str] = None
+    environment: Optional[str] = None  # e.g. prod, staging, dev
+    criticality: Optional[str] = None  # e.g. low, medium, high, critical
 
 
 class CertificateInfo(BaseModel):
@@ -95,6 +99,11 @@ class TLSInfo(BaseModel):
     cert_chain: List[CertChainEntry] = Field(default_factory=list)
     confidence: Optional[ConfidenceLevel] = None
     error: Optional[str] = None
+    # ── Phase 1: audit signals (string-based; not proof of deployed PQC libraries) ──
+    tls_modern: bool = False
+    hybrid_key_exchange: bool = False
+    pqc_kem_observed: bool = False
+    pqc_signal_hints: List[str] = Field(default_factory=list)
 
 
 # Forward-ref update
@@ -136,6 +145,10 @@ class CryptoComponent(BaseModel):
     risk_level: RiskLevel = RiskLevel.SAFE
     quantum_status: QuantumStatus = QuantumStatus.VULNERABLE
     details: Optional[str] = None
+    # ── Phase 1: traceability per scan host ──
+    host: Optional[str] = None
+    # Primary quantum threat: shor (asymmetric), grover (symmetric/hash), hndl (protocol capture)
+    primary_quantum_threat: Optional[str] = None
 
 
 class QuantumScoreBreakdown(BaseModel):
@@ -181,6 +194,95 @@ class ScanRequest(BaseModel):
     ports: Optional[str] = None  # comma-separated, e.g. "443,8443"
 
 
+class BatchScanRequest(BaseModel):
+    """Trigger multiple domain scans (portfolio / org sweep)."""
+    domains: List[str]
+    include_subdomains: bool = True
+    ports: Optional[str] = None
+
+
+class AssetMetadataUpdate(BaseModel):
+    """Upsert per-host metadata (keyed by FQDN / discovered subdomain)."""
+    host: str
+    owner: Optional[str] = None
+    environment: Optional[str] = None
+    criticality: Optional[str] = None
+
+
+class SimulateQuantumRequest(BaseModel):
+    """What-if projection against latest completed scan (Phase 3)."""
+    domain: Optional[str] = None
+    assume_tls_13_all: bool = False
+    assume_pqc_hybrid_kem: bool = False
+
+
+# ── Phase 4: Admin — policy & integrations ───────────────────────
+
+
+class OrgCryptoPolicyUpdate(BaseModel):
+    """Upsert org crypto policy (stored as a single document)."""
+    min_tls_version: Optional[str] = None  # e.g. "1.2", "1.3"
+    require_forward_secrecy: Optional[bool] = None
+    pqc_readiness_target: Optional[str] = None
+    policy_notes: Optional[str] = None
+
+
+class IntegrationSettingsUpdate(BaseModel):
+    """Outbound integration endpoints (full URLs stored server-side)."""
+    outbound_webhook_url: Optional[str] = None
+    notify_on_scan_complete: Optional[bool] = None
+    slack_webhook_url: Optional[str] = None
+    jira_webhook_url: Optional[str] = None
+
+
+# ── Phase 5: Migration tasks & waivers ─────────────────────────────
+
+
+class MigrationTaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    description: Optional[str] = None
+    domain: Optional[str] = None
+    host: Optional[str] = None
+    wave: int = Field(default=1, ge=1, le=5)
+    priority: str = "medium"
+    status: str = "open"
+    due_date: Optional[str] = None
+    owner: Optional[str] = None
+
+
+class MigrationTaskUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=500)
+    description: Optional[str] = None
+    domain: Optional[str] = None
+    host: Optional[str] = None
+    wave: Optional[int] = Field(None, ge=1, le=5)
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    due_date: Optional[str] = None
+    owner: Optional[str] = None
+
+
+class WaiverCreate(BaseModel):
+    requestor: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1)
+    expiry: Optional[str] = None
+    impacted_assets: List[str] = Field(default_factory=list)
+    status: str = "pending"
+
+
+class WaiverUpdate(BaseModel):
+    requestor: Optional[str] = None
+    reason: Optional[str] = None
+    expiry: Optional[str] = None
+    impacted_assets: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
+class SeedTasksFromBacklogBody(BaseModel):
+    domain: Optional[str] = None
+    limit: int = Field(default=12, ge=1, le=80)
+
+
 class ScanStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -191,6 +293,7 @@ class ScanStatus(str, Enum):
 class ScanResult(BaseModel):
     """Full result of a scan stored in MongoDB."""
     scan_id: Optional[str] = None
+    batch_id: Optional[str] = None
     domain: str
     status: ScanStatus = ScanStatus.PENDING
     started_at: Optional[datetime] = None
@@ -209,6 +312,7 @@ class ScanResult(BaseModel):
 
 class CBOMReport(BaseModel):
     """Structured Cryptographic Bill of Materials."""
+    schema_version: str = "1.0.0"
     domain: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     total_components: int = 0

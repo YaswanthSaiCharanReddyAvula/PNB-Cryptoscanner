@@ -1,0 +1,79 @@
+{
+  "base_url": "http://192.168.56.102:8000",
+  "passed": 9,
+  "total": 11,
+  "cases": [
+    {
+      "id": "HEALTH",
+      "path": "/health",
+      "status": 200,
+      "ok": true,
+      "note": "{'status': 'healthy', 'service': 'QuantumShield', 'version': '1.0.0', 'wipe_status': {'mongodb': 'N/A'}}"
+    },
+    {
+      "id": "TC001",
+      "path": "POST /scan",
+      "status": 202,
+      "ok": true,
+      "note": "expect 202 when Mongo up, 503 when DB unavailable"
+    },
+    {
+      "id": "TC002",
+      "path": "POST /scan/batch",
+      "status": 404,
+      "ok": false,
+      "note": "expect 202 when Mongo up"
+    },
+    {
+      "id": "TC003",
+      "path": "GET /results/{domain}",
+      "status": 200,
+      "ok": true,
+      "note": "404 no scan; 503 no Mongo"
+    },
+    {
+      "id": "TC004",
+      "path": "GET /scans/history",
+      "status": 404,
+      "ok": false
+    },
+    {
+      "id": "TC005",
+      "path": "GET /scans/diff",
+      "status": 404,
+      "ok": true,
+      "note": "404 when scans missing"
+    },
+    {
+      "id": "TC006",
+      "path": "GET /cbom/summary",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "id": "TC007",
+      "path": "GET /cbom/per-app",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "id": "TC008",
+      "path": "GET /cbom/charts",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "id": "TC009",
+      "path": "GET /crypto/security",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "id": "TC010",
+      "path": "GET /pqc/posture",
+      "status": 200,
+      "ok": true,
+      "note": "200 with posture object when Mongo+scan; empty object if no scan"
+    }
+  ]
+}

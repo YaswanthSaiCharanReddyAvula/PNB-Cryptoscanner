@@ -1,5 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+/** Same host as REST API (Kali VM IP when VITE_API_BASE_URL points there). */
+function getBackendWsOrigin(): string {
+  const base =
+    import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+  try {
+    const u = new URL(base);
+    const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProto}//${u.host}`;
+  } catch {
+    return 'ws://localhost:8000';
+  }
+}
+
 export type WSMessage = {
   type: 'status' | 'log' | 'data' | 'error' | 'metrics';
   stage?: number;
@@ -18,9 +31,7 @@ export const useWebSocket = (scanId: string | null) => {
   const connect = useCallback(() => {
     if (!scanId) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Using hardcoded localhost:8000 for now as per api.ts fallback
-    const wsUrl = `${protocol}//localhost:8000/ws/scan/${scanId}`;
+    const wsUrl = `${getBackendWsOrigin()}/ws/scan/${scanId}`;
     
     setStatus('connecting');
     const socket = new WebSocket(wsUrl);

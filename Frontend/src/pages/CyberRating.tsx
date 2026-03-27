@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Search, Lock, Loader2, ChevronDown, ChevronUp,
   CheckCircle2, ArrowUpCircle, CircleDot, AlertCircle,
@@ -55,6 +57,15 @@ export default function CyberRating() {
   const [score1000,     setScore1000]     = useState<number | null>(null);
   const [urlScores,     setUrlScores]     = useState<any[]>([]);
   const [tierOpen,      setTierOpen]      = useState(false);
+  const [simTls,         setSimTls]         = useState(false);
+  const [simPqc,         setSimPqc]         = useState(false);
+  const [simBusy,        setSimBusy]        = useState(false);
+  const [simResult,       setSimResult]       = useState<{
+    baseline_score_100: number;
+    projected_score_100: number;
+    delta: number;
+    note?: string;
+  } | null>(null);
 
   const { user } = useAuth();
   const isEmployee = user?.role === "Employee";
@@ -67,15 +78,24 @@ export default function CyberRating() {
   const fetchScore = async (v1FallbackPayload: any = null) => {
     try {
       const res = await cyberRatingService.getRating();
-      if (res.data?.score) {
-        setScore1000(scaleScore(res.data.score));
-        if (res.data.per_url_scores?.length) setUrlScores(res.data.per_url_scores);
+      const d = res.data;
+      // Backend returns score on 0–1000 scale and tier "N/A" when no scan exists.
+      if (d?.tier === "N/A" || d == null) {
+        setScore1000(null);
+        setUrlScores([]);
+      } else if (typeof d.score === "number") {
+        setScore1000(Math.round(Math.max(0, Math.min(1000, d.score))));
+        if (Array.isArray(d.per_url_scores) && d.per_url_scores.length) setUrlScores(d.per_url_scores);
       }
-    } catch { /* keep null */ }
+    } catch {
+      setScore1000(null);
+    }
     if (v1FallbackPayload) setScore1000(computeScoreFromScan(v1FallbackPayload));
   };
 
-  useEffect(() => { fetchScore(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    fetchScore();
+  }, []);
 
   useEffect(() => {
     if (results?.status === "completed" && !isScanning) {
@@ -96,11 +116,30 @@ export default function CyberRating() {
     if (domain.trim() && !isScanning) { setScannedDomain(domain.trim()); await startScan(domain.trim()); }
   };
 
+  const runScoreSimulation = async () => {
+    setSimBusy(true);
+    try {
+      const res = await cyberRatingService.simulateQuantumScore({
+        domain: scannedDomain.trim() || undefined,
+        assume_tls_13_all: simTls,
+        assume_pqc_hybrid_kem: simPqc,
+      });
+      setSimResult(res.data);
+    } catch {
+      toast.error("No completed scan to simulate, or the API is unreachable.");
+      setSimResult(null);
+    } finally {
+      setSimBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-bold text-foreground">Cyber Rating</h1>
-        <p className="text-sm text-muted-foreground">Overall PQC-readiness score — maximum 1000 after normalisation</p>
+        <p className="text-sm text-muted-foreground">
+          Enterprise-style score (0–1000) from the latest scan. This is a composite rating, not proof of deployed NIST PQC algorithms.
+        </p>
       </motion.div>
 
       <div className="rounded-xl border border-border bg-card p-5">
@@ -161,6 +200,69 @@ export default function CyberRating() {
               </div>
             </div>
           </>
+        )}
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.06 }}
+        className="rounded-xl border border-border bg-card p-6"
+      >
+        <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-1">
+          What-if quantum score
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Heuristic projection on the scanner&apos;s 0–100 quantum score (display ×10 aligns with the 0–1000 gauge above). Indicative only.
+        </p>
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <Checkbox id="sim-tls" checked={simTls} onCheckedChange={(v) => setSimTls(v === true)} />
+            <Label htmlFor="sim-tls" className="text-sm font-normal cursor-pointer">
+              Assume TLS 1.3 on all endpoints
+            </Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox id="sim-pqc" checked={simPqc} onCheckedChange={(v) => setSimPqc(v === true)} />
+            <Label htmlFor="sim-pqc" className="text-sm font-normal cursor-pointer">
+              Assume PQC / hybrid KEM everywhere
+            </Label>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="lg:ml-auto border-[#FBBC09]/50 text-[#FBBC09] hover:bg-[#FBBC09]/10"
+            onClick={runScoreSimulation}
+            disabled={simBusy}
+          >
+            {simBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            Run simulation
+          </Button>
+        </div>
+        {simResult && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg bg-secondary/40 px-3 py-2">
+              <p className="text-[10px] uppercase text-muted-foreground">Baseline (0–100)</p>
+              <p className="text-lg font-bold text-foreground">{simResult.baseline_score_100}</p>
+              <p className="text-[10px] text-muted-foreground">≈ {Math.round(simResult.baseline_score_100 * 10)} / 1000</p>
+            </div>
+            <div className="rounded-lg bg-secondary/40 px-3 py-2">
+              <p className="text-[10px] uppercase text-muted-foreground">Projected (0–100)</p>
+              <p className="text-lg font-bold" style={{ color: GOLD }}>{simResult.projected_score_100}</p>
+              <p className="text-[10px] text-muted-foreground">≈ {Math.round(simResult.projected_score_100 * 10)} / 1000</p>
+            </div>
+            <div className="rounded-lg bg-secondary/40 px-3 py-2">
+              <p className="text-[10px] uppercase text-muted-foreground">Delta</p>
+              <p className="text-lg font-bold text-foreground">
+                {simResult.delta >= 0 ? "+" : ""}
+                {simResult.delta}
+              </p>
+            </div>
+          </div>
+        )}
+        {simResult?.note && (
+          <p className="text-[11px] text-muted-foreground mt-3 leading-relaxed">{simResult.note}</p>
         )}
       </motion.div>
 

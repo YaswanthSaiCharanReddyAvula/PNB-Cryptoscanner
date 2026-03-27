@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QuantumShield | Policy &amp; Standards Configuration</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary-fixed-dim": "#89ceff",
+                        "secondary-fixed-dim": "#b9c7e0",
+                        "surface-container-high": "#e6e8ea",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary-fixed-variant": "#3a485c",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "inverse-primary": "#bec6e0",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed": "#131b2e",
+                        "surface-dim": "#d8dadc",
+                        "secondary-container": "#d5e3fd",
+                        "on-surface": "#191c1e",
+                        "outline-variant": "#c6c6cd",
+                        "on-error": "#ffffff",
+                        "error": "#ba1a1a",
+                        "on-tertiary-fixed-variant": "#004c6e",
+                        "inverse-on-surface": "#eff1f3",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "secondary": "#515f74",
+                        "on-tertiary-fixed": "#001e2f",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed-dim": "#bec6e0",
+                        "on-tertiary-container": "#008cc7",
+                        "on-surface-variant": "#45464d",
+                        "surface-tint": "#565e74",
+                        "tertiary-fixed": "#c9e6ff",
+                        "secondary-fixed": "#d5e3fd",
+                        "surface-container": "#eceef0",
+                        "surface-container-low": "#f2f4f6",
+                        "surface-container-highest": "#e0e3e5",
+                        "outline": "#76777d",
+                        "on-error-container": "#93000a",
+                        "tertiary-container": "#001e2f",
+                        "on-primary-container": "#7c839b",
+                        "on-tertiary": "#ffffff",
+                        "on-background": "#191c1e",
+                        "primary-fixed": "#dae2fd",
+                        "inverse-surface": "#2d3133",
+                        "tertiary": "#000000",
+                        "primary": "#000000",
+                        "on-secondary-container": "#57657b",
+                        "primary-container": "#131b2e",
+                        "surface": "#f7f9fb",
+                        "on-secondary-fixed": "#0d1c2f",
+                        "surface-bright": "#f7f9fb",
+                        "on-primary": "#ffffff"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Manrope', sans-serif; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface min-h-screen">
+<!-- SideNavBar -->
+<aside class="flex flex-col h-screen fixed left-0 top-0 border-r border-slate-200/15 dark:border-slate-800/15 bg-slate-50 dark:bg-slate-950 w-64 z-50">
+<div class="p-6">
+<div class="text-lg font-black tracking-tighter text-slate-950 dark:text-white mb-1">The Sentinel</div>
+<div class="text-[10px] font-bold tracking-widest uppercase text-slate-500">Intelligence Dossier</div>
+</div>
+<nav class="flex-1 px-4 space-y-1 mt-4">
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="history">history</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">Inventory Runs</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="inventory_2">inventory_2</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">CBOM</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="map">map</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">Threat Map</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="warning">warning</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">HNDL Exposure</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="verified_user">verified_user</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">Waivers</span>
+</a>
+<!-- Active Tab: Policy -->
+<a class="flex items-center px-4 py-3 text-slate-950 dark:text-white border-r-2 border-slate-950 dark:border-white font-bold bg-slate-200/50 dark:bg-slate-800/50 transition-all duration-200 ease-in-out rounded-none group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="gavel">gavel</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">Policy</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-200 ease-in-out rounded-lg group" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="analytics">analytics</span>
+<span class="text-[11px] font-bold tracking-widest uppercase Inter">Admin</span>
+</a>
+</nav>
+<div class="px-4 mb-6">
+<button class="w-full bg-primary text-on-primary py-3 rounded-md text-[11px] font-bold tracking-widest uppercase flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span>
+                New Scan
+            </button>
+</div>
+<div class="px-4 py-4 border-t border-slate-200/15 dark:border-slate-800/15 space-y-1">
+<a class="flex items-center px-4 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors rounded-md group" href="#">
+<span class="material-symbols-outlined mr-3 text-lg" data-icon="contact_support">contact_support</span>
+<span class="text-[10px] font-bold uppercase tracking-wider">Support</span>
+</a>
+<a class="flex items-center px-4 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors rounded-md group" href="#">
+<span class="material-symbols-outlined mr-3 text-lg" data-icon="description">description</span>
+<span class="text-[10px] font-bold uppercase tracking-wider">Documentation</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 min-h-screen">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-8 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200/15 dark:border-slate-800/15 sticky top-0 z-40">
+<div class="flex items-center gap-8">
+<h1 class="text-xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">QuantumShield</h1>
+<div class="relative">
+<span class="absolute inset-y-0 left-3 flex items-center text-slate-400">
+<span class="material-symbols-outlined text-lg" data-icon="search">search</span>
+</span>
+<input class="bg-surface-container border-none rounded-full py-1.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/20 w-64 text-on-surface" placeholder="Search policies..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+</button>
+<button class="p-2 text-slate-500 hover:bg-slate-200 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-slate-200 overflow-hidden ml-2 border border-slate-300/30">
+<img alt="Security Analyst Profile" class="w-full h-full object-cover" data-alt="professional portrait of a security analyst in a clean corporate setting with soft natural lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBQd_MhilarP9M1KFyOII0xI5zcMjQfpfhyF3AqxEEIuicHM8unUMSegMdcdQkWX-UA-trRzdQanJpS8bMRRVpfGuZmi8qxML19ZzN1pBurlW8aXcqIbdpKql1lHFdGV-LNA5b2DpYPsouPuzzF4w_Cq-e0vvmWQBLCbuBishD3jJkph5A0fvWkZigk83-7rjaBomhXeAwhRN6DE9ytsc3JtpPtbIwWpxyPUUKhXCmFrADs75OOZc4XXQFEznVwhqcbkDqIPWrqpS7a"/>
+</div>
+</div>
+</header>
+<div class="p-8 max-w-7xl mx-auto">
+<div class="mb-8">
+<h2 class="text-4xl font-extrabold tracking-tight mb-2">Policy &amp; Standards</h2>
+<p class="text-on-surface-variant max-w-2xl">Define the cryptographic boundaries for your organization. Changes here trigger an immediate re-evaluation of all discovered assets across the fleet.</p>
+</div>
+<div class="grid grid-cols-12 gap-8">
+<!-- Configuration Form -->
+<div class="col-span-12 lg:col-span-8 space-y-8">
+<!-- Form Section: Protocol Standards -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/10">
+<div class="flex items-center gap-3 mb-6">
+<span class="material-symbols-outlined text-primary" data-icon="security">security</span>
+<h3 class="text-lg font-bold">Transport Layer Standards</h3>
+</div>
+<div class="space-y-6">
+<div class="grid grid-cols-2 gap-6">
+<div>
+<label class="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2">Minimum TLS Version</label>
+<select class="w-full bg-surface-container border-none rounded-md py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20">
+<option>TLS 1.2</option>
+<option selected="">TLS 1.3</option>
+<option>TLS 1.3 + PQC Draft</option>
+</select>
+</div>
+<div>
+<label class="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2">Policy Strictness</label>
+<select class="w-full bg-surface-container border-none rounded-md py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20">
+<option>Warning Only</option>
+<option selected="">Enforce Compliance</option>
+<option>Strict (Deny All)</option>
+</select>
+</div>
+</div>
+</div>
+</section>
+<!-- Form Section: Algorithm Blacklist -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/10">
+<div class="flex items-center gap-3 mb-6">
+<span class="material-symbols-outlined text-error" data-icon="block">block</span>
+<h3 class="text-lg font-bold">Forbidden Algorithms &amp; Legacy Support</h3>
+</div>
+<div class="space-y-4">
+<div class="flex flex-wrap gap-2">
+<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-error-container text-on-error-container text-xs font-bold rounded-md">
+                                    RSA-1024 <button class="material-symbols-outlined text-sm" data-icon="close">close</button>
+</span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-error-container text-on-error-container text-xs font-bold rounded-md">
+                                    SHA-1 <button class="material-symbols-outlined text-sm" data-icon="close">close</button>
+</span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-error-container text-on-error-container text-xs font-bold rounded-md">
+                                    3DES <button class="material-symbols-outlined text-sm" data-icon="close">close</button>
+</span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-error-container text-on-error-container text-xs font-bold rounded-md">
+                                    RC4 <button class="material-symbols-outlined text-sm" data-icon="close">close</button>
+</span>
+<button class="inline-flex items-center gap-1 px-3 py-1.5 bg-surface-container-high text-on-surface-variant text-xs font-bold rounded-md hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span> ADD ALGORITHM
+                                </button>
+</div>
+<div class="pt-4 border-t border-outline-variant/10">
+<label class="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2">Minimum Key Sizes (RSA / ECC)</label>
+<div class="grid grid-cols-2 gap-4">
+<div class="flex items-center gap-3 bg-surface-container px-4 py-3 rounded-md">
+<span class="text-xs font-bold">RSA</span>
+<input class="bg-transparent border-none text-right text-sm w-full focus:ring-0 p-0 font-mono" type="number" value="2048"/>
+<span class="text-xs text-on-surface-variant">bits</span>
+</div>
+<div class="flex items-center gap-3 bg-surface-container px-4 py-3 rounded-md">
+<span class="text-xs font-bold">ECC</span>
+<input class="bg-transparent border-none text-right text-sm w-full focus:ring-0 p-0 font-mono" type="number" value="256"/>
+<span class="text-xs text-on-surface-variant">bits</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Form Section: PQC Target -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/10 overflow-hidden relative">
+<div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-cyan-500"></div>
+<div class="flex items-center justify-between mb-6">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-emerald-600" data-icon="bolt">bolt</span>
+<h3 class="text-lg font-bold">Post-Quantum Cryptography (PQC) Readiness</h3>
+</div>
+<span class="px-2 py-0.5 bg-emerald-100 text-emerald-900 text-[10px] font-black uppercase tracking-widest rounded flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                Quantum Safe
+                            </span>
+</div>
+<div class="space-y-6">
+<div>
+<label class="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2">Primary KEM Target</label>
+<select class="w-full bg-surface-container border-none rounded-md py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20">
+<option selected="">Kyber-768 (ML-KEM)</option>
+<option>Kyber-1024 (ML-KEM)</option>
+<option>FrodoKEM</option>
+</select>
+</div>
+<div>
+<label class="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2">Signature Scheme</label>
+<select class="w-full bg-surface-container border-none rounded-md py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20">
+<option selected="">Dilithium-Level 3 (ML-DSA)</option>
+<option>Falcon-512</option>
+<option>SPHINCS+</option>
+</select>
+</div>
+</div>
+</section>
+</div>
+<!-- Right Rail: Impact Preview -->
+<div class="col-span-12 lg:col-span-4 space-y-6">
+<div class="bg-primary-container text-white p-6 rounded-xl shadow-xl relative overflow-hidden group">
+<div class="absolute -right-4 -top-4 opacity-10 scale-150 rotate-12 transition-transform group-hover:rotate-0">
+<span class="material-symbols-outlined text-9xl" data-icon="analytics">analytics</span>
+</div>
+<h3 class="text-[11px] font-black uppercase tracking-widest text-on-primary-container mb-6">Policy Impact Preview</h3>
+<div class="flex items-baseline gap-2 mb-2">
+<span class="text-5xl font-extrabold tracking-tighter">142</span>
+<span class="text-sm font-bold text-on-primary-container">Assets</span>
+</div>
+<p class="text-sm text-on-primary-container leading-relaxed mb-8">Implementing these standards will mark <span class="text-white font-bold">14%</span> of your currently compliant inventory as <span class="text-error-container font-bold">Non-Compliant</span>.</p>
+<div class="space-y-4 mb-8">
+<div class="bg-white/5 p-4 rounded-lg backdrop-blur-sm">
+<div class="flex justify-between text-xs font-bold mb-2">
+<span>TLS Compliance</span>
+<span class="text-emerald-400">-2 Assets</span>
+</div>
+<div class="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-emerald-400 w-[95%]"></div>
+</div>
+</div>
+<div class="bg-white/5 p-4 rounded-lg backdrop-blur-sm">
+<div class="flex justify-between text-xs font-bold mb-2">
+<span>Key Size Impact</span>
+<span class="text-error-container">-138 Assets</span>
+</div>
+<div class="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-error w-[60%]"></div>
+</div>
+</div>
+</div>
+<button class="w-full bg-white text-primary font-bold py-3 rounded-md text-sm hover:bg-slate-100 transition-colors">
+                            Apply Changes
+                        </button>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant/15">
+<h3 class="text-[10px] font-black uppercase tracking-widest text-on-surface-variant mb-4">Quick Recommendation</h3>
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-on-tertiary-container" data-icon="lightbulb">lightbulb</span>
+<p class="text-xs text-on-surface-variant leading-relaxed">Most of your non-compliance comes from <span class="font-bold text-on-surface">External API Gateways</span> using RSA-1024. Consider a phased migration for legacy partners.</p>
+</div>
+</div>
+</div>
+<!-- Bottom: Audit Trail -->
+<div class="col-span-12">
+<section class="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant/10 overflow-hidden">
+<div class="px-8 py-6 border-b border-surface-container flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="history">history</span>
+<h3 class="text-lg font-bold">Policy Audit Trail</h3>
+</div>
+<button class="text-[10px] font-bold uppercase tracking-widest text-on-tertiary-container hover:underline">Export Logs</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead class="bg-surface-container-low">
+<tr>
+<th class="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Timestamp</th>
+<th class="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Modified By</th>
+<th class="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Action</th>
+<th class="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Standard Change</th>
+<th class="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Status</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container text-sm">
+<tr class="hover:bg-surface-container-low transition-colors group">
+<td class="px-8 py-4 font-mono text-xs">2023-11-24 14:32:01</td>
+<td class="px-8 py-4 flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-slate-200 overflow-hidden">
+<img alt="Admin Avatar" class="w-full h-full object-cover" data-alt="close up headshot of a professional man in a business casual outfit with soft office background blur" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAfYm93zaBpjMi_BsEekvSBb-ab-hp_W2wS54wP6MXnPv0-Ha2tZrYhjr0hcBGMI77SMXU50M1rEev8L_QYQgC-9vGl_IGHJGQh-2NLqnm5YwfzMiDPKAkPRVjxeHIjhGOjK-i-v-vM1OuZ-4uT4SJWMF5DDuJlQQkWGOV8Ail0LjugiCDFUE7lBY0kigO9PwsrMG41AbjF8ZFOqDlbXp5KuH1KLIP_cFemI0MOyqrPN38MKt-kV5puciKWaDYWLxEjP41Pe_z-psPy"/>
+</div>
+<span class="font-medium">m.sterling</span>
+</td>
+<td class="px-8 py-4 text-on-surface-variant">Update Forbidden List</td>
+<td class="px-8 py-4"><span class="bg-surface-container px-2 py-0.5 rounded text-xs">Added RC4, DES</span></td>
+<td class="px-8 py-4">
+<span class="flex items-center gap-1.5 text-emerald-600 font-bold text-xs">
+<span class="material-symbols-outlined text-sm" data-icon="check_circle">check_circle</span> Applied
+                                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors group">
+<td class="px-8 py-4 font-mono text-xs">2023-11-22 09:15:44</td>
+<td class="px-8 py-4 flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-slate-200 overflow-hidden">
+<img alt="Admin Avatar" class="w-full h-full object-cover" data-alt="professional portrait of a confident woman in corporate attire with warm ambient lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAhimWVJ9TjnMXxKlxuEnrKW6EAMs4NcmUqZFGAibxv5JhnXxcCYoC4O_ClZU8WuZZM89b_g5BS8vvMRCGFOvBCUlrhyarJ4X-U30lN_cgaY9sE107PSFK1RemMKDUXV58N2FtjoPH4RvP-5WrAYz2Bmi_2-GRK7Uq_SSpm1MzPm-2WarpvgxTQaciiZNYsqLnW9zHNtkRHYRmNqxyZuSQDAL7YgbK02FlKFYBGvwxRWyc8aHFmbOb4LAlAfKEEKFHqDDWS2AsHvonF"/>
+</div>
+<span class="font-medium">j.vance</span>
+</td>
+<td class="px-8 py-4 text-on-surface-variant">TLS Version Bump</td>
+<td class="px-8 py-4"><span class="bg-surface-container px-2 py-0.5 rounded text-xs">TLS 1.1 -&gt; 1.2</span></td>
+<td class="px-8 py-4">
+<span class="flex items-center gap-1.5 text-emerald-600 font-bold text-xs">
+<span class="material-symbols-outlined text-sm" data-icon="check_circle">check_circle</span> Applied
+                                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors group">
+<td class="px-8 py-4 font-mono text-xs">2023-11-20 18:44:12</td>
+<td class="px-8 py-4 flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-slate-200 overflow-hidden">
+<img alt="Admin Avatar" class="w-full h-full object-cover" data-alt="professional portrait of a male analyst in a modern office environment with professional lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBdS5GhVDDsvlIvCyowszQrIvLpsVPe_41enYcfsnOrqNb09OYXa8TijTDWuv1kkDZzaz_fBT65aMga6RG78EHywFyivOzGN1cMuVMdPrHvSzAB3hBkPxaFcgH8da7FotXbtQn7pyZY2bas2FKqsmmmzKBCtj2VrePd31keNk9Tk-ZiwdaYOnBt3LFNzEDIOR0kZhp8ANod8KdvA414m5MYKUt0V14CKBUXjLmXImzN3-rZZcalwUbAx-cBBFDlQ6ffOkfrDFMrFXxy"/>
+</div>
+<span class="font-medium">s.chen</span>
+</td>
+<td class="px-8 py-4 text-on-surface-variant">Initialize PQC Policy</td>
+<td class="px-8 py-4"><span class="bg-surface-container px-2 py-0.5 rounded text-xs">Kyber-768 Targeted</span></td>
+<td class="px-8 py-4">
+<span class="flex items-center gap-1.5 text-secondary font-bold text-xs">
+<span class="material-symbols-outlined text-sm" data-icon="history">history</span> Rolled Back
+                                            </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</div>
+</div>
+</div>
+</main>
+</body></html>

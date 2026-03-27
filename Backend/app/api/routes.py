@@ -23,20 +23,59 @@ Endpoints:
   GET  /cyber-rating/risk-factors → risk factor breakdown
   GET  /reporting/domains         → list of scanned domains
   POST /reporting/generate        → generate a report
+  GET  /reports/export-bundle     → JSON export (CBOM + TLS + score) for latest scan
+  GET  /migration/roadmap         → phased migration waves (derived from scan)
+  GET  /threat-model/summary      → Shor/Grover/HNDL context + scan counts
+  GET  /threat-model/nist-catalog → NIST PQC publication URLs (FIPS 203/204/205)
+  POST /quantum-score/simulate    → what-if score projection (TLS 1.3 / PQC hybrid assumptions)
+  POST /scan/batch                → queue multiple domain scans (portfolio)
+  GET  /scans/history             → completed scan list for a domain
+  GET  /scans/diff                → compare two scans (new/removed hosts, TLS deltas)
+  GET  /inventory/summary         → deduplicated hosts across recent scans
+  PUT  /assets/metadata           → upsert host metadata (owner/env/criticality)
+  POST /assets/metadata/bulk    → bulk metadata upsert
   GET  /discovery/assets          → discovered asset inventory (tabbed view)
   GET  /discovery/network-graph   → network graph nodes + edges
   POST /auth/login                → demo login (returns JWT-style token)
+  GET  /admin/policy              → org crypto policy (Phase 4)
+  PUT  /admin/policy              → update policy (admin)
+  GET  /admin/integrations        → outbound webhooks (masked)
+  PUT  /admin/integrations      → update integrations (admin)
+  GET  /admin/exports/history     → export audit log
+  GET  /migration/tasks           → migration backlog tasks (Phase 5)
+  POST /migration/tasks           → create task
+  PATCH /migration/tasks/{id}     → update task
+  DELETE /migration/tasks/{id}    → delete task (admin)
+  POST /migration/tasks/seed-from-backlog → seed from scan backlog (admin)
+  GET  /migration/waivers         → crypto waivers / exceptions
+  POST /migration/waivers         → request waiver
+  PATCH /migration/waivers/{id}   → update (approve/reject: admin)
+  DELETE /migration/waivers/{id}  → delete (admin)
 """
 
 import asyncio
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pymongo import ReturnDocument
 
+from app.config import settings
+from app.core.deps import get_current_user, require_admin
 from app.db.connection import get_database
 from app.db.models import (
+    AssetMetadataUpdate,
+    BatchScanRequest,
+    IntegrationSettingsUpdate,
+    MigrationTaskCreate,
+    MigrationTaskUpdate,
+    OrgCryptoPolicyUpdate,
+    SeedTasksFromBacklogBody,
+    SimulateQuantumRequest,
+    User,
+    WaiverCreate,
+    WaiverUpdate,
     CBOMReport,
     CryptoComponent,
     QuantumScore,
@@ -57,6 +96,13 @@ from app.modules import (
 )
 from app.modules.headers_scanner import scan_headers
 from app.modules.cve_mapper import map_cves
+from app.modules.threat_nist_mapping import (
+    NIST_PQC_REFERENCES,
+    build_prioritized_backlog,
+    enrich_cbom_component_dict,
+    simulate_quantum_score,
+)
+from app.modules.webhook_notify import post_json_webhook
 from app.core.ws_manager import manager as ws_manager
 from app.utils.logger import get_logger
 
@@ -94,6 +140,62 @@ async def wipe_all_data():
 
 # ── Collection name ──────────────────────────────────────────────
 SCANS_COLLECTION = "scans"
+ASSET_METADATA_COLLECTION = "asset_metadata"
+ORG_POLICY_COLLECTION = "org_policy"
+INTEGRATION_SETTINGS_COLLECTION = "integration_settings"
+EXPORT_AUDIT_COLLECTION = "export_audit"
+MIGRATION_TASKS_COLLECTION = "migration_tasks"
+WAIVERS_COLLECTION = "waivers"
+
+_DEFAULT_ORG_POLICY: Dict[str, Any] = {
+    "min_tls_version": "1.2",
+    "require_forward_secrecy": True,
+    "pqc_readiness_target": "",
+    "policy_notes": "",
+}
+
+_DEFAULT_INTEGRATION: Dict[str, Any] = {
+    "outbound_webhook_url": "",
+    "notify_on_scan_complete": False,
+    "slack_webhook_url": "",
+    "jira_webhook_url": "",
+}
+
+_scan_sem = asyncio.Semaphore(max(1, settings.MAX_CONCURRENT_SCANS))
+
+
+def _mask_url(u: Optional[str]) -> Optional[str]:
+    if not u or not str(u).strip():
+        return None
+    s = str(u).strip()
+    if len(s) <= 24:
+        return "****"
+    return s[:20] + "…" + s[-4:]
+
+
+async def _notify_scan_complete_hooks(scan_id: str, domain: str, quantum_score: dict) -> None:
+    db = get_database()
+    doc = await db[INTEGRATION_SETTINGS_COLLECTION].find_one({"_id": "default"})
+    if not doc or not doc.get("notify_on_scan_complete"):
+        return
+    url = (doc.get("outbound_webhook_url") or "").strip()
+    if not url:
+        return
+    await post_json_webhook(
+        url,
+        {
+            "event": "quantumshield.scan.completed",
+            "scan_id": scan_id,
+            "domain": domain,
+            "quantum_score": quantum_score,
+        },
+    )
+
+
+async def _run_scan_pipeline_gated(scan_id: str, request: ScanRequest) -> None:
+    """Run pipeline with global concurrency cap (Phase 2 portfolio scans)."""
+    async with _scan_sem:
+        await _run_scan_pipeline(scan_id, request)
 
 
 # ── Helper: run full pipeline ────────────────────────────────────
@@ -145,6 +247,26 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         assets = await asset_discovery.discover_assets(
             request.domain, ports=request.ports, broadcast_func=broadcast_tool_log
         )
+
+        # Merge org metadata from inventory (Phase 2)
+        meta_coll = db[ASSET_METADATA_COLLECTION]
+        merged: List = []
+        for a in assets:
+            key = (a.subdomain or "").strip().lower()
+            doc = await meta_coll.find_one({"host": key}) if key else None
+            if doc:
+                merged.append(
+                    a.model_copy(
+                        update={
+                            "owner": doc.get("owner") or a.owner,
+                            "environment": doc.get("environment") or a.environment,
+                            "criticality": doc.get("criticality") or a.criticality,
+                        }
+                    )
+                )
+            else:
+                merged.append(a)
+        assets = merged
 
         # ── New Stage: DNS Record Collection ──
         logger.info("[%s] Collecting DNS records for %s", scan_id, request.domain)
@@ -325,6 +447,14 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             "message": "Scan completed successfully."
         }, scan_id)
 
+        asyncio.create_task(
+            _notify_scan_complete_hooks(
+                scan_id,
+                request.domain,
+                q_score.model_dump(mode="json"),
+            )
+        )
+
         logger.info("[%s] ✅ Scan pipeline completed (8/8 stages).", scan_id)
 
     except Exception as exc:
@@ -359,7 +489,7 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         status=ScanStatus.PENDING,
     )
     await db[SCANS_COLLECTION].insert_one(initial.model_dump(mode="json"))
-    background_tasks.add_task(_run_scan_pipeline, scan_id, request)
+    background_tasks.add_task(_run_scan_pipeline_gated, scan_id, request)
 
     logger.info("Scan %s queued for domain %s", scan_id, request.domain)
     return {
@@ -368,6 +498,265 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         "status": ScanStatus.PENDING.value,
         "message": "Scan initiated — poll GET /results/{domain} for progress.",
     }
+
+
+@router.post(
+    "/scan/batch",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue scans for multiple domains (portfolio)",
+    tags=["Scanner"],
+)
+async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundTasks):
+    """Queue one scan job per domain; shares a global concurrency limit with single /scan."""
+    raw = [str(d).strip().lower() for d in body.domains if d and str(d).strip()]
+    seen: set[str] = set()
+    uniq: List[str] = []
+    for d in raw:
+        if d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    if not uniq:
+        raise HTTPException(status_code=400, detail="No valid domains in request")
+    if len(uniq) > settings.MAX_BATCH_DOMAINS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many domains (max {settings.MAX_BATCH_DOMAINS} per batch)",
+        )
+
+    batch_id = uuid.uuid4().hex
+    db = get_database()
+    jobs: List[dict] = []
+    for domain in uniq:
+        scan_id = uuid.uuid4().hex
+        req = ScanRequest(
+            domain=domain,
+            include_subdomains=body.include_subdomains,
+            ports=body.ports,
+        )
+        initial = ScanResult(
+            scan_id=scan_id,
+            batch_id=batch_id,
+            domain=domain,
+            status=ScanStatus.PENDING,
+        )
+        await db[SCANS_COLLECTION].insert_one(initial.model_dump(mode="json"))
+        background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
+        jobs.append({"scan_id": scan_id, "domain": domain})
+
+    logger.info("Batch %s queued %d scan(s)", batch_id, len(jobs))
+    return {
+        "batch_id": batch_id,
+        "queued": len(jobs),
+        "jobs": jobs,
+        "message": "Scans queued — poll GET /results/{domain} or /scans/history?domain= for each target.",
+    }
+
+
+@router.get("/scans/history", summary="List recent scans for a domain", tags=["Portfolio"])
+async def scans_history(domain: str, limit: int = 20, status_filter: Optional[str] = None):
+    q: dict = {"domain": domain.strip().lower()}
+    if status_filter in ("completed", "failed", "running", "pending"):
+        q["status"] = status_filter
+    lim = min(max(limit, 1), 100)
+    db = get_database()
+    cursor = (
+        db[SCANS_COLLECTION]
+        .find(q)
+        .sort([("completed_at", -1), ("started_at", -1)])
+        .limit(lim)
+    )
+    out: List[dict] = []
+    async for doc in cursor:
+        doc.pop("_id", None)
+        qs = doc.get("quantum_score") or {}
+        if not isinstance(qs, dict):
+            qs = {}
+        out.append(
+            {
+                "scan_id": doc.get("scan_id"),
+                "domain": doc.get("domain"),
+                "batch_id": doc.get("batch_id"),
+                "status": doc.get("status"),
+                "started_at": doc.get("started_at"),
+                "completed_at": doc.get("completed_at"),
+                "quantum_score": qs.get("score"),
+                "risk_level": qs.get("risk_level"),
+            }
+        )
+    return {"domain": domain.strip().lower(), "count": len(out), "scans": out}
+
+
+def _asset_host_set(scan_doc: dict) -> set:
+    return {x.get("subdomain") for x in (scan_doc.get("assets") or []) if x.get("subdomain")}
+
+
+def _tls_by_host(scan_doc: dict) -> dict:
+    m: dict = {}
+    for t in scan_doc.get("tls_results") or []:
+        h = t.get("host")
+        if not h:
+            continue
+        m[h] = {
+            "tls_version": t.get("tls_version"),
+            "cipher_suite": t.get("cipher_suite"),
+            "pqc_kem_observed": t.get("pqc_kem_observed"),
+        }
+    return m
+
+
+@router.get("/scans/diff", summary="Compare two scans for the same domain", tags=["Portfolio"])
+async def scans_diff(
+    domain: str,
+    from_scan_id: str,
+    to_scan_id: str,
+):
+    db = get_database()
+    dom = domain.strip().lower()
+    a = await db[SCANS_COLLECTION].find_one({"scan_id": from_scan_id, "domain": dom})
+    b = await db[SCANS_COLLECTION].find_one({"scan_id": to_scan_id, "domain": dom})
+    if not a or not b:
+        raise HTTPException(
+            status_code=404,
+            detail="One or both scans not found for this domain",
+        )
+    ha, hb = _asset_host_set(a), _asset_host_set(b)
+    ta, tb = _tls_by_host(a), _tls_by_host(b)
+    tls_changed: List[dict] = []
+    for h in ha & hb:
+        if ta.get(h) != tb.get(h):
+            tls_changed.append({"host": h, "before": ta.get(h), "after": tb.get(h)})
+    qsa = (a.get("quantum_score") or {}) if isinstance(a.get("quantum_score"), dict) else {}
+    qsb = (b.get("quantum_score") or {}) if isinstance(b.get("quantum_score"), dict) else {}
+    return {
+        "domain": dom,
+        "from_scan_id": from_scan_id,
+        "to_scan_id": to_scan_id,
+        "new_subdomains": sorted(hb - ha),
+        "removed_subdomains": sorted(ha - hb),
+        "tls_endpoint_changes": tls_changed,
+        "quantum_score": {"from": qsa.get("score"), "to": qsb.get("score")},
+        "risk_level": {"from": qsa.get("risk_level"), "to": qsb.get("risk_level")},
+    }
+
+
+@router.get("/inventory/summary", summary="Deduplicated hosts across recent completed scans", tags=["Portfolio"])
+async def inventory_summary(limit_scans: int = 100):
+    """Portfolio view: unique subdomains with latest quantum risk and optional org metadata."""
+    lim = min(max(limit_scans, 1), 500)
+    db = get_database()
+    cursor = (
+        db[SCANS_COLLECTION]
+        .find({"status": "completed"})
+        .sort("completed_at", -1)
+        .limit(lim)
+    )
+    by_host: dict[str, dict] = {}
+    async for scan in cursor:
+        root = scan.get("domain") or ""
+        qs = scan.get("quantum_score") or {}
+        qr = qs.get("risk_level") if isinstance(qs, dict) else None
+        qscore = qs.get("score") if isinstance(qs, dict) else None
+        completed = scan.get("completed_at")
+        sid = scan.get("scan_id")
+        for asset in scan.get("assets") or []:
+            h = (asset.get("subdomain") or "").strip().lower()
+            if not h:
+                continue
+            prev = by_host.get(h)
+            if prev is None:
+                by_host[h] = {
+                    "host": h,
+                    "parent_domain": root,
+                    "last_scan_id": sid,
+                    "last_completed_at": completed,
+                    "quantum_risk_level": qr,
+                    "quantum_score": qscore,
+                    "ip": asset.get("ip"),
+                    "open_ports": asset.get("open_ports") or [],
+                    "owner": asset.get("owner"),
+                    "environment": asset.get("environment"),
+                    "criticality": asset.get("criticality"),
+                }
+            elif completed and (
+                prev.get("last_completed_at") is None or completed > prev["last_completed_at"]
+            ):
+                by_host[h].update(
+                    {
+                        "parent_domain": root,
+                        "last_scan_id": sid,
+                        "last_completed_at": completed,
+                        "quantum_risk_level": qr,
+                        "quantum_score": qscore,
+                        "ip": asset.get("ip") or prev.get("ip"),
+                        "open_ports": asset.get("open_ports") or prev.get("open_ports"),
+                        "owner": asset.get("owner") or prev.get("owner"),
+                        "environment": asset.get("environment") or prev.get("environment"),
+                        "criticality": asset.get("criticality") or prev.get("criticality"),
+                    }
+                )
+
+    meta_coll = db[ASSET_METADATA_COLLECTION]
+    hosts = sorted(by_host.values(), key=lambda r: r["host"])
+    for row in hosts:
+        h = row["host"]
+        m = await meta_coll.find_one({"host": h})
+        if m:
+            row["owner"] = m.get("owner") or row.get("owner")
+            row["environment"] = m.get("environment") or row.get("environment")
+            row["criticality"] = m.get("criticality") or row.get("criticality")
+
+    return {
+        "scans_considered": lim,
+        "host_count": len(hosts),
+        "hosts": hosts,
+    }
+
+
+@router.put("/assets/metadata", summary="Upsert metadata for one host", tags=["Portfolio"])
+async def put_asset_metadata(body: AssetMetadataUpdate):
+    host = body.host.strip().lower()
+    if not host:
+        raise HTTPException(status_code=400, detail="host is required")
+    db = get_database()
+    doc = {
+        "host": host,
+        "owner": body.owner,
+        "environment": body.environment,
+        "criticality": body.criticality,
+        "updated_at": datetime.utcnow(),
+    }
+    await db[ASSET_METADATA_COLLECTION].update_one(
+        {"host": host},
+        {"$set": doc},
+        upsert=True,
+    )
+    return {"status": "ok", "host": host}
+
+
+@router.post("/assets/metadata/bulk", summary="Upsert metadata for many hosts", tags=["Portfolio"])
+async def bulk_asset_metadata(items: List[AssetMetadataUpdate]):
+    if len(items) > 500:
+        raise HTTPException(status_code=400, detail="Max 500 rows per bulk request")
+    db = get_database()
+    n = 0
+    for body in items:
+        host = body.host.strip().lower()
+        if not host:
+            continue
+        doc = {
+            "host": host,
+            "owner": body.owner,
+            "environment": body.environment,
+            "criticality": body.criticality,
+            "updated_at": datetime.utcnow(),
+        }
+        await db[ASSET_METADATA_COLLECTION].update_one(
+            {"host": host},
+            {"$set": doc},
+            upsert=True,
+        )
+        n += 1
+    return {"status": "ok", "upserted": n}
 
 
 @router.get("/results/{domain}", summary="Get scan results for a domain")
@@ -383,9 +772,6 @@ async def get_results(domain: str):
         )
     doc.pop("_id", None)
     return doc
-
-
-    return cbom_report
 
 
 @router.get("/cbom/summary", summary="Get CBOM summary statistics", tags=["CBOM"])
@@ -430,12 +816,10 @@ async def get_cbom_per_app(domain: str = None):
     if not doc:
         return []
         
-    # Standardize output for the table
+    # Standardize output for the table + Phase 3 threat ↔ NIST enrichment
     cbom_report = doc.get("cbom_report", {})
     components = cbom_report.get("components", [])
-    
-    # Add context from tls_results if needed, or just return as is
-    return components
+    return [enrich_cbom_component_dict(dict(c)) for c in components]
 
 @router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
 async def get_cbom_charts(domain: str = None):
@@ -720,7 +1104,19 @@ async def get_pqc_posture():
         {"status": "completed"}, sort=[("completed_at", -1)]
     )
     if not scan:
-        return None
+        return {
+            "elite_count": 0,
+            "standard_count": 0,
+            "critical_apps": 0,
+            "elite_pqc_pct": 0.0,
+            "standard_pct": 0.0,
+            "legacy_pct": 0.0,
+            "critical_pct": 0.0,
+            "pqc_kem_endpoints": 0,
+            "tls_modern_endpoints": 0,
+            "asset_pqc_status": [],
+            "recommendations": [],
+        }
 
     tls_results = scan.get("tls_results", [])
     assets = scan.get("assets", [])
@@ -732,24 +1128,52 @@ async def get_pqc_posture():
     legacy_count = 0
     critical_count = 0
 
+    pqc_kem_endpoints = 0
+    tls_modern_endpoints = 0
+
     for a in assets:
         host = a.get("subdomain")
         tls = tls_map.get(host, {})
-        is_pqc = tls.get("tls_version") == "TLSv1.3"
-        
-        # Simple grade logic
-        if is_pqc: grade = "Elite"; elite_pqc_count += 1
-        elif tls.get("tls_version") == "TLSv1.2": grade = "Standard"; standard_count += 1
-        elif tls.get("tls_version"): grade = "Legacy"; legacy_count += 1
-        else: grade = "Critical"; critical_count += 1
+        tv = str(tls.get("tls_version") or "")
+        pq_signal = bool(tls.get("pqc_kem_observed") or tls.get("hybrid_key_exchange"))
+        tls_mod = bool(tls.get("tls_modern")) or ("TLSv1.3" in tv or "TLS1.3" in tv.upper() or "1.3" in tv)
+        if pq_signal:
+            pqc_kem_endpoints += 1
+        if tls_mod:
+            tls_modern_endpoints += 1
 
+        # Grade: PQ/hybrid string signal > TLS 1.3 modern > legacy
+        if pq_signal:
+            grade = "Elite"
+            elite_pqc_count += 1
+        elif tls_mod or tv == "TLSv1.3":
+            grade = "Elite"
+            elite_pqc_count += 1
+        elif tv == "TLSv1.2" or "TLSv1.2" in tv:
+            grade = "Standard"
+            standard_count += 1
+        elif tv:
+            grade = "Legacy"
+            legacy_count += 1
+        else:
+            grade = "Critical"
+            critical_count += 1
+
+        is_ready = pq_signal or tls_mod
         asset_pqc_status.append({
             "asset_name": host,
-            "pqc_supported": is_pqc,
+            "pqc_supported": is_ready,
+            "pqc_kem_observed": pq_signal,
+            "tls_modern": tls_mod,
+            "pqc_signal_hints": (tls.get("pqc_signal_hints") or [])[:8],
             "tls_version": tls.get("tls_version", "Unknown"),
-            "risk": "Low" if is_pqc else "High",
-            "status": "Ready" if is_pqc else "Migration Required",
-            "score": 850 if is_pqc else 450 if grade == "Standard" else 250
+            "risk": "Low" if is_ready else "High",
+            "status": (
+                "PQC / hybrid signal"
+                if pq_signal
+                else ("TLS 1.3 (modern)" if tls_mod else "Migration Required")
+            ),
+            "score": 950 if pq_signal else 850 if tls_mod else 450 if grade == "Standard" else 250,
         })
 
     total = len(assets) or 1
@@ -761,8 +1185,10 @@ async def get_pqc_posture():
         "standard_pct": round((standard_count / total) * 100, 1),
         "legacy_pct": round((legacy_count / total) * 100, 1),
         "critical_pct": round((critical_count / total) * 100, 1),
+        "pqc_kem_endpoints": pqc_kem_endpoints,
+        "tls_modern_endpoints": tls_modern_endpoints,
         "asset_pqc_status": asset_pqc_status,
-        "recommendations": [r.get("rationale") for r in scan.get("recommendations", [])][:5]
+        "recommendations": [r.get("rationale") for r in scan.get("recommendations", [])][:5],
     }
 
 
@@ -798,6 +1224,8 @@ async def get_pqc_compliance():
 # Cyber Rating endpoints
 # ════════════════════════════════════════════════════════════════════
 
+@router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
+async def get_cyber_rating():
     db = get_database()
     scan = await db[SCANS_COLLECTION].find_one(
         {"status": "completed"}, sort=[("completed_at", -1)]
@@ -837,6 +1265,32 @@ async def get_pqc_compliance():
     }
 
 
+@router.post("/quantum-score/simulate", summary="What-if quantum score projection (Phase 3)", tags=["Cyber Rating"])
+async def simulate_quantum_score_endpoint(body: SimulateQuantumRequest):
+    """Heuristic delta on the 0–100 engine score — not a formal risk assessment."""
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if body.domain:
+        query["domain"] = body.domain.strip().lower()
+    scan = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not scan:
+        raise HTTPException(status_code=404, detail="No completed scan found")
+    sim = simulate_quantum_score(
+        scan,
+        assume_tls_13_all=body.assume_tls_13_all,
+        assume_pqc_hybrid_kem=body.assume_pqc_hybrid_kem,
+    )
+    raw = (scan.get("quantum_score") or {}).get("score", 0)
+    return {
+        "domain": scan.get("domain"),
+        "baseline_score_100": raw,
+        "projected_score_100": sim["projected_score"],
+        "delta": sim["delta"],
+        "assumptions": sim["assumptions"],
+        "note": sim["note"],
+        "nist_pqc_references": NIST_PQC_REFERENCES,
+    }
+
 
 @router.get("/cyber-rating/risk-factors", summary="Get risk factors breakdown", tags=["Cyber Rating"])
 async def get_risk_factors():
@@ -870,6 +1324,535 @@ async def generate_report(payload: dict):
         "report_type": report_type,
         "download_url": f"/reports/{domain}_{report_type}.{fmt.lower()}",
     }
+
+
+@router.get("/reports/export-bundle", summary="Export JSON bundle (CBOM + score + TLS)", tags=["Reporting"])
+async def export_scan_bundle(domain: Optional[str] = None):
+    """Single JSON for audits: latest completed scan, optional domain filter."""
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="No completed scan found")
+
+    exported_at = datetime.utcnow().isoformat() + "Z"
+    payload: Dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "exported_at": exported_at,
+        "domain": doc.get("domain"),
+        "completed_at": doc.get("completed_at"),
+        "threat_nist_context": {
+            "nist_pqc_publications": NIST_PQC_REFERENCES,
+            "note": "Per-component threat vectors and NIST mapping are included in GET /cbom/per-app responses.",
+        },
+        "audit_metadata": {
+            "cbom_schema": (doc.get("cbom_report") or {}).get("schema_version", "1.0.0"),
+            "quantum_scoring": {
+                "formula": "weighted_mean_of_category_minimums",
+                "weights": {
+                    "key_exchange": 0.4,
+                    "signature": 0.3,
+                    "cipher": 0.2,
+                    "protocol": 0.1,
+                },
+                "reference": "app/modules/quantum_risk_engine.py",
+            },
+            "tls_pqc_signals": {
+                "note": (
+                    "Cipher/KEX name substrings only (e.g. Kyber); not proof of PQC libraries in use."
+                ),
+                "reference": "app/modules/tls_pqc_signals.py",
+            },
+        },
+        "cbom_report": doc.get("cbom_report"),
+        "cbom_legacy": doc.get("cbom", []),
+        "quantum_score": doc.get("quantum_score"),
+        "recommendations": doc.get("recommendations", []),
+        "tls_results": doc.get("tls_results", []),
+        "assets": doc.get("assets", []),
+    }
+    try:
+        await db[EXPORT_AUDIT_COLLECTION].insert_one(
+            {
+                "event_id": uuid.uuid4().hex,
+                "export_type": "scan_bundle_json",
+                "domain": doc.get("domain"),
+                "created_at": datetime.utcnow(),
+            }
+        )
+    except Exception as exc:
+        logger.warning("Export audit log insert failed: %s", exc)
+
+    return payload
+
+
+@router.get("/migration/roadmap", summary="Phased migration waves (derived from scan)", tags=["Reporting"])
+async def get_migration_roadmap(domain: Optional[str] = None):
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+    scan = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not scan:
+        return {"domain": None, "waves": [], "backlog": [], "nist_pqc_references": NIST_PQC_REFERENCES}
+
+    tls = scan.get("tls_results", [])
+    legacy_ver = {"TLSv1.0", "TLSv1.1", "TLSv1", "SSLv3", "SSLv2"}
+    crit_tls = sum(
+        1
+        for t in tls
+        if (t.get("tls_version") or "") in legacy_ver
+        or (not t.get("tls_version") and t.get("host"))
+    )
+    expiring = sum(
+        1
+        for t in tls
+        if (t.get("certificate") or {}).get("days_until_expiry", 999) <= 30
+    )
+    n = max(len(tls), 1)
+    meta_by_host: dict = {}
+    for a in scan.get("assets") or []:
+        h = (a.get("subdomain") or "").strip().lower()
+        if not h:
+            continue
+        mdoc = await db[ASSET_METADATA_COLLECTION].find_one({"host": h})
+        if mdoc:
+            meta_by_host[h] = mdoc
+
+    backlog = build_prioritized_backlog(scan, meta_by_host)
+
+    waves_raw = [
+        {
+            "wave": 1,
+            "name": "Stabilize & certificate hygiene",
+            "focus": "Expiring certificates and legacy TLS endpoints",
+            "estimated_assets": min(expiring + crit_tls, n),
+            "nist_alignment": "SP 800-208 TLS hygiene; interim classical hardening",
+        },
+        {
+            "wave": 2,
+            "name": "TLS modernization",
+            "focus": "Prefer TLS 1.3 and strong cipher suites across endpoints",
+            "estimated_assets": len(tls),
+            "nist_alignment": "FIPS 203-ready hybrid KEM profiles as libraries mature",
+        },
+        {
+            "wave": 3,
+            "name": "PQC readiness",
+            "focus": "Plan hybrid / PQC algorithms as libraries and CAs adopt them",
+            "estimated_assets": len(scan.get("assets", [])) or n,
+            "nist_alignment": "FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA)",
+        },
+    ]
+    waves = []
+    for w in waves_raw:
+        est = int(w.get("estimated_assets") or 0)
+        waves.append({**w, "priority_score": round(est * (4 - w["wave"]) / max(n, 1), 3)})
+
+    return {
+        "domain": scan.get("domain"),
+        "waves": waves,
+        "backlog": backlog,
+        "nist_pqc_references": NIST_PQC_REFERENCES,
+    }
+
+
+@router.get("/threat-model/summary", summary="Quantum threat vectors + scan context", tags=["Reporting"])
+async def get_threat_model_summary(domain: Optional[str] = None):
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+    scan = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    tls = scan.get("tls_results", []) if scan else []
+
+    def _legacy(t: dict) -> bool:
+        v = str(t.get("tls_version") or "")
+        return "1.0" in v or "1.1" in v or v.startswith("SSL") or v.startswith("TLSv1.0") or v.startswith("TLSv1.1")
+
+    legacy = sum(1 for t in tls if _legacy(t))
+    rsa_mentions = sum(
+        1
+        for t in tls
+        if "RSA" in str(t.get("cipher_suite") or "") + str(t.get("key_exchange") or "")
+    )
+    pqc_hybrid_endpoints = sum(
+        1
+        for t in tls
+        if t.get("pqc_kem_observed") or t.get("hybrid_key_exchange")
+    )
+
+    return {
+        "vectors": [
+            {
+                "id": "shor",
+                "name": "Shor's algorithm",
+                "affects": "RSA, finite-field DH, ECC (public-key)",
+                "note": "Fault-tolerant quantum computers could break widely deployed asymmetric primitives.",
+            },
+            {
+                "id": "grover",
+                "name": "Grover's algorithm",
+                "affects": "Symmetric keys (effective strength ~halved)",
+                "note": "Favor AES-256 for data needing long-term confidentiality.",
+            },
+            {
+                "id": "hndl",
+                "name": "Harvest now, decrypt later",
+                "affects": "TLS sessions using classical key exchange",
+                "note": "Ciphertext captured today may be decrypted if asymmetric keys are broken later.",
+            },
+        ],
+        "from_scan": {
+            "tls_endpoints": len(tls),
+            "legacy_protocol_endpoints": legacy,
+            "rsa_cipher_or_kx_mentions": rsa_mentions,
+            "pqc_hybrid_string_signals": pqc_hybrid_endpoints,
+        },
+    }
+
+
+@router.get("/threat-model/nist-catalog", summary="NIST PQC publication pointers (static)", tags=["Reporting"])
+async def get_nist_catalog():
+    """Reference links for UI and export — not legal/compliance advice."""
+    return {"references": NIST_PQC_REFERENCES}
+
+
+# ════════════════════════════════════════════════════════════════════
+# Phase 4 — Admin: policy, integrations, export audit
+# ════════════════════════════════════════════════════════════════════
+
+
+def _integration_public_view(doc: dict) -> dict:
+    o = (doc.get("outbound_webhook_url") or "").strip()
+    s = (doc.get("slack_webhook_url") or "").strip()
+    j = (doc.get("jira_webhook_url") or "").strip()
+    return {
+        "notify_on_scan_complete": bool(doc.get("notify_on_scan_complete")),
+        "outbound_webhook_configured": bool(o),
+        "outbound_webhook_preview": _mask_url(o) if o else None,
+        "slack_webhook_configured": bool(s),
+        "slack_webhook_preview": _mask_url(s) if s else None,
+        "jira_webhook_configured": bool(j),
+        "jira_webhook_preview": _mask_url(j) if j else None,
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+@router.get("/admin/policy", summary="Org crypto policy targets", tags=["Admin"])
+async def get_org_policy(_user: User = Depends(get_current_user)):
+    db = get_database()
+    doc = await db[ORG_POLICY_COLLECTION].find_one({"_id": "default"})
+    if not doc:
+        return {**_DEFAULT_ORG_POLICY, "updated_at": None}
+    out = {**_DEFAULT_ORG_POLICY}
+    for k in out:
+        if k in doc and doc[k] is not None:
+            out[k] = doc[k]
+    out["updated_at"] = doc.get("updated_at")
+    return out
+
+
+@router.put("/admin/policy", summary="Update org crypto policy", tags=["Admin"])
+async def put_org_policy(
+    body: OrgCryptoPolicyUpdate,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    cur = await db[ORG_POLICY_COLLECTION].find_one({"_id": "default"})
+    merged = {**_DEFAULT_ORG_POLICY}
+    if cur:
+        for k in merged:
+            if k in cur and cur[k] is not None:
+                merged[k] = cur[k]
+    for k, v in body.model_dump(exclude_unset=True).items():
+        merged[k] = v
+    merged["_id"] = "default"
+    merged["updated_at"] = datetime.utcnow()
+    await db[ORG_POLICY_COLLECTION].replace_one({"_id": "default"}, merged, upsert=True)
+    merged.pop("_id", None)
+    return merged
+
+
+@router.get("/admin/integrations", summary="Outbound integrations (masked URLs)", tags=["Admin"])
+async def get_integrations(_user: User = Depends(get_current_user)):
+    db = get_database()
+    doc = await db[INTEGRATION_SETTINGS_COLLECTION].find_one({"_id": "default"})
+    if not doc:
+        return _integration_public_view({"_id": "default", **_DEFAULT_INTEGRATION})
+    return _integration_public_view(doc)
+
+
+@router.put("/admin/integrations", summary="Update outbound webhooks", tags=["Admin"])
+async def put_integrations(
+    body: IntegrationSettingsUpdate,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    cur = await db[INTEGRATION_SETTINGS_COLLECTION].find_one({"_id": "default"})
+    merged = {**_DEFAULT_INTEGRATION}
+    if cur:
+        for k in merged:
+            if k in cur:
+                merged[k] = cur[k]
+    for k, v in body.model_dump(exclude_unset=True).items():
+        merged[k] = v
+    merged["_id"] = "default"
+    merged["updated_at"] = datetime.utcnow()
+    await db[INTEGRATION_SETTINGS_COLLECTION].replace_one({"_id": "default"}, merged, upsert=True)
+    return _integration_public_view(merged)
+
+
+@router.get("/admin/exports/history", summary="JSON export audit log", tags=["Admin"])
+async def get_export_audit_history(limit: int = 50, _user: User = Depends(get_current_user)):
+    lim = min(max(limit, 1), 200)
+    db = get_database()
+    cursor = db[EXPORT_AUDIT_COLLECTION].find().sort("created_at", -1).limit(lim)
+    events: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        events.append(row)
+    return {"count": len(events), "events": events}
+
+
+# ════════════════════════════════════════════════════════════════════
+# Phase 5 — Migration tasks & waivers
+# ════════════════════════════════════════════════════════════════════
+
+
+@router.get("/migration/tasks", summary="List migration tasks", tags=["Migration"])
+async def list_migration_tasks(
+    domain: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    q: dict = {}
+    if domain:
+        q["domain"] = domain.strip().lower()
+    if status_filter:
+        q["status"] = status_filter
+    cursor = db[MIGRATION_TASKS_COLLECTION].find(q).sort("updated_at", -1).limit(500)
+    items: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        items.append(row)
+    return {"count": len(items), "tasks": items}
+
+
+@router.post("/migration/tasks", summary="Create migration task", tags=["Migration"])
+async def create_migration_task(
+    body: MigrationTaskCreate,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    task_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    doc = {
+        "task_id": task_id,
+        "title": body.title.strip(),
+        "description": body.description,
+        "domain": (body.domain or "").strip().lower() or None,
+        "host": (body.host or "").strip().lower() or None,
+        "wave": body.wave,
+        "priority": body.priority,
+        "status": body.status,
+        "due_date": body.due_date,
+        "owner": body.owner,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db[MIGRATION_TASKS_COLLECTION].insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/migration/tasks/{task_id}", summary="Update migration task", tags=["Migration"])
+async def update_migration_task(
+    task_id: str,
+    body: MigrationTaskUpdate,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not patch:
+        doc = await db[MIGRATION_TASKS_COLLECTION].find_one({"task_id": task_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Task not found")
+        doc.pop("_id", None)
+        return doc
+    patch["updated_at"] = datetime.utcnow()
+    r = await db[MIGRATION_TASKS_COLLECTION].find_one_and_update(
+        {"task_id": task_id},
+        {"$set": patch},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="Task not found")
+    r.pop("_id", None)
+    return r
+
+
+@router.delete("/migration/tasks/{task_id}", summary="Delete migration task", tags=["Migration"])
+async def delete_migration_task(
+    task_id: str,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    res = await db[MIGRATION_TASKS_COLLECTION].delete_one({"task_id": task_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "ok", "task_id": task_id}
+
+
+@router.post(
+    "/migration/tasks/seed-from-backlog",
+    summary="Create open tasks from latest scan prioritized backlog",
+    tags=["Migration"],
+)
+async def seed_tasks_from_backlog(
+    body: SeedTasksFromBacklogBody,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if body.domain:
+        query["domain"] = body.domain.strip().lower()
+    scan = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not scan:
+        raise HTTPException(status_code=404, detail="No completed scan found")
+
+    meta_by_host: dict = {}
+    for a in scan.get("assets") or []:
+        h = (a.get("subdomain") or "").strip().lower()
+        if not h:
+            continue
+        mdoc = await db[ASSET_METADATA_COLLECTION].find_one({"host": h})
+        if mdoc:
+            meta_by_host[h] = mdoc
+
+    backlog = build_prioritized_backlog(scan, meta_by_host)[: body.limit]
+    now = datetime.utcnow()
+    created: List[dict] = []
+    for item in backlog:
+        host = item.get("host") or ""
+        exists = await db[MIGRATION_TASKS_COLLECTION].find_one(
+            {
+                "host": host,
+                "domain": scan.get("domain"),
+                "status": {"$in": ["open", "in_progress"]},
+            }
+        )
+        if exists:
+            continue
+        task_id = uuid.uuid4().hex
+        pri = float(item.get("priority_score") or 0)
+        doc = {
+            "task_id": task_id,
+            "title": f"Remediate {host}",
+            "description": item.get("reason") or item.get("nist_primary_recommendation"),
+            "domain": scan.get("domain"),
+            "host": host,
+            "wave": 1,
+            "priority": "critical" if pri > 18 else "high" if pri > 10 else "medium",
+            "status": "open",
+            "due_date": None,
+            "owner": item.get("owner"),
+            "source": "backlog_seed",
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db[MIGRATION_TASKS_COLLECTION].insert_one(doc)
+        doc.pop("_id", None)
+        created.append(doc)
+
+    return {"scan_domain": scan.get("domain"), "seeded": len(created), "tasks": created}
+
+
+@router.get("/migration/waivers", summary="List waivers / exceptions", tags=["Migration"])
+async def list_waivers(
+    status_filter: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    q: dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    cursor = db[WAIVERS_COLLECTION].find(q).sort("created_at", -1).limit(200)
+    items: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        items.append(row)
+    return {"count": len(items), "waivers": items}
+
+
+@router.post("/migration/waivers", summary="Submit waiver request", tags=["Migration"])
+async def create_waiver(
+    body: WaiverCreate,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    waiver_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    doc = {
+        "waiver_id": waiver_id,
+        "requestor": body.requestor.strip(),
+        "reason": body.reason.strip(),
+        "expiry": body.expiry,
+        "impacted_assets": body.impacted_assets or [],
+        "status": body.status if body.status in ("pending", "draft") else "pending",
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db[WAIVERS_COLLECTION].insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/migration/waivers/{waiver_id}", summary="Update waiver", tags=["Migration"])
+async def update_waiver(
+    waiver_id: str,
+    body: WaiverUpdate,
+    user: User = Depends(get_current_user),
+):
+    db = get_database()
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    st = patch.get("status")
+    if st in ("approved", "rejected") and user.role.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can approve or reject waivers.",
+        )
+    if not patch:
+        doc = await db[WAIVERS_COLLECTION].find_one({"waiver_id": waiver_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Waiver not found")
+        doc.pop("_id", None)
+        return doc
+    patch["updated_at"] = datetime.utcnow()
+    r = await db[WAIVERS_COLLECTION].find_one_and_update(
+        {"waiver_id": waiver_id},
+        {"$set": patch},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="Waiver not found")
+    r.pop("_id", None)
+    return r
+
+
+@router.delete("/migration/waivers/{waiver_id}", summary="Delete waiver", tags=["Migration"])
+async def delete_waiver(
+    waiver_id: str,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    res = await db[WAIVERS_COLLECTION].delete_one({"waiver_id": waiver_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Waiver not found")
+    return {"status": "ok", "waiver_id": waiver_id}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1015,33 +1998,31 @@ async def demo_login(payload: LoginPayload):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    username = payload.username or payload.email.split("@")[0]
-    password = payload.password
-
-    demo_users = {
-        "admin":           {"role": "Admin",    "name": "Admin User"},
-        "employee":        {"role": "Employee", "name": "John Doe"},
-        "hackathon_user":  {"role": "Admin",    "name": "Hackathon User"},
-        "hackathon_user@pnb.bank.in": {"role": "Admin", "name": "Hackathon User"},
-    }
-
-    user = demo_users.get(username.lower()) or demo_users.get(username)
-    if user and password == "password":
-
+    demo_email = "scanner@example.com"
+    demo_password = "pass123"
+    email_norm = (payload.email or "").strip().lower()
+    user_norm = (payload.username or "").strip().lower()
+    pwd = (payload.password or "").strip()
+    identity_ok = (
+        email_norm == demo_email
+        or user_norm == demo_email
+        or user_norm == "scanner"
+    )
+    if identity_ok and pwd == demo_password:
         return {
-            "access_token": f"demo-token-{username}-{uuid.uuid4().hex[:8]}",
+            "access_token": f"demo-token-scanner-{uuid.uuid4().hex[:8]}",
             "token_type": "bearer",
-            "role": user["role"],
+            "role": "Admin",
             "user": {
                 "id": uuid.uuid4().hex[:8],
-                "username": username,
-                "email": f"{username}@pnb.bank.in",
-                "full_name": user["name"],
-                "role": user["role"],
+                "username": "scanner",
+                "email": demo_email,
+                "full_name": "Scanner Operator",
+                "role": "Admin",
                 "is_active": True,
             },
         }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid credentials. Use password: 'password'",
+        detail="Invalid email or password",
     )

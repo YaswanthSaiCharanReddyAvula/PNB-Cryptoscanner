@@ -22,6 +22,7 @@ import {
   dnsService,
   cryptoService,
 } from "@/services/api";
+import { ThreatModelPanel } from "@/components/dashboard/ThreatModelPanel";
 import { toast } from "sonner";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { LiveScanConsole } from "@/components/dashboard/LiveScanConsole";
@@ -127,6 +128,7 @@ export default function Dashboard() {
 
   const { isScanning, stageIndex, results, error, startScan } = useScan();
 
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [activeScanId, setActiveScanId] = useState<string | null>(null);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const { messages, clearMessages } = useWebSocket(activeScanId);
@@ -259,6 +261,9 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error("Could not refresh dashboard data", err);
+      toast.error("Could not load dashboard data. Check the API URL and that the backend is running.");
+    } finally {
+      setInitialLoadDone(true);
     }
   };
 
@@ -411,12 +416,17 @@ export default function Dashboard() {
       </div>
 
       {/* No scan yet banner */}
-      {summary && summary.total_assets === 0 && (
+      {initialLoadDone &&
+        !isScanning &&
+        totalAssetsCount === 0 &&
+        (!summary || (summary.total_assets ?? 0) === 0) && (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 flex items-center gap-3">
           <Search className="h-5 w-5 text-primary flex-shrink-0" />
           <div>
             <p className="text-sm font-semibold text-foreground">No scan data yet</p>
-            <p className="text-xs text-muted-foreground">Enter a domain above and click Scan to discover assets and populate this dashboard.</p>
+            <p className="text-xs text-muted-foreground">
+              Enter a domain above and run Scan to discover assets. CBOM, PQC posture, and cyber rating use the same completed scan.
+            </p>
           </div>
         </div>
       )}
@@ -603,6 +613,8 @@ export default function Dashboard() {
           ]}
         />
       </div>
+
+      <ThreatModelPanel />
 
       {/* Activity Feed + Geo Map */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">

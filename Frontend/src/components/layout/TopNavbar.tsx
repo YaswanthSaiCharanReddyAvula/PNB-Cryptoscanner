@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { ApiHealthIndicator } from "@/components/common/ApiHealthIndicator";
 
 // PQC-Ready Shield Badge — SVG inline
 function PQCShieldBadge() {
@@ -86,8 +87,9 @@ export function TopNavbar() {
         <PQCShieldBadge />
       </div>
 
-      {/* Right: Welcome text + notifications + logout */}
+      {/* Right: API health + welcome + notifications + logout */}
       <div className="flex items-center gap-2 flex-shrink-0">
+        <ApiHealthIndicator />
         {/* Welcome */}
         <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full border border-[#FBBC09]/30 bg-[#FBBC09]/5">
           <User className="h-3 w-3 text-[#FBBC09]" />

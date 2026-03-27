@@ -343,7 +343,8 @@ export default function AssetDiscovery() {
       .then((res) => {
         const data = res.data;
         if (data.nodes && data.edges) {
-          const formattedNodes: Node[] = data.nodes.map((n: any, i: number) => {
+          let gridIndex = 0;
+          const formattedNodes: Node[] = data.nodes.map((n: any) => {
             const cols = 4;
             // Root node style
             if (n.id === "root") {
@@ -363,6 +364,8 @@ export default function AssetDiscovery() {
                 },
               };
             }
+
+            const gi = gridIndex++;
 
             const isHighRisk = n.risk === "high" || n.hndl_vulnerable || n.cert_expired;
             const isMediumRisk = n.risk === "medium" || n.cert_expiring;
@@ -387,7 +390,7 @@ export default function AssetDiscovery() {
 
             return {
               id: n.id,
-              position: { x: (i % cols) * 250 + 100, y: Math.floor(i / cols) * 150 + 200 },
+              position: { x: (gi % cols) * 250 + 100, y: Math.floor(gi / cols) * 150 + 200 },
               data: { label: `${n.label}${statusEmoji}` },
               style: {
                 background: backgroundColor,

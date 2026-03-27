@@ -1,0 +1,52 @@
+[
+  {
+    "id": "TC001",
+    "title": "post api v1 scan queue full asynchronous scan",
+    "description": "Verify that POST /api/v1/scan queues a full asynchronous cryptographic scan for a given domain and returns 202 with scan_id, domain, and status when authorized."
+  },
+  {
+    "id": "TC002",
+    "title": "post api v1 scan batch queue portfolio scans",
+    "description": "Verify that POST /api/v1/scan/batch queues portfolio scans for multiple domains within the allowed batch size and returns 202 with batch_id and jobs when authorized."
+  },
+  {
+    "id": "TC003",
+    "title": "get api v1 results domain latest scan document",
+    "description": "Verify that GET /api/v1/results/{domain} returns the latest scan document for the specified domain with status 200 when authorized."
+  },
+  {
+    "id": "TC004",
+    "title": "get api v1 scans history recent scans for domain",
+    "description": "Verify that GET /api/v1/scans/history returns recent scans for a specified domain with status 200 when authorized."
+  },
+  {
+    "id": "TC005",
+    "title": "get api v1 scans diff compare two scans",
+    "description": "Verify that GET /api/v1/scans/diff compares two scans and returns the TLS/asset deltas with status 200 when authorized."
+  },
+  {
+    "id": "TC006",
+    "title": "get api v1 cbom summary cbom summary stats",
+    "description": "Verify that GET /api/v1/cbom/summary returns CBOM summary statistics optionally filtered by domain with status 200 when authorized."
+  },
+  {
+    "id": "TC007",
+    "title": "get api v1 cbom per app per component cbom",
+    "description": "Verify that GET /api/v1/cbom/per-app returns per-component CBOM data enriched with threat and NIST context as an array with status 200 when authorized."
+  },
+  {
+    "id": "TC008",
+    "title": "get api v1 cbom charts chart data",
+    "description": "Verify that GET /api/v1/cbom/charts returns chart data for key lengths, certificate authorities, and ciphers with status 200 when authorized."
+  },
+  {
+    "id": "TC009",
+    "title": "get api v1 crypto security tls crypto rows",
+    "description": "Verify that GET /api/v1/crypto/security returns TLS and cryptographic rows for dashboard consumption as an array with status 200 when authorized."
+  },
+  {
+    "id": "TC010",
+    "title": "get api v1 pqc posture asset level pqc posture",
+    "description": "Verify that GET /api/v1/pqc/posture returns the asset-level PQC posture object from the latest scan with status 200 when authorized."
+  }
+]

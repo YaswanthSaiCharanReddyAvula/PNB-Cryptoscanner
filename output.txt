@@ -1,5 +1,0 @@
-MongoDB shell version v7.0.14
-connecting to: mongodb://127.0.0.1:27017/quantumsheild?compressors=disabled&gssapiServiceName=mongodb
-Implicit session: session { "id" : UUID("078fde1c-d89f-4e25-934d-730cd6ebb6ac") }
-MongoDB server version: 7.0.14
-[ ]

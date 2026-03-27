@@ -18,12 +18,28 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import settings
-from app.db.connection import connect_db, disconnect_db
+from app.db.connection import (
+    DatabaseUnavailableError,
+    connect_db,
+    disconnect_db,
+    get_database,
+)
 from app.api.routes import router as scanner_router          # v1 scanner & all dashboard endpoints
 from app.api.v1.ws import router as ws_router               # real-time scan updates
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Private / dev browser origins when .env is mis-quoted (non-wildcard list).
+# Starlette matches this after allow_origins; mirrors Access-Control-Allow-Origin.
+_CORS_DEV_LAN_REGEX = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+    r")(?::\d+)?$"
+)
 
 # ── Rate limiter ─────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -64,17 +80,32 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # ── CORS ─────────────────────────────────────────────────────────
+# CORS_ORIGINS=* allows any Origin; allow_credentials must be False for wildcard.
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=_CORS_DEV_LAN_REGEX,
 )
 
 
-# ── Global exception handler ────────────────────────────────────
+# ── Global exception handlers ───────────────────────────────────
+
+@app.exception_handler(DatabaseUnavailableError)
+async def database_unavailable_handler(request: Request, exc: DatabaseUnavailableError):
+    """MongoDB not connected — return 503 instead of a generic 500."""
+    logger.warning("Database unavailable on %s %s: %s", request.method, request.url, exc)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "database_unavailable",
+            "detail": str(exc),
+        },
+    )
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -101,29 +132,34 @@ app.include_router(ws_router)
 
 # ── Health check ─────────────────────────────────────────────────
 
-from app.db.connection import get_database
-
 @app.get("/health", tags=["System"])
 async def health_check(wipe: bool = False):
     """Simple health check endpoint. If wipe=true, clear MongoDB."""
     mongo_status = "N/A"
-    
+    try:
+        get_database()
+        mongodb = "connected"
+    except DatabaseUnavailableError:
+        mongodb = "disconnected"
+
     if wipe:
         logger.warning("🚨 SYSTEM WIPE TRIGGERED VIA HEALTH CHECK")
-        # 1. MongoDB Reset
         try:
             db = get_database()
             collections = await db.list_collection_names()
             for coll in collections:
                 await db[coll].delete_many({})
             mongo_status = "Success"
+        except DatabaseUnavailableError as e:
+            mongo_status = f"Error: {e}"
         except Exception as e:
             mongo_status = f"Error: {e}"
 
     return {
-        "status": "healthy",
+        "status": "healthy" if mongodb == "connected" else "degraded",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "mongodb": mongodb,
         "wipe_status": {
             "mongodb": mongo_status
         }

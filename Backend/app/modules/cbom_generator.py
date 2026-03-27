@@ -33,10 +33,10 @@ def generate_cbom(scan_result: ScanResult) -> CBOMReport:
     """
     components = scan_result.cbom or []
 
-    # Deduplicate by (name, category) — keep the highest risk entry
-    unique: dict[tuple[str, str], CryptoComponent] = {}
+    # Deduplicate by (host, name, category) — keep the highest risk entry
+    unique: dict[tuple[str, str, str], CryptoComponent] = {}
     for comp in components:
-        key = (comp.name, comp.category.value)
+        key = (comp.host or "", comp.name, comp.category.value)
         existing = unique.get(key)
         if existing is None or _risk_rank(comp.risk_level) > _risk_rank(existing.risk_level):
             unique[key] = comp
@@ -51,6 +51,7 @@ def generate_cbom(scan_result: ScanResult) -> CBOMReport:
     risk_summary = {level.value: risk_counter.get(level.value, 0) for level in RiskLevel}
 
     report = CBOMReport(
+        schema_version="1.0.0",
         domain=scan_result.domain,
         generated_at=datetime.utcnow(),
         total_components=len(deduped),
