@@ -389,41 +389,64 @@ async def get_results(domain: str):
 
 
 @router.get("/cbom/summary", summary="Get CBOM summary statistics", tags=["CBOM"])
-async def get_cbom_summary():
+async def get_cbom_summary(domain: str = None):
     db = get_database()
-    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
-
-    total_sites = len(scans)
-    total_components = 0
-    active_certs = 0
-    weak_crypto = 0
-    cert_issues = 0
-
-    for s in scans:
-        all_cbom = s.get("cbom", [])
-        total_components += len(all_cbom)
-        weak_crypto += sum(1 for c in all_cbom if c.get("risk_level") in ["critical", "high"])
-        
-        tls_results = s.get("tls_results", [])
-        active_certs += len(tls_results)
-        for t in tls_results:
-            days = (t.get("certificate") or {}).get("days_until_expiry")
-            if days is not None and days <= 30:
-                cert_issues += 1
     
+    # If domain provided, use specific scan. Otherwise latest completed.
+    query = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+        
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        return {
+            "total_applications": 0, "sites_surveyed": 0, "active_certificates": 0,
+            "weak_cryptography": 0, "certificate_issues": 0
+        }
+
+    cbom_report = doc.get("cbom_report", {})
+    risk_summary = cbom_report.get("risk_summary", {})
+    
+    # Map fields to match frontend expectations
     return {
-        "total_applications": total_sites,
-        "sites_surveyed": total_components,
-        "active_certificates": active_certs, 
-        "weak_cryptography": weak_crypto,
-        "certificate_issues": cert_issues,
+        "domain": doc.get("domain", ""),
+        "generated_at": doc.get("completed_at", ""),
+        "total_applications": 1 if domain else (await db[SCANS_COLLECTION].count_documents({"status": "completed"})),
+        "sites_surveyed": cbom_report.get("total_components", 0),
+        "active_certificates": len(doc.get("tls_results", [])),
+        "weak_cryptography": risk_summary.get("high", 0) + risk_summary.get("critical", 0),
+        "certificate_issues": sum(1 for t in doc.get("tls_results", []) 
+                                if (t.get("certificate") or {}).get("days_until_expiry", 999) <= 30),
     }
 
+@router.get("/cbom/per-app", summary="Get per-application CBOM components", tags=["CBOM"])
+async def get_cbom_per_app(domain: str = None):
+    db = get_database()
+    query = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+        
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        return []
+        
+    # Standardize output for the table
+    cbom_report = doc.get("cbom_report", {})
+    components = cbom_report.get("components", [])
+    
+    # Add context from tls_results if needed, or just return as is
+    return components
 
 @router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
-async def get_cbom_charts():
+async def get_cbom_charts(domain: str = None):
     db = get_database()
-    scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
+    
+    if domain:
+        query = {"domain": domain, "status": "completed"}
+        doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+        scans = [doc] if doc else []
+    else:
+        scans = await db[SCANS_COLLECTION].find({"status": "completed"}).to_list(length=100)
 
     key_lengths: dict = {}
     tls_versions: dict = {}
@@ -431,22 +454,40 @@ async def get_cbom_charts():
     cipher_usage: dict = {}
 
     for scan in scans:
-        for t in scan.get("tls_results", []):
-            kl = str(t.get("cipher_bits") or t.get("key_length") or "2048")
-            tv = t.get("tls_version", "TLS 1.2")
-            ca = (t.get("certificate") or {}).get("issuer", "Unknown") or "Unknown"
-            cipher = t.get("cipher_suite", "Unknown")
+        # Use cbom_report components for better granularity if available
+        all_components = scan.get("cbom_report", {}).get("components", [])
+        if not all_components:
+            # Fallback to tls_results if cbom_report missing
+            all_components = []
+            for t in scan.get("tls_results", []):
+                all_components.append({
+                    "name": t.get("cipher_suite", "Unknown"),
+                    "category": "cipher",
+                    "key_size": t.get("cipher_bits") or t.get("key_length"),
+                    "details": t.get("tls_version", "TLS 1.2")
+                })
 
-            key_lengths[kl] = key_lengths.get(kl, 0) + 1
-            tls_versions[tv] = tls_versions.get(tv, 0) + 1
+        for c in all_components:
+            category = c.get("category", "")
+            name = c.get("name", "Unknown")
+            
+            if category == "protocol":
+                tls_versions[name] = tls_versions.get(name, 0) + 1
+            elif category == "cipher":
+                cipher_usage[name] = cipher_usage.get(name, 0) + 1
+                ks = str(c.get("key_size") or "2048")
+                key_lengths[ks] = key_lengths.get(ks, 0) + 1
+        
+        # CAs still come from tls_results (cert chain)
+        for t in scan.get("tls_results", []):
+            ca = (t.get("certificate") or {}).get("issuer", "Unknown") or "Unknown"
             cas[ca] = cas.get(ca, 0) + 1
-            cipher_usage[cipher] = cipher_usage.get(cipher, 0) + 1
 
     return {
         "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
         "top_certificate_authorities": [{"name": k, "value": v} for k, v in cas.items()],
         "encryption_protocols": [{"name": k, "value": v} for k, v in tls_versions.items()],
-        "cipher_usage": [{"name": k, "value": v} for k, v in cipher_usage.items()],
+        "cipher_usage": [{"name": k, "value": v, "weak": ("MD5" in k or "RC4" in k or "DES" in k or "TLSv1.0" in k)} for k, v in cipher_usage.items()],
     }
 
 
@@ -562,16 +603,16 @@ async def get_assets():
                 "ipv4": a.get("ip", ""),
                 "ipv6": "",
                 "type": a_type,
-                "owner": "IT Team",
-                "risk": "Low" if tls.get("tls_version") == "TLSv1.3" else "Medium",
+                "owner": "",
+                "risk": scan.get("quantum_score", {}).get("risk_level", "").capitalize(),
                 "hndlRisk": False,
                 "certificate_status": cert_status_slug,
-                "certStatus": cert_status_slug.replace("_", " ").title(),
-                "pqcStatus": "Ready" if tls.get("tls_version") == "TLSv1.3" else "Not Ready",
-                "key_length": str(tls.get("cipher_bits") or "2048"),
+                "certStatus": cert_status_slug.replace("_", " ").title() if cert_status_slug != "unknown" else "",
+                "pqcStatus": "Ready" if tls.get("tls_version") == "TLSv1.3" else "",
+                "key_length": str(tls.get("cipher_bits") or ""),
                 "last_scan": str(scan.get("completed_at", ""))[:10],
-                "tls_version": tls.get("tls_version"),
-                "cipher_suite": tls.get("cipher_suite"),
+                "tls_version": tls.get("tls_version", ""),
+                "cipher_suite": tls.get("cipher_suite", ""),
             })
 
     return {
@@ -657,11 +698,11 @@ async def get_crypto_security():
             cert = t.get("certificate") or {}
             results.append({
                 "asset": t.get("host", scan.get("domain", "")),
-                "key_length": str(t.get('cipher_bits') or 2048),
-                "cipher_suite": t.get("cipher_suite", "TLS_AES_256_GCM_SHA384"),
-                "tls_version": t.get("tls_version", "TLS 1.3"),
-                "certificate_authority": cert.get("issuer", "DigiCert"),
-                "pqcStatus": "not-ready",
+                "key_length": str(t.get('cipher_bits') or ""),
+                "cipher_suite": t.get("cipher_suite", ""),
+                "tls_version": t.get("tls_version", ""),
+                "certificate_authority": cert.get("issuer", ""),
+                "pqcStatus": "",
             })
 
     return results
@@ -674,22 +715,70 @@ async def get_crypto_security():
 
 @router.get("/pqc/posture", summary="Get PQC posture overview", tags=["PQC"])
 async def get_pqc_posture():
+    db = get_database()
+    scan = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    if not scan:
+        return None
+
+    tls_results = scan.get("tls_results", [])
+    assets = scan.get("assets", [])
+    tls_map = {t.get("host"): t for t in tls_results}
+    
+    asset_pqc_status = []
+    elite_pqc_count = 0
+    standard_count = 0
+    legacy_count = 0
+    critical_count = 0
+
+    for a in assets:
+        host = a.get("subdomain")
+        tls = tls_map.get(host, {})
+        is_pqc = tls.get("tls_version") == "TLSv1.3"
+        
+        # Simple grade logic
+        if is_pqc: grade = "Elite"; elite_pqc_count += 1
+        elif tls.get("tls_version") == "TLSv1.2": grade = "Standard"; standard_count += 1
+        elif tls.get("tls_version"): grade = "Legacy"; legacy_count += 1
+        else: grade = "Critical"; critical_count += 1
+
+        asset_pqc_status.append({
+            "asset_name": host,
+            "pqc_supported": is_pqc,
+            "tls_version": tls.get("tls_version", "Unknown"),
+            "risk": "Low" if is_pqc else "High",
+            "status": "Ready" if is_pqc else "Migration Required",
+            "score": 850 if is_pqc else 450 if grade == "Standard" else 250
+        })
+
+    total = len(assets) or 1
     return {
-        "migration_score": 0,
-        "vulnerable_algorithms": 0,
-        "needs_monitoring": 0,
-        "quantum_safe": 0,
-        "elite_pqc_ready_pct": 0,
-        "standard_pct": 0,
-        "legacy_pct": 0,
-        "critical_apps": 0,
+        "elite_count": elite_pqc_count,
+        "standard_count": standard_count,
+        "critical_apps": critical_count,
+        "elite_pqc_pct": round((elite_pqc_count / total) * 100, 1),
+        "standard_pct": round((standard_count / total) * 100, 1),
+        "legacy_pct": round((legacy_count / total) * 100, 1),
+        "critical_pct": round((critical_count / total) * 100, 1),
+        "asset_pqc_status": asset_pqc_status,
+        "recommendations": [r.get("rationale") for r in scan.get("recommendations", [])][:5]
     }
 
 
 
 @router.get("/pqc/vulnerable-algorithms", summary="Get vulnerable algorithms list", tags=["PQC"])
 async def get_vulnerable_algorithms():
-    return []
+    db = get_database()
+    scan = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    if not scan:
+        return []
+    
+    cbom = scan.get("cbom", [])
+    vulnerable = [c.get("name") for c in cbom if c.get("risk_level") != "safe"]
+    return list(set(vulnerable)) # Unique names
 
 
 
@@ -709,27 +798,42 @@ async def get_pqc_compliance():
 # Cyber Rating endpoints
 # ════════════════════════════════════════════════════════════════════
 
-@router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
-async def get_cyber_rating():
     db = get_database()
-    doc = await db[SCANS_COLLECTION].find_one({}, sort=[("completed_at", -1)])
+    scan = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    if not scan:
+        return {"score": 0, "max_score": 1000, "tier": "N/A", "per_url_scores": []}
     
-    # Base score out of 100
-    scaled_score = 0
-    tier = "N/A"
+    # Scale 0-100 to 0-1000
+    raw_score = scan.get("quantum_score", {}).get("score", 75)
+    score_1000 = int(raw_score * 10)
     
+    tier = "Elite-PQC" if score_1000 > 700 else "Standard" if score_1000 >= 400 else "Legacy"
+    
+    # Per-URL scores
+    per_url = []
+    tls_results = scan.get("tls_results", [])
+    for t in tls_results[:8]:
+        url_score = int(raw_score * 10)
+        if t.get("tls_version") == "TLSv1.3": url_score += 50
+        elif t.get("tls_version") in ["TLSv1.0", "TLSv1.1"]: url_score -= 200
+        per_url.append({
+            "url": t.get("host", "unknown"),
+            "score": max(0, min(1000, url_score))
+        })
+
     return {
-        "score": scaled_score,
+        "score": score_1000,
         "max_score": 1000,
         "tier": tier,
-
-        "tier_description": "Indicates a stronger security posture",
+        "tier_description": f"Overall {tier} security posture",
         "tiers": [
             {"status": "Legacy",    "range": "< 400"},
             {"status": "Standard",  "range": "400 till 700"},
             {"status": "Elite-PQC", "range": "> 700"},
         ],
-        "per_url_scores": [],
+        "per_url_scores": per_url,
     }
 
 
@@ -782,15 +886,19 @@ async def get_discovery_assets():
     results = []
     for scan in scans:
         for a in scan.get("assets", []):
+            # Derive company name from domain or use a fallback
+            domain_name = scan.get("domain", "")
+            company = domain_name.split('.')[0].capitalize() if domain_name else ""
+            
             results.append({
-                "detection_date": str(scan.get("completed_at", "2026-03-12"))[:10],
+                "detection_date": str(scan.get("completed_at", ""))[:10],
                 "ip_address": a.get("ip", ""),
-                "ports": ", ".join(str(p) for p in a.get("open_ports", [80, 443])),
-                "subnets": "103.107.224.0/22",
-                "asn": "AS9583",
-                "net_name": "PNB-NET",
-                "location": "India",
-                "company": "Punjab National Bank",
+                "ports": ", ".join(str(p) for p in a.get("open_ports", [])),
+                "subnets": "",
+                "asn": "",
+                "net_name": "",
+                "location": "",
+                "company": company,
             })
 
     return results
@@ -828,18 +936,51 @@ async def get_network_graph(domain: Optional[str] = None):
     
     seen_ips = set()
     
+    # Maps for lookup
+    tls_map = {t.get("host"): t for t in doc.get("tls_results", [])}
+    
     for i, asset in enumerate(assets):
         sub = asset.get("subdomain")
-        
         if not sub:
             continue
 
-        # 2. Subdomain Node
+        # Enrich with security insights
+        tls = tls_map.get(sub, {})
+        cert = tls.get("certificate") or {}
+        days = cert.get("days_until_expiry")
+        
+        # Categorization
+        ports = asset.get("open_ports", [])
+        is_web = any(p in [80, 443, 8080, 8443] for p in ports)
+        asset_type = "web_app" if is_web else "server" if any(p in [22, 3389] for p in ports) else "other"
+        
+        # Risk assessment (simplified logic matching dashboard)
+        risk = "low"
+        if tls.get("tls_version") in ["TLSv1.1", "TLSv1", "SSLv3", "SSLv2"]:
+            risk = "high"
+        elif tls.get("tls_version") == "TLSv1.2":
+            risk = "medium"
+            
+        kx = (tls.get("key_exchange") or "").upper()
+        is_hndl = kx in ["RSA", "DH", "DHE", "ECDH", "ECDHE"]
+        if is_hndl:
+            risk = "high"
+
+        # 2. Subdomain Node (Enriched)
         sub_node_id = f"sub-{i}"
-        nodes.append({"id": sub_node_id, "label": sub})
+        nodes.append({
+            "id": sub_node_id, 
+            "label": sub,
+            "type": asset_type,
+            "risk": risk,
+            "hndl_vulnerable": is_hndl,
+            "cert_expiring": days is not None and 0 < days <= 30,
+            "cert_expired": days is not None and days <= 0
+        })
         edges.append({"source": "root", "target": sub_node_id})
                 
     return {"nodes": nodes, "edges": edges}
+
 
 
 

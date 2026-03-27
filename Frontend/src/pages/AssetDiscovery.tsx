@@ -236,6 +236,12 @@ type Tab = typeof TABS[number];
 
 const edgeStyle = { stroke: "hsl(220, 14%, 30%)", strokeWidth: 2 };
 
+const getCompanyFromDomain = (domain: string) => {
+  if (!domain || domain === "—") return "";
+  const part = domain.split(".")[0];
+  return part.charAt(0).toUpperCase() + part.slice(1);
+};
+
 export default function AssetDiscovery() {
   const [activeTab, setActiveTab] = useState<Tab>("Domains");
   const [subFilter, setSubFilter] = useState<SubFilter>("All");
@@ -265,11 +271,11 @@ export default function AssetDiscovery() {
       .then(res => {
         const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
         setDomainData(items.map((a: any) => ({
-          detectionDate:    a.last_seen?.split("T")[0] || "—",
-          domainName:       a.asset || a.name || "—",
-          registrationDate: "—",
-          registrar:        "—",
-          company:          "PNB",
+          detectionDate:    a.last_seen?.split("T")[0] || "",
+          domainName:       a.asset || a.name || "",
+          registrationDate: "",
+          registrar:        "",
+          company:          getCompanyFromDomain(a.asset || a.name),
         })));
       })
       .catch(() => setDomainData([]));
@@ -277,14 +283,14 @@ export default function AssetDiscovery() {
     // SSL from crypto security data
     cryptoService.getCryptoSecurityData()
       .then(res => {
-        const items = Array.isArray(res.data) ? res.data : [];
+        const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
         setSslData(items.map((c: any) => ({
-          detectionDate: "—",
-          sha:           c.certificate_sha256 || c.cert_sha || "—",
-          validFrom:     c.cert_valid_from    || "—",
-          commonName:    c.asset              || "—",
-          company:       "PNB",
-          ca:            c.certificate_authority || "—",
+          detectionDate: "",
+          sha:           c.certificate_sha256 || c.cert_sha || "",
+          validFrom:     c.cert_valid_from    || "",
+          commonName:    c.asset              || "",
+          company:       c.company || getCompanyFromDomain(c.asset),
+          ca:            c.certificate_authority || "",
         })));
       })
       .catch(() => setSslData([]));
@@ -292,18 +298,17 @@ export default function AssetDiscovery() {
     // IP data from asset-discovery
     assetService.getAll()
       .then(res => {
-        const items = Array.isArray(res.data) ? res.data : [];
+        const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
         setIpData(items
-          .filter((a: any) => a.ip_address)
           .map((a: any) => ({
-            detectionDate: a.last_seen?.split("T")[0] || "—",
-            ip:            a.ip_address  || "—",
-            ports:         a.open_ports?.join(", ") || "—",
-            subnet:        "—",
-            asn:           a.asn         || "—",
-            netname:       a.netname     || "—",
-            location:      a.country     || "—",
-            company:       "PNB",
+            detectionDate: a.last_scan || a.last_seen?.split("T")[0] || "",
+            ip:            a.ipv4 || a.ip_address || "",
+            ports:         Array.isArray(a.open_ports) ? a.open_ports.join(", ") : (a.ports || ""),
+            subnet:        a.subnet || "",
+            asn:           a.asn || "",
+            netname:       a.netname || "",
+            location:      a.location || a.country || "",
+            company:       a.company || getCompanyFromDomain(a.ipv4 || a.ip_address),
           })));
       })
       .catch(() => setIpData([]));
@@ -313,13 +318,13 @@ export default function AssetDiscovery() {
       .then(res => {
         const items = Array.isArray(res.data) ? res.data : (res.data?.records || []);
         setSoftwareData(items.map((d: any) => ({
-          detectionDate: "—",
-          product:       d.software || d.type || "DNS Server",
-          version:       d.version  || "—",
+          detectionDate: "",
+          product:       d.software || d.type || "",
+          version:       d.version  || "",
           type:          d.record_type || "NS",
-          port:          "53",
-          host:          d.host || d.name || "—",
-          company:       "PNB",
+          port:          d.port || "",
+          host:          d.host || d.name || "",
+          company:       d.company || getCompanyFromDomain(d.host || d.name),
         })));
       })
       .catch(() => setSoftwareData([]));
@@ -340,20 +345,63 @@ export default function AssetDiscovery() {
         if (data.nodes && data.edges) {
           const formattedNodes: Node[] = data.nodes.map((n: any, i: number) => {
             const cols = 4;
+            // Root node style
+            if (n.id === "root") {
+              return {
+                id: n.id,
+                position: { x: 400, y: 50 },
+                data: { label: n.label },
+                style: {
+                  background: "hsl(260, 40%, 30%)",
+                  color: "white",
+                  border: "2px solid hsl(260, 50%, 50%)",
+                  borderRadius: "12px",
+                  fontSize: "14px",
+                  fontWeight: "bold",
+                  padding: "12px 20px",
+                  zIndex: 10,
+                },
+              };
+            }
+
+            const isHighRisk = n.risk === "high" || n.hndl_vulnerable || n.cert_expired;
+            const isMediumRisk = n.risk === "medium" || n.cert_expiring;
+            const isWeb = n.type === "web_app";
+            
+            let borderColor = "hsl(220, 14%, 25%)";
+            let boxShadow = "none";
+            let backgroundColor = "hsl(220, 18%, 18%)";
+            
+            if (isHighRisk) {
+              borderColor = "hsl(0, 80%, 50%)";
+              boxShadow = "0 0 12px hsla(0, 80%, 50%, 0.4)";
+            } else if (isMediumRisk) {
+              borderColor = "hsl(40, 80%, 50%)";
+            }
+            
+            if (isWeb) {
+              backgroundColor = "hsl(210, 30%, 25%)";
+            }
+
+            const statusEmoji = n.cert_expired ? " ❌" : n.cert_expiring ? " ⚠️" : n.hndl_vulnerable ? " ☢️" : "";
+
             return {
               id: n.id,
-              position: { x: (i % cols) * 250 + 100, y: Math.floor(i / cols) * 150 + 100 },
-              data: { label: n.label || n.id },
+              position: { x: (i % cols) * 250 + 100, y: Math.floor(i / cols) * 150 + 200 },
+              data: { label: `${n.label}${statusEmoji}` },
               style: {
-                background: "hsl(220, 18%, 18%)",
+                background: backgroundColor,
                 color: "hsl(210, 20%, 92%)",
-                border: "1px solid hsl(220, 14%, 25%)",
+                border: `1px solid ${borderColor}`,
                 borderRadius: "10px",
                 fontSize: "11px",
                 padding: "10px 16px",
+                boxShadow: boxShadow,
+                transition: "all 0.3s ease",
               },
             };
           });
+
           const formattedEdges: Edge[] = data.edges.map((e: any, i: number) => ({
             id: `edge-${i}`,
             source: e.source,

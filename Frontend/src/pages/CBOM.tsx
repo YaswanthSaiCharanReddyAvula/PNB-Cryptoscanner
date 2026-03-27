@@ -10,7 +10,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { cbomService, cryptoService } from "@/services/api";
+import { cbomService, cryptoService, pqcService } from "@/services/api";
 import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
 import { CheckCircle } from "lucide-react";
 
@@ -119,7 +119,30 @@ export default function CBOM() {
       })
       .catch(err => console.error("Could not fetch CBOM charts", err));
 
-    // Fetch crypto records → drives PQC stats + asset/perApp tables
+    // Fetch per-app CBOM components directly from the backend report
+    pqcService.getPerAppCbom()
+      .then(res => {
+        const components = Array.isArray(res.data) ? res.data : [];
+        const mapped = components.map((c: any) => ({
+          application:         summary?.domain || "testssl.sh",
+          keyLength:           c.key_size ? `${c.key_size}-bit` : "N/A",
+          cipherSuite:         c.name,
+          ca:                  "—", // CAs are at the host level, not component level in CBOM
+          algorithmOid:        c.details?.includes("OID") ? c.details.split("OID:")[1] : "—",
+          keyState:            "Active",
+          keyCreationDate:     "—",
+          sigAlgorithm:        c.category === "cipher" ? c.name : "—",
+          weak:                c.risk_level === "critical" || c.risk_level === "high" || c.risk_level === "low",
+          pqcStatus:           c.quantum_status,
+          assetName:           c.name,
+          url:                 summary?.domain || "testssl.sh",
+          assetType:           c.category
+        }));
+        setPerAppCbom(mapped);
+      })
+      .catch(err => console.error("Could not fetch per-app CBOM", err));
+
+    // Fetch crypto records → drives PQC stats + asset
     cryptoService.getCryptoSecurityData()
       .then(res => {
         const records = Array.isArray(res.data) ? res.data : [];
@@ -135,7 +158,6 @@ export default function CBOM() {
         });
         setPqcStats({ safe, ready, vuln, hndl });
         setCbomAssets(mapped);
-        setPerAppCbom(mapped);
         setLoading(false);
       })
       .catch(err => {
@@ -226,7 +248,8 @@ export default function CBOM() {
         <div>
           <h2 className="text-lg font-bold text-foreground">CBOM Inventory Report</h2>
           <div className="text-sm text-muted-foreground mt-2 space-y-1">
-            <p><strong>CBOM Generated:</strong> {new Date().toLocaleString()}</p>
+            <p><strong>CBOM Report for:</strong> {summary?.domain || "..."}</p>
+            <p><strong>CBOM Generated:</strong> {summary?.generated_at ? new Date(summary.generated_at).toLocaleString() : "..."}</p>
             <p><strong>NIST Compliance:</strong> FIPS 140-3 / NIST SP 800-208</p>
           </div>
         </div>

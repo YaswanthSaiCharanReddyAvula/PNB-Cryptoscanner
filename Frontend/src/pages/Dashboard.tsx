@@ -149,10 +149,10 @@ export default function Dashboard() {
             ipv6: "N/A",
             type: inferAssetTypeFromPorts(a.open_ports),
             owner: "N/A",
-            risk: "Scanning...",
-            certStatus: "Scanning...",
-            keyLength: "N/A",
-            lastScan: "Today",
+            risk: "",
+            certStatus: "",
+            keyLength: "",
+            lastScan: "",
           }))
         );
       }
@@ -193,11 +193,11 @@ export default function Dashboard() {
         ipv4: a.ipv4,
         ipv6: a.ipv6,
         type: a.type || "Unknown",
-        owner: a.owner || "N/A",
-        risk: a.risk || "Low",
-        certStatus: a.certificate_status || "Valid",
-        keyLength: a.key_length && a.key_length !== "None" ? `${a.key_length}`.includes("-bit") ? a.key_length : `${a.key_length}-bit` : "Unknown",
-        lastScan: a.last_scan ? new Date(a.last_scan).toLocaleDateString() : "Never",
+        owner: a.owner || "",
+        risk: a.risk || "",
+        certStatus: a.certificate_status || "",
+        keyLength: a.key_length && a.key_length !== "None" ? `${a.key_length}`.includes("-bit") ? a.key_length : `${a.key_length}-bit` : "",
+        lastScan: a.last_scan ? new Date(a.last_scan).toLocaleDateString() : "",
         pqcStatus: determinePQCStatus(a.tls_version, a.cipher_suite, a.key_length?.toString()),
         hndlRisk: isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite),
       }));
@@ -247,8 +247,8 @@ export default function Dashboard() {
           asset: c.asset,
           keyLength: c.key_length && c.key_length !== "None" ? `${c.key_length}`.includes("-bit") ? c.key_length : `${c.key_length}-bit` : "Unknown",
           cipherSuite: c.cipher_suite || "Unknown",
-          tlsVersion: c.tls_version || "Unknown",
-          ca: c.certificate_authority || "Unknown",
+          tlsVersion: c.tls_version || "",
+          ca: c.certificate_authority || "",
           pqcStatus: determinePQCStatus(c.tls_version, c.cipher_suite, c.key_length?.toString()),
         }));
         setCryptoSecurityData(cryptoRecords.slice(0, 5));
@@ -293,10 +293,10 @@ export default function Dashboard() {
           ipv6: "N/A",
           type: inferAssetTypeFromPorts(a.open_ports),
           owner: "N/A",
-          risk: (v1?.quantum_score?.risk_level || "Low").toString(),
-          certStatus: "Valid",
-          keyLength: "N/A",
-          lastScan: v1.completed_at ? new Date(v1.completed_at).toLocaleDateString() : "Today",
+          risk: (v1?.quantum_score?.risk_level || "").toString(),
+          certStatus: "",
+          keyLength: "",
+          lastScan: v1.completed_at ? new Date(v1.completed_at).toLocaleDateString() : "",
           pqcStatus: determinePQCStatus(tls.tls_version, tls.cipher_suite, tls.certificate?.public_key_size?.toString()),
           hndlRisk: isHNDLVulnerable(tls.certificate?.public_key_size?.toString(), tls.cipher_suite),
         };

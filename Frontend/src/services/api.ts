@@ -86,6 +86,7 @@ export const pqcService = {
   getVulnerableAlgorithms: () => api.get("/pqc/vulnerable-algorithms"),
   getRiskCategories:       () => api.get("/pqc/risk-categories"),
   getCompliance:           () => api.get("/pqc/compliance"),
+  getPerAppCbom:           (domain?: string) => api.get("/cbom/per-app", { params: { domain } }),
 };
 
 // ── Cyber Rating ──────────────────────────────────────────────────
@@ -122,7 +123,7 @@ export const cryptoService = {
 // ── Scanner ───────────────────────────────────────────────────────
 
 export const scanService = {
-  startScan:       (domain: string) => api.post("/scan", { domain, ports: "80,443" }),
+  startScan:       (domain: string) => api.post("/scan", { domain }),
   getResults:      (domain: string) => api.get(`/results/${domain}`),
   getCBOM:         (domain: string) => api.get(`/cbom/${domain}`),
   getQuantumScore: (domain: string) => api.get(`/quantum-score/${domain}`),

@@ -111,7 +111,7 @@ export default function PQCPosture() {
         <div className="px-6 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-bold text-white tracking-wide">PQC Compliance Dashboard</h1>
-            <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Readiness Assessment — PNB</p>
+            <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Readiness Assessment</p>
           </div>
           {statsText.length > 0 && (
             <div className="flex flex-wrap items-center gap-0 text-xs divide-x divide-white/10 rounded-lg overflow-hidden border border-white/10">

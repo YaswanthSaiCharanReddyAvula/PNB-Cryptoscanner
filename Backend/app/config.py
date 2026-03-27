@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # ── Scanner defaults ─────────────────────────────────────────
     SCAN_TIMEOUT: int = 120            # seconds per full scan
     TOOL_TIMEOUT: int = 30             # max seconds per individual tool binary
-    DEFAULT_PORTS: str = "443,8443,8080,4443"
+    DEFAULT_PORTS: str = "21,22,443,465,587,990,993,995,1433,3306,3389,5432,6379,8080,8443,27017"
     MAX_SUBDOMAINS: int = 50           # cap subdomains for fast demo scanning
 
     model_config = SettingsConfigDict(

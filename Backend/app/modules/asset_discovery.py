@@ -7,6 +7,7 @@ import os
 import uuid
 import time
 from typing import List, Set
+from asyncio.subprocess import PIPE
 
 import dns.resolver
 from app.db.models import DiscoveredAsset, NameServerInfo
@@ -25,8 +26,8 @@ async def _run_command(cmd: List[str], name: str = "Command", timeout: int | Non
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
         )
         
         # Monitor progress every 30 seconds
@@ -39,8 +40,10 @@ async def _run_command(cmd: List[str], name: str = "Command", timeout: int | Non
                 duration = time.time() - start_time
                 logger.info("Tool [%s] finished in %.2fs", name, duration)
                 
-                if stderr and b"error" in stderr.lower():
-                    logger.warning("stderr from %s: %s", name, stderr.decode(errors="replace"))
+                if stderr:
+                    err_msg = stderr.decode(errors="replace").strip()
+                    if err_msg:
+                        logger.warning("stderr from %s: %s", name, err_msg)
                 
                 return stdout.decode(errors="replace")
                 
@@ -53,8 +56,6 @@ async def _run_command(cmd: List[str], name: str = "Command", timeout: int | Non
                     except: pass
                     return ""
                 
-                # Report "still running" and estimated progress if it's a known time-bound tool
-                # For generic tools, we just show duration.
                 progress_msg = f"Still running [{name}]... (Duration: {int(duration)}s)"
                 logger.info(progress_msg)
                 continue
@@ -76,7 +77,7 @@ async def run_subfinder(domain: str) -> Set[str]:
         ["subfinder", "-d", domain, "-silent", "-r", "8.8.8.8,1.1.1.1",
          "--max-time", "30"],
         name="Subfinder",
-        timeout=35,  # slightly above --max-time so subfinder can exit cleanly
+        timeout=35,
     )
     subs = set()
     if output.strip():
@@ -90,17 +91,13 @@ async def run_subfinder(domain: str) -> Set[str]:
 async def run_amass(domain: str) -> Set[str]:
     """Deep enumeration using Amass."""
     logger.info("Running Amass (Deep) for %s...", domain)
-    # We use active mode for "deep" enumeration if needed, but here we stay with passive+ 
-    # to avoid excessive noise unless user specifically asks for active.
-    # Adding '-passive' for now as it's the safest 'deep' starting point.
     output = await _run_command(
         ["amass", "enum", "-passive", "-d", domain], 
         name="Amass", 
-        timeout=60 # Reduced to 60s to prevent dashboard hangs
+        timeout=60
     )
     subs = set()
     if output.strip():
-        # Amass output can be messy, use regex to pull domains ending in our target
         domain_pattern = re.compile(rf'([a-zA-Z0-9.-]+\.{re.escape(domain)})')
         subs.update(domain_pattern.findall(output))
     return subs
@@ -127,7 +124,6 @@ async def run_dnsx(subdomains: List[str]) -> List[str]:
         domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         for line in output.splitlines():
             line = line.strip()
-            # Verify the parsed host actually structurally resembles a valid domain name
             if line and domain_regex.match(line) and "error" not in line.lower():
                 live.append(line)
         return list(set(live))
@@ -154,14 +150,17 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
         with open(temp_target, "w") as f:
             f.write("\n".join(subdomains))
             
-        output = await _run_command(
-            # Using httpx-toolkit if httpx python package is shadowing, but we'll try standard httpx
-            # The python httpx throws errors which have spaces, so we filter them.
-            ["httpx", "-l", temp_target, "-silent"], 
-            name="HTTPX"
-        )
+        # Try standard httpx first
+        cmd = ["httpx", "-l", temp_target, "-silent"]
+        logger.info("Probing web services with Tool [HTTPX]...")
+        output = await _run_command(cmd, name="HTTPX")
         
-        # Extract strictly valid hosts from URLs (httpx returns full URLs)
+        # Fallback to httpx-toolkit if no output (common Kali naming conflict)
+        if not output.strip():
+            logger.info("HTTPX returned no output, trying [httpx-toolkit] fallback...")
+            cmd[0] = "httpx-toolkit"
+            output = await _run_command(cmd, name="HTTPX-Toolkit")
+        
         active_web = []
         domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         for line in output.splitlines():
@@ -169,11 +168,7 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
             if not line:
                 continue
                 
-            # Strip protocol
             host = line.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
-            
-            # The python httpx CLI error output contains arbitrary text ("req deps not installed", etc)
-            # Verify the parsed host actually structurally resembles a valid domain name
             if host and domain_regex.match(host) and "error" not in host.lower():
                 active_web.append(host)
                 
@@ -186,8 +181,6 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
             try: os.remove(temp_target)
             except: pass
 
-    return []
-
 
 async def scan_ports(target: str, ports: str | None = None) -> List[int]:
     """Scan ports with nmap."""
@@ -197,7 +190,6 @@ async def scan_ports(target: str, ports: str | None = None) -> List[int]:
     ], name=f"Nmap-{target}")
 
     open_ports: List[int] = []
-    # If nmap totally fails to resolve the target, output will be empty or have "Failed to resolve"
     if not output or "Failed to resolve" in output:
         logger.warning(f"Nmap failed to resolve or scan {target}. Attempting default ports.")
         return [443]
@@ -213,7 +205,6 @@ async def get_ns_records(domain: str) -> List[NameServerInfo]:
     """Fetch Name Server (NS) records for a domain."""
     logger.info("Fetching NS records for %s", domain)
     try:
-        # Use dnspython to resolve NS records
         resolver = dns.resolver.Resolver()
         resolver.nameservers = ['8.8.8.8', '1.1.1.1']
         answers = resolver.resolve(domain, 'NS')
@@ -222,7 +213,6 @@ async def get_ns_records(domain: str) -> List[NameServerInfo]:
         for rdata in answers:
             ns_host = str(rdata.target).rstrip('.')
             try:
-                # Try to get IP address for the nameserver
                 ns_ip = socket.gethostbyname(ns_host)
             except:
                 ns_ip = None
@@ -256,9 +246,6 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
     # 1. Discovery (Passive + Deep)
     await log_and_broadcast(f"=== Starting discovery Phase for {domain} ===")
     
-    # Update runners to optionally use broadcast if needed (not shown in _run_command but done in discover_assets loop)
-    # For now, we'll manually broadcast major tool transitions.
-    
     await log_and_broadcast("Running Subfinder and Amass (Search Phase)...")
     subfinder_res, amass_res = await asyncio.gather(
         run_subfinder(domain),
@@ -268,7 +255,6 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
     if not all_subs:
         all_subs = [domain]
 
-    # Cap to MAX_SUBDOMAINS for fast demo/test scanning
     if len(all_subs) > settings.MAX_SUBDOMAINS:
         logger.info("Capping %d subdomains to MAX_SUBDOMAINS=%d", len(all_subs), settings.MAX_SUBDOMAINS)
         all_subs = all_subs[:settings.MAX_SUBDOMAINS]
@@ -285,8 +271,6 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
     web_hosts = await run_httpx(live_subs)
     targets = web_hosts if web_hosts else live_subs
     
-    # Final sanity check: strip out any target that is definitely not a valid domain / IP
-    # before feeding it to Nmap (preventing python CLI error injections)
     clean_targets = []
     for t in targets:
         if domain_regex.match(t) and "error" not in t.lower() and "dependency" not in t.lower() and "client" not in t.lower():
@@ -317,4 +301,3 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
 
     await log_and_broadcast(f"=== Discovery complete: {len(assets)} assets found ===")
     return assets
-
