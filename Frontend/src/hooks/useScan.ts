@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { scanService } from "@/services/api";
+import { scanService, type ScanControllerPayload } from "@/services/api";
 
 const STAGES = [
   { label: "Discovering assets", progress: 15 },
@@ -32,7 +32,7 @@ export function useScan() {
   const [stageIndex, setStageIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const startScan = useCallback(async (domain: string) => {
+  const startScan = useCallback(async (domain: string, controller?: ScanControllerPayload) => {
     try {
       setTargetDomain(domain);
       setStageIndex(0);
@@ -40,7 +40,7 @@ export function useScan() {
       setScanId(null);
       setIsScanning(true);
 
-      const res = await scanService.startScan(domain);
+      const res = await scanService.startScan(domain, controller);
       const id = (res.data as { scan_id?: string })?.scan_id ?? null;
       if (id) setScanId(id);
       else console.warn("startScan: API did not return scan_id — live console WebSocket will not connect.");

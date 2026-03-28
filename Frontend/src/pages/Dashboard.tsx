@@ -18,8 +18,10 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   dashboardService,
@@ -27,6 +29,7 @@ import {
   dnsService,
   cryptoService,
   scanService,
+  type ScanControllerPayload,
 } from "@/services/api";
 import { ThreatModelPanel } from "@/components/dashboard/ThreatModelPanel";
 import { toast } from "sonner";
@@ -37,6 +40,7 @@ import { HNDLAlert } from "@/components/ui/HNDLAlert";
 import { useScan } from "@/hooks/useScan";
 import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
+import { setLastScannedDomain } from "@/lib/lastScanDomain";
 import {
   PieChart,
   Pie,
@@ -78,6 +82,10 @@ const CHART_GRID = { stroke: "rgb(226 232 240)", strokeDasharray: "4 6" };
 
 /** Aligned with backend `Settings.MAX_BATCH_DOMAINS` */
 const MAX_BATCH_DOMAINS = 25;
+
+/** Defaults when Controller is enabled (match `MAX_SUBDOMAINS` / `TOOL_TIMEOUT` in backend config). */
+const DEFAULT_CTRL_MAX_SUBS = 50;
+const DEFAULT_CTRL_EXEC_SEC = 30;
 
 function ChartCard({
   title,
@@ -168,6 +176,10 @@ export default function Dashboard() {
 
   const [batchRaw, setBatchRaw] = useState("");
   const [batchBusy, setBatchBusy] = useState(false);
+
+  const [controllerEnabled, setControllerEnabled] = useState(false);
+  const [controllerMaxSubs, setControllerMaxSubs] = useState(String(DEFAULT_CTRL_MAX_SUBS));
+  const [controllerExecSec, setControllerExecSec] = useState(String(DEFAULT_CTRL_EXEC_SEC));
 
   const [policyAlignment, setPolicyAlignment] = useState<{
     has_scan?: boolean;
@@ -433,11 +445,31 @@ export default function Dashboard() {
   const handleScan = async () => {
     if (domain.trim() && !isScanning) {
       const targetDomain = domain.trim();
+      let scanOpts: ScanControllerPayload | undefined;
+      if (controllerEnabled) {
+        const ms = parseInt(controllerMaxSubs, 10);
+        const ex = parseInt(controllerExecSec, 10);
+        if (
+          !(
+            Number.isFinite(ms) &&
+            ms >= 1 &&
+            ms <= 500 &&
+            Number.isFinite(ex) &&
+            ex >= 10 &&
+            ex <= 900
+          )
+        ) {
+          toast.error("Controller: subdomain limit 1–500, execution limit 10–900 seconds.");
+          return;
+        }
+        scanOpts = { max_subdomains: ms, execution_time_limit_seconds: ex };
+      }
       setScannedDomain(targetDomain);
+      setLastScannedDomain(targetDomain);
       clearMessages();
       setIsConsoleOpen(true);
 
-      await startScan(targetDomain);
+      await startScan(targetDomain, scanOpts);
     }
   };
 
@@ -499,26 +531,85 @@ export default function Dashboard() {
       {/* Domain Input */}
       <div className="dossier-card p-5">
         <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Scan Domain</h3>
-        <div className="flex gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Enter domain (e.g., securebank.com)"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleScan()}
-              className="pl-10 bg-secondary border-border"
-              disabled={isScanning}
-            />
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Enter domain (e.g., securebank.com)"
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleScan()}
+                className="pl-10 bg-secondary border-border"
+                disabled={isScanning}
+              />
+            </div>
+            <Button onClick={handleScan} disabled={isScanning} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+              {isScanning && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Scan
+            </Button>
           </div>
-          <Button onClick={handleScan} disabled={isScanning} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
-            {isScanning && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Scan
-          </Button>
+          <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-secondary/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <Switch
+                id="scan-controller"
+                checked={controllerEnabled}
+                onCheckedChange={setControllerEnabled}
+                disabled={isScanning}
+                aria-label="Controller"
+              />
+              <div>
+                <Label htmlFor="scan-controller" className="cursor-pointer text-sm font-semibold text-foreground">
+                  Controller
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Off: server defaults. On: cap subdomains and per-tool execution time.
+                </p>
+              </div>
+            </div>
+            {controllerEnabled && (
+              <div className="grid w-full gap-3 sm:max-w-md sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ctrl-max-subs" className="text-xs text-muted-foreground">
+                    Subdomain scan limit
+                  </Label>
+                  <Input
+                    id="ctrl-max-subs"
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={controllerMaxSubs}
+                    onChange={(e) => setControllerMaxSubs(e.target.value)}
+                    disabled={isScanning}
+                    className="bg-background border-border"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ctrl-exec-sec" className="text-xs text-muted-foreground">
+                    Execution time limit (seconds)
+                  </Label>
+                  <Input
+                    id="ctrl-exec-sec"
+                    type="number"
+                    min={10}
+                    max={900}
+                    value={controllerExecSec}
+                    onChange={(e) => setControllerExecSec(e.target.value)}
+                    disabled={isScanning}
+                    className="bg-background border-border"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         {!isScanning && scannedDomain && stageIndex >= 5 && (
           <p className="text-xs text-muted-foreground mt-2">
-            Scan results available for: <span className="text-primary font-medium">{scannedDomain}</span>.
+            Scan results available for: <span className="text-primary font-medium">{scannedDomain}</span>.{" "}
+            <Link to="/security-roadmap" className="font-medium text-primary hover:underline">
+              View security roadmap
+            </Link>
+            .
           </p>
         )}
       </div>

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 
 // ── Theme constants ───────────────────────────────────────────────────────────
 const BRAND = "#2563eb";
@@ -544,7 +545,11 @@ export default function AssetDiscovery() {
         <div className="text-center py-12 text-muted-foreground">
           <Network className="h-12 w-12 mx-auto mb-4 opacity-30" />
           <p className="text-lg font-medium">No assets discovered yet</p>
-          <p className="text-sm">Scan a domain from the Home page to populate this view.</p>
+          <p className="text-sm">
+            Run a scan from{" "}
+            <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+            {" "}to populate this view.
+          </p>
         </div>
       )}
 

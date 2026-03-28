@@ -6,6 +6,7 @@ Endpoints:
   GET  /results/{domain}          → retrieve scan results
   GET  /cbom/{domain}             → retrieve CBOM report
   GET  /quantum-score/{domain}    → retrieve quantum readiness score
+  GET  /security-roadmap/{domain}  → risk findings → target solutions (TLS + PQC migration)
 
   GET  /dashboard/summary         → dashboard KPI stats
   GET  /dashboard/policy-alignment → org policy vs latest scan TLS (indicative)
@@ -115,6 +116,7 @@ from app.modules.threat_nist_mapping import (
     enrich_cbom_component_dict,
     simulate_quantum_score,
 )
+from app.modules.security_roadmap import build_security_roadmap
 from app.modules.webhook_notify import post_json_webhook, post_slack_incoming_webhook
 from app.core.ws_manager import manager as ws_manager
 from app.utils.asset_type import asset_type_label, classify_asset_ports
@@ -302,26 +304,38 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             "message": "Starting Asset Discovery..."
         }, scan_id)
 
-        assets = await asset_discovery.discover_assets(
-            request.domain, ports=request.ports, broadcast_func=broadcast_tool_log
-        )
-
-        seed_hosts: List[str] = []
-        if request.additional_seed_hosts:
-            seed_hosts.extend(request.additional_seed_hosts)
-        if request.merge_registered_inventory:
-            seed_hosts.extend(await _registered_hostnames_for_domain(db, request.domain))
-        seed_hosts = list(dict.fromkeys(seed_hosts))
-        if seed_hosts:
-            await broadcast_tool_log(
-                f"Merging {len(seed_hosts)} inventory/seed host(s) into discovery set…"
+        disc_token = None
+        if request.execution_time_limit_seconds is not None:
+            disc_token = asset_discovery.set_discovery_tool_timeout(
+                request.execution_time_limit_seconds
             )
-            assets = await asset_discovery.merge_extra_hosts_into_assets(
-                assets,
-                seed_hosts,
+        try:
+            assets = await asset_discovery.discover_assets(
+                request.domain,
                 ports=request.ports,
                 broadcast_func=broadcast_tool_log,
+                max_subdomains_cap=request.max_subdomains,
             )
+
+            seed_hosts: List[str] = []
+            if request.additional_seed_hosts:
+                seed_hosts.extend(request.additional_seed_hosts)
+            if request.merge_registered_inventory:
+                seed_hosts.extend(await _registered_hostnames_for_domain(db, request.domain))
+            seed_hosts = list(dict.fromkeys(seed_hosts))
+            if seed_hosts:
+                await broadcast_tool_log(
+                    f"Merging {len(seed_hosts)} inventory/seed host(s) into discovery set…"
+                )
+                assets = await asset_discovery.merge_extra_hosts_into_assets(
+                    assets,
+                    seed_hosts,
+                    ports=request.ports,
+                    broadcast_func=broadcast_tool_log,
+                )
+        finally:
+            if disc_token is not None:
+                asset_discovery.reset_discovery_tool_timeout(disc_token)
 
         # Merge org metadata from inventory (Phase 2)
         meta_coll = db[ASSET_METADATA_COLLECTION]
@@ -399,9 +413,16 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             scan_id,
         )
         tls_tasks = []
+        tls_exec = request.execution_time_limit_seconds
         for asset in assets:
             for port in asset.open_ports:
-                tls_tasks.append(tls_scanner.scan_tls(asset.subdomain, port))
+                tls_tasks.append(
+                    tls_scanner.scan_tls(
+                        asset.subdomain,
+                        port,
+                        execution_time_limit_seconds=tls_exec,
+                    )
+                )
 
         tls_results = await asyncio.gather(*tls_tasks, return_exceptions=True)
         tls_results = [r for r in tls_results if isinstance(r, TLSInfo)]
@@ -619,7 +640,15 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         domain=request.domain,
         status=ScanStatus.PENDING,
     )
-    await db[SCANS_COLLECTION].insert_one(initial.model_dump(mode="json"))
+    doc = initial.model_dump(mode="json")
+    scan_opts: dict = {}
+    if request.max_subdomains is not None:
+        scan_opts["max_subdomains"] = request.max_subdomains
+    if request.execution_time_limit_seconds is not None:
+        scan_opts["execution_time_limit_seconds"] = request.execution_time_limit_seconds
+    if scan_opts:
+        doc["scan_options"] = scan_opts
+    await db[SCANS_COLLECTION].insert_one(doc)
     background_tasks.add_task(_run_scan_pipeline_gated, scan_id, request)
 
     logger.info("Scan %s queued for domain %s", scan_id, request.domain)
@@ -664,6 +693,8 @@ async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundT
             include_subdomains=body.include_subdomains,
             ports=body.ports,
             merge_registered_inventory=body.merge_registered_inventory,
+            max_subdomains=body.max_subdomains,
+            execution_time_limit_seconds=body.execution_time_limit_seconds,
         )
         initial = ScanResult(
             scan_id=scan_id,
@@ -671,7 +702,15 @@ async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundT
             domain=domain,
             status=ScanStatus.PENDING,
         )
-        await db[SCANS_COLLECTION].insert_one(initial.model_dump(mode="json"))
+        bdoc = initial.model_dump(mode="json")
+        bopts: dict = {}
+        if body.max_subdomains is not None:
+            bopts["max_subdomains"] = body.max_subdomains
+        if body.execution_time_limit_seconds is not None:
+            bopts["execution_time_limit_seconds"] = body.execution_time_limit_seconds
+        if bopts:
+            bdoc["scan_options"] = bopts
+        await db[SCANS_COLLECTION].insert_one(bdoc)
         background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
         jobs.append({"scan_id": scan_id, "domain": domain})
 
@@ -1194,6 +1233,49 @@ async def get_quantum_score(domain: str):
     if not q_score:
         raise HTTPException(status_code=404, detail=f"Quantum score not yet calculated for domain: {domain}")
     return {"domain": domain, "quantum_score": q_score, "recommendations": doc.get("recommendations", [])}
+
+
+@router.get(
+    "/security-roadmap/{domain}",
+    summary="Security roadmap: at-risk algorithms & TLS posture → target solutions",
+    tags=["Scanner"],
+)
+async def get_security_roadmap(domain: str):
+    """
+    Builds a read-only roadmap from the latest completed scan for the domain:
+    PQC migration recommendations (from CBOM/crypto analysis) plus aggregated TLS/cert rows.
+    """
+    db = get_database()
+    d = domain.strip().lower()
+    doc = await db[SCANS_COLLECTION].find_one(
+        {"domain": d, "status": ScanStatus.COMPLETED.value},
+        sort=[("completed_at", -1), ("started_at", -1)],
+    )
+    if not doc:
+        doc = await db[SCANS_COLLECTION].find_one(
+            {"domain": d},
+            sort=[("started_at", -1)],
+        )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No scan results found for domain: {domain}",
+        )
+    items = build_security_roadmap(doc)
+    q = doc.get("quantum_score") or {}
+    return {
+        "domain": doc.get("domain"),
+        "scan_id": doc.get("scan_id"),
+        "scan_status": doc.get("status"),
+        "completed_at": doc.get("completed_at"),
+        "quantum_risk_level": q.get("risk_level"),
+        "quantum_score": q.get("score"),
+        "items": items,
+        "disclaimer": (
+            "Indicative guidance derived from external scan signals; validate with architecture, "
+            "application, and PKI owners before production or compliance commitments."
+        ),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════

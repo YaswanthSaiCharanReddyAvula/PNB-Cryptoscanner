@@ -18,6 +18,7 @@ import ExecutiveBrief from "./pages/ExecutiveBrief";
 import InventoryRuns from "./pages/InventoryRuns";
 import CryptoFindings from "./pages/CryptoFindings";
 import PolicyStandards from "./pages/PolicyStandards";
+import SecurityRoadmap from "./pages/SecurityRoadmap";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -47,6 +48,7 @@ function AppRoutes() {
       <Route path="/cbom" element={<ProtectedRoute><CBOM /></ProtectedRoute>} />
       <Route path="/pqc-posture" element={<ProtectedRoute><PQCPosture /></ProtectedRoute>} />
       <Route path="/cyber-rating" element={<ProtectedRoute><CyberRating /></ProtectedRoute>} />
+      <Route path="/security-roadmap" element={<ProtectedRoute><SecurityRoadmap /></ProtectedRoute>} />
       <Route path="/reporting" element={<Navigate to="/admin" replace />} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/migration" element={<ProtectedRoute><Migration /></ProtectedRoute>} />

@@ -422,7 +422,11 @@ export default function PQCPosture() {
             <span className="text-xs text-muted-foreground">{assetPqcData.filter((a: any) => !a.pqc_supported).length} assets need attention</span>
           </div>
           {assetPqcData.length === 0 ? (
-            <div className="px-5 py-8 text-center text-muted-foreground text-sm">No asset PQC data yet — scan a domain first.</div>
+            <div className="px-5 py-8 text-center text-muted-foreground text-sm">
+              No asset PQC data yet — run a scan from{" "}
+              <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+              .
+            </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -503,7 +507,11 @@ export default function PQCPosture() {
             <AlertTriangle size={15} color={BRAND} /> Improvement Recommendations
           </h3>
           {recommendations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No recommendations yet — scan a domain first.</p>
+            <p className="text-sm text-muted-foreground">
+              No recommendations yet — run a scan from{" "}
+              <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+              .
+            </p>
           ) : (
             <div className="space-y-2">
               {recommendations.map((rec: string, i: number) => (

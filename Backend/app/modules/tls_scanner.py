@@ -26,6 +26,20 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# testssl.sh targets HTTPS-style handshakes; on DB/cache ports it often blocks until timeout
+# and leaves truncated --jsonfile output (invalid JSON). Skip testssl; sslscan/openssl still run.
+TESTSSL_SKIP_PORTS: frozenset[int] = frozenset(
+    {3306, 5432, 1433, 6379, 27017, 11211, 9200}
+)
+
+
+def _safe_unlink(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
 
 async def _run_command(cmd: List[str], timeout: int | None = None) -> str:
     """Run an external command asynchronously and return stdout."""
@@ -47,17 +61,22 @@ async def _run_command(cmd: List[str], timeout: int | None = None) -> str:
         return ""
     except asyncio.TimeoutError:
         logger.error("Command timed out after %ds: %s", timeout, " ".join(cmd))
-        process.kill()
+        try:
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except (asyncio.TimeoutError, ProcessLookupError, OSError):
+            pass
         return ""
     except Exception as exc:
         logger.error("Command failed (%s): %s", cmd[0], exc)
         return ""
 
 
-async def _run_sslscan(host: str, port: int) -> Dict[str, Any]:
+async def _run_sslscan(host: str, port: int, cmd_timeout: int | None = None) -> Dict[str, Any]:
     target = f"{host}:{port}"
     logger.info("Running sslscan on %s...", target)
-    output = await _run_command(["sslscan", "--no-colour", target])
+    tlim = cmd_timeout if cmd_timeout is not None else settings.SCAN_TIMEOUT
+    output = await _run_command(["sslscan", "--no-colour", target], timeout=tlim)
     
     protocols = set()
     ciphers = []
@@ -80,29 +99,61 @@ async def _run_sslscan(host: str, port: int) -> Dict[str, Any]:
     return {"protocols": list(protocols), "ciphers": ciphers}
 
 
-async def _run_testssl(host: str, port: int) -> Dict[str, Any]:
+async def _run_testssl(host: str, port: int, cmd_timeout: int | None = None) -> Dict[str, Any]:
     target = f"{host}:{port}"
+    if port in TESTSSL_SKIP_PORTS:
+        logger.info(
+            "Skipping testssl.sh on %s — port %d is typically DB/cache/API, not HTTPS; "
+            "sslscan/openssl/zgrab2 still assess TLS where present.",
+            target,
+            port,
+        )
+        return _parse_testssl_json([])
+
     temp_json = os.path.join(tempfile.gettempdir(), f"testssl_{uuid.uuid4().hex}.json")
-    
-    logger.info("Running testssl on %s...", target)
+    timeout = max(30, int(getattr(settings, "TESTSSL_TIMEOUT", 90)))
+    if cmd_timeout is not None:
+        timeout = min(timeout, max(10, cmd_timeout))
+
+    logger.info("Running testssl on %s (timeout=%ss)...", target, timeout)
     cmd = ["testssl", "--fast", "--quiet", "--jsonfile", temp_json, target]
-    await _run_command(cmd, timeout=300)
-    
-    results = []
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("testssl timed out after %ds: %s", timeout, " ".join(cmd))
+        try:
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except (asyncio.TimeoutError, ProcessLookupError, OSError):
+            pass
+        _safe_unlink(temp_json)
+        return _parse_testssl_json([])
+
+    results: List[Dict[str, Any]] = []
     if os.path.exists(temp_json):
         try:
-            with open(temp_json, "r") as f:
-                data = json.load(f)
+            with open(temp_json, "r", encoding="utf-8", errors="replace") as f:
+                raw = f.read().strip()
+            if raw:
+                data = json.loads(raw)
                 if isinstance(data, list):
                     results = data
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Ignoring invalid or truncated testssl JSON for %s (kill mid-write or bad output): %s",
+                target,
+                e,
+            )
         except Exception as e:
-            logger.error("Failed to parse testssl JSON: %s", e)
+            logger.error("Failed to read testssl JSON for %s: %s", target, e)
         finally:
-            try:
-                os.remove(temp_json)
-            except OSError:
-                pass
-                
+            _safe_unlink(temp_json)
+
     return _parse_testssl_json(results)
 
 
@@ -164,7 +215,7 @@ def _parse_testssl_json(data: List[Dict[str, Any]]) -> Dict[str, Any]:
     return parsed
 
 
-async def _run_zgrab2(host: str, port: int) -> bool:
+async def _run_zgrab2(host: str, port: int, cmd_timeout: int | None = None) -> bool:
     """Run zgrab2 tls to see if the host speaks TLS."""
     logger.info("Running ZGrab2 on %s:%d...", host, port)
     # create temporary input file for zgrab2
@@ -172,8 +223,11 @@ async def _run_zgrab2(host: str, port: int) -> bool:
     try:
         with open(temp_input, "w") as f:
             f.write(f"{host}\n")
-        
-        output = await _run_command(["zgrab2", "tls", "--port", str(port), "-f", temp_input])
+        tlim = cmd_timeout if cmd_timeout is not None else settings.SCAN_TIMEOUT
+        output = await _run_command(
+            ["zgrab2", "tls", "--port", str(port), "-f", temp_input],
+            timeout=tlim,
+        )
         return '"status":"success"' in output
     finally:
         if os.path.exists(temp_input):
@@ -183,11 +237,15 @@ async def _run_zgrab2(host: str, port: int) -> bool:
                 pass
 
 
-async def _run_openssl(host: str, port: int) -> bool:
+async def _run_openssl(host: str, port: int, cmd_timeout: int | None = None) -> bool:
     """Run openssl s_client as a baseline validation."""
     logger.info("Running OpenSSL validation on %s:%d...", host, port)
     target = f"{host}:{port}"
-    output = await _run_command(["sh", "-c", f"echo | openssl s_client -connect {target} 2>/dev/null"])
+    tlim = cmd_timeout if cmd_timeout is not None else settings.SCAN_TIMEOUT
+    output = await _run_command(
+        ["sh", "-c", f"echo | openssl s_client -connect {target} 2>/dev/null"],
+        timeout=tlim,
+    )
     return "CONNECTED" in output or "Cipher" in output
 
 
@@ -238,20 +296,28 @@ def _determine_confidence(sslscan_res: Dict, testssl_res: Dict, zgrab_success: b
 # E.g., if Nmap finds 30 hosts, we don't want 30 parallel testssl.sh instances starving the CPU.
 _scanner_semaphore = asyncio.Semaphore(5)
 
-async def scan_tls(host: str, port: int) -> TLSInfo:
+async def scan_tls(
+    host: str,
+    port: int,
+    execution_time_limit_seconds: int | None = None,
+) -> TLSInfo:
     """
     Execute external tools (sslscan, testssl.sh, zgrab2, openssl) and combine their results.
+    When execution_time_limit_seconds is set (Controller), caps per-tool waits; otherwise SCAN_TIMEOUT / TESTSSL defaults apply.
     """
+    tls_cap: int | None = None
+    if execution_time_limit_seconds is not None:
+        tls_cap = max(10, min(int(execution_time_limit_seconds), 900))
     try:
         async with _scanner_semaphore:
             logger.info("External Multi-tool TLS scan on %s:%d (Semaphore Acquired)...", host, port)
             
             # Run all tools concurrently for THIS specific host
             results = await asyncio.gather(
-                _run_sslscan(host, port),
-                _run_testssl(host, port),
-                _run_zgrab2(host, port),
-                _run_openssl(host, port),
+                _run_sslscan(host, port, tls_cap),
+                _run_testssl(host, port, tls_cap),
+                _run_zgrab2(host, port, tls_cap),
+                _run_openssl(host, port, tls_cap),
                 return_exceptions=True
             )
         

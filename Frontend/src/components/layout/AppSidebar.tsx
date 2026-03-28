@@ -14,6 +14,7 @@ import {
   Lock,
   Star,
   FileText,
+  Milestone,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -39,6 +40,7 @@ const navItems = [
   { title: "Crypto Findings", url: "/crypto-findings", icon: AlertCircle },
   { title: "PQC Posture", url: "/pqc-posture", icon: Lock },
   { title: "Cyber Rating", url: "/cyber-rating", icon: Star },
+  { title: "Security roadmap", url: "/security-roadmap", icon: Milestone },
   { title: "Executive brief", url: "/executive-brief", icon: FileText },
   { title: "Threat Map", url: "/asset-discovery", icon: Map },
   { title: "Migration", url: "/migration", icon: Route },

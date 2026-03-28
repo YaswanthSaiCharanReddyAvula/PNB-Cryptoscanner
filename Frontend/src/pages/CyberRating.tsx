@@ -1,18 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
-  Search, Lock, Loader2, ChevronDown, ChevronUp,
-  CheckCircle2, ArrowUpCircle, CircleDot, AlertCircle,
+  Loader2, ChevronDown, ChevronUp,
+  CheckCircle2, ArrowUpCircle, CircleDot, AlertCircle, RefreshCw,
 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
 import { cyberRatingService } from "@/services/api";
 import { toast } from "sonner";
-import { useScan } from "@/hooks/useScan";
-import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
+import { tierRowsForTable } from "@/lib/tierComplianceCriteria";
 
 const BRAND = "#2563eb";
 const RED = "#dc2626";
@@ -25,17 +23,6 @@ function getTier(score: number): { label: string; color: string; bg: string } {
   return { label: "Legacy", color: RED, bg: "rgba(220,38,38,0.12)" };
 }
 
-function scaleScore(raw100: number) {
-  return Math.round(Math.max(0, Math.min(1000, raw100 * 10)));
-}
-
-function computeScoreFromScan(v1: any): number {
-  const tls = Array.isArray(v1?.tls_results) ? v1.tls_results : [];
-  const hasLegacy = tls.some((t: any) => /1\.0|1\.1|ssl/i.test(String(t?.tls_version || "")));
-  const raw = typeof v1?.quantum_score?.score === "number" ? v1.quantum_score.score : 75;
-  return scaleScore(Math.max(0, Math.min(100, raw - (hasLegacy ? 20 : 0))));
-}
-
 // Reference tables — NOT scan data, kept as-is
 const TIER_REFERENCE = [
   { status: "Elite-PQC",                          icon: <CheckCircle2 size={16} color={GREEN} />, rating: "> 700",       color: GREEN },
@@ -44,16 +31,7 @@ const TIER_REFERENCE = [
   { status: "Maximum Score after normalisation*", icon: null,                                     rating: "1000",         color: "#94a3b8" },
 ];
 
-const TIER_CRITERIA = [
-  { tier: "Tier-1 Elite",    level: "High",     compliance: "TLS 1.2/1.3 only · AES-GCM / ChaCha20 · ECDHE key exchange · Cert ≥ 2048-bit · HSTS enabled",          action: "Maintain Configuration; periodic monitoring",    actionColor: GREEN },
-  { tier: "Tier-2 Standard", level: "Moderate", compliance: "TLS 1.2 + legacy allowed · Key > 2048-bit · Minor cipher weaknesses",                                    action: "Improve gradually; disable legacy protocols",     actionColor: BRAND  },
-  { tier: "Tier-3 Legacy",   level: "Low",      compliance: "TLS 1.0/1.1 enabled · Weak ciphers (CBC, 3DES) · Possible self-signed certs",                            action: "Remediation required; upgrade TLS stack",        actionColor: "#f97316" },
-  { tier: "Critical",        level: "Critical", compliance: "SSL v2/v3 enabled · Key < 1024-bit · No HSTS",                                                           action: "Immediate action; block or isolate service",      actionColor: RED   },
-];
-
 export default function CyberRating() {
-  const [domain,        setDomain]        = useState("");
-  const [scannedDomain, setScannedDomain] = useState("");
   const [score1000,     setScore1000]     = useState<number | null>(null);
   const [urlScores,     setUrlScores]     = useState<any[]>([]);
   const [tierOpen,      setTierOpen]      = useState(false);
@@ -69,15 +47,13 @@ export default function CyberRating() {
     nist_pqc_references?: Record<string, { label: string; url: string }>;
   } | null>(null);
 
-  const { user } = useAuth();
-  const isEmployee = user?.role === "Employee";
-  const { isScanning, stageIndex, results, error, startScan } = useScan();
+  const [ratingBusy, setRatingBusy] = useState(false);
 
   const tier      = score1000 !== null ? getTier(score1000) : getTier(0);
   const CIRC      = 534;
   const dashArray = score1000 !== null ? (score1000 / 1000) * CIRC : 0;
 
-  const fetchScore = async (v1FallbackPayload: any = null) => {
+  const fetchScore = useCallback(async () => {
     try {
       const res = await cyberRatingService.getRating();
       const d = res.data;
@@ -92,37 +68,25 @@ export default function CyberRating() {
     } catch {
       setScore1000(null);
     }
-    if (v1FallbackPayload) setScore1000(computeScoreFromScan(v1FallbackPayload));
-  };
-
-  useEffect(() => {
-    fetchScore();
   }, []);
 
   useEffect(() => {
-    if (results?.status === "completed" && !isScanning) {
-      toast.success(`Analysis completed for ${scannedDomain}!`);
-      const computed = computeScoreFromScan(results);
-      setScore1000(computed);
-      if (Array.isArray(results.tls_results) && results.tls_results.length) {
-        setUrlScores(results.tls_results.slice(0, 8).map((t: any) => ({
-          url:   t.host || t.target || scannedDomain,
-          score: computeScoreFromScan({ tls_results: [t], quantum_score: results.quantum_score }),
-        })));
-      }
-    } else if (error) { toast.error(error); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, isScanning, error]);
+    fetchScore();
+  }, [fetchScore]);
 
-  const handleScan = async () => {
-    if (domain.trim() && !isScanning) { setScannedDomain(domain.trim()); await startScan(domain.trim()); }
+  const refreshRating = async () => {
+    setRatingBusy(true);
+    try {
+      await fetchScore();
+    } finally {
+      setRatingBusy(false);
+    }
   };
 
   const runScoreSimulation = async () => {
     setSimBusy(true);
     try {
       const res = await cyberRatingService.simulateQuantumScore({
-        domain: scannedDomain.trim() || undefined,
         assume_tls_13_all: simTls,
         assume_pqc_hybrid_kem: simPqc,
       });
@@ -152,40 +116,38 @@ export default function CyberRating() {
 
   return (
     <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold text-foreground">Cyber Rating</h1>
-        <p className="text-sm text-muted-foreground">
-          Enterprise-style score (0–1000) from the latest scan. This is a composite rating, not proof of deployed NIST PQC algorithms.
-        </p>
-      </motion.div>
-
-      <div className="rounded-xl border border-border bg-card p-5">
-        <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Scan Domain</h3>
-        <div className="flex gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Enter domain (e.g., pnbindia.com)" value={domain}
-              onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleScan()}
-              className="pl-10 bg-secondary border-border" disabled={isScanning} />
-          </div>
-          <Button onClick={handleScan} disabled={isEmployee || !domain || isScanning} className="bg-primary px-6 font-semibold text-primary-foreground hover:bg-primary/90">
-            {isEmployee ? <Lock className="mr-2 h-4 w-4" /> : isScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Analyze
-          </Button>
+      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Cyber Rating</h1>
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Enterprise-style score (0–1000) from the latest completed scan. Start or refresh scans from{" "}
+            <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+            . This is a composite rating, not proof of deployed NIST PQC algorithms.
+          </p>
         </div>
-        {!isScanning && scannedDomain && stageIndex >= 5 && (
-          <p className="text-xs text-muted-foreground mt-2">Showing results for: <span className="font-medium text-primary">{scannedDomain}</span></p>
-        )}
-      </div>
-
-      <ScanProgressBar isScanning={isScanning} stageIndex={stageIndex} targetDomain={scannedDomain} />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 gap-2 border-primary/40"
+          onClick={refreshRating}
+          disabled={ratingBusy}
+        >
+          {ratingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Refresh from latest scan
+        </Button>
+      </motion.div>
 
       {/* Score Card */}
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }}
         className="rounded-xl border border-border bg-card p-8 flex flex-col lg:flex-row items-center gap-8">
         {score1000 === null ? (
           <div className="flex flex-col items-center justify-center h-56 w-full">
-            <p className="text-muted-foreground text-sm text-center">No rating data yet. Scan a domain to generate a score.</p>
+            <p className="text-muted-foreground text-sm text-center px-4">
+              No rating data yet. Run a scan from{" "}
+              <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+              , then refresh here.
+            </p>
           </div>
         ) : (
           <>
@@ -346,7 +308,11 @@ export default function CyberRating() {
           <p className="text-xs text-muted-foreground mt-0.5">Individual endpoint scores contributing to the overall rating</p>
         </div>
         {urlScores.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6 px-4">No URL scores yet — scan a domain to see per-URL ratings.</p>
+          <p className="text-sm text-muted-foreground text-center py-6 px-4">
+            No URL scores yet — complete a scan from{" "}
+            <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+            , then refresh.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -401,14 +367,23 @@ export default function CyberRating() {
                     </tr>
                   </thead>
                   <tbody>
-                    {TIER_CRITERIA.map((row, i) => (
-                      <tr key={i} className="border-b border-border/50 hover:bg-secondary/30 transition-colors align-top">
+                    {tierRowsForTable().map((row) => (
+                      <tr key={row.id} className="border-b border-border/50 hover:bg-secondary/30 transition-colors align-top">
                         <td className="px-6 py-4 font-semibold text-foreground whitespace-nowrap">{row.tier}</td>
                         <td className="px-6 py-4">
-                          <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color: row.actionColor, backgroundColor: `${row.actionColor}18`, border: `1px solid ${row.actionColor}35` }}>{row.level}</span>
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded font-semibold"
+                            style={{
+                              color: row.color,
+                              backgroundColor: `${row.color}18`,
+                              border: `1px solid ${row.color}35`,
+                            }}
+                          >
+                            {row.level}
+                          </span>
                         </td>
                         <td className="px-6 py-4 text-muted-foreground text-xs leading-relaxed max-w-xs">{row.compliance}</td>
-                        <td className="px-6 py-4 text-xs font-medium" style={{ color: row.actionColor }}>{row.action}</td>
+                        <td className="px-6 py-4 text-xs font-medium" style={{ color: row.color }}>{row.action}</td>
                       </tr>
                     ))}
                   </tbody>

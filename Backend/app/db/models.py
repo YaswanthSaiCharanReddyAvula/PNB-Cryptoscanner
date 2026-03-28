@@ -216,6 +216,20 @@ class ScanRequest(BaseModel):
                 out.append(s)
         return out or None
 
+    # Controller (UI): when unset, server uses settings.MAX_SUBDOMAINS / TOOL_TIMEOUT
+    max_subdomains: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=500,
+        description="Cap passive subdomain enumeration before DNSX/HTTPX/nmap",
+    )
+    execution_time_limit_seconds: Optional[int] = Field(
+        default=None,
+        ge=10,
+        le=900,
+        description="Per subprocess cap for discovery tools and TLS helpers (sslscan/openssl/zgrab/testssl)",
+    )
+
 
 class BatchScanRequest(BaseModel):
     """Trigger multiple domain scans (portfolio / org sweep)."""
@@ -223,6 +237,8 @@ class BatchScanRequest(BaseModel):
     include_subdomains: bool = True
     ports: Optional[str] = None
     merge_registered_inventory: bool = False
+    max_subdomains: Optional[int] = Field(default=None, ge=1, le=500)
+    execution_time_limit_seconds: Optional[int] = Field(default=None, ge=10, le=900)
 
 
 class RegisteredAssetItem(BaseModel):

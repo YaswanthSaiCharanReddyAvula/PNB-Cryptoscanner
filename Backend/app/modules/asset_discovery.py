@@ -1,5 +1,5 @@
 import asyncio
-import json
+import contextvars
 import re
 import socket
 import tempfile
@@ -16,10 +16,30 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# When set (Controller / API), caps every discovery subprocess duration (subfinder, amass, nmap, …).
+_discovery_tool_timeout_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "discovery_tool_timeout", default=None
+)
+
+
+def set_discovery_tool_timeout(seconds: int):
+    """Returns a token for reset_discovery_tool_timeout."""
+    lim = max(10, min(int(seconds), 900))
+    return _discovery_tool_timeout_ctx.set(lim)
+
+
+def reset_discovery_tool_timeout(token) -> None:
+    _discovery_tool_timeout_ctx.reset(token)
+
 
 async def _run_command(cmd: List[str], name: str = "Command", timeout: int | None = None) -> str:
     """Run an external command asynchronously with a 30s heartbeat log."""
-    timeout = timeout or settings.TOOL_TIMEOUT
+    ctx_limit = _discovery_tool_timeout_ctx.get()
+    if ctx_limit is not None:
+        timeout = ctx_limit
+    else:
+        timeout = timeout or settings.TOOL_TIMEOUT
+    timeout = max(10, min(timeout, 900))
     logger.info("Starting tool [%s]: %s (Timeout: %ds)", name, " ".join(cmd), timeout)
     start_time = time.time()
     
@@ -235,7 +255,12 @@ async def get_ns_records(domain: str) -> List[NameServerInfo]:
         return []
 
 
-async def discover_assets(domain: str, ports: str | None = None, broadcast_func = None) -> List[DiscoveredAsset]:
+async def discover_assets(
+    domain: str,
+    ports: str | None = None,
+    broadcast_func=None,
+    max_subdomains_cap: int | None = None,
+) -> List[DiscoveredAsset]:
     """
     Refined Pipeline: Subfinder -> Amass -> DNSX -> HTTPX -> Nmap.
     """
@@ -261,9 +286,10 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
     if not all_subs:
         all_subs = [domain]
 
-    if len(all_subs) > settings.MAX_SUBDOMAINS:
-        logger.info("Capping %d subdomains to MAX_SUBDOMAINS=%d", len(all_subs), settings.MAX_SUBDOMAINS)
-        all_subs = all_subs[:settings.MAX_SUBDOMAINS]
+    cap = settings.MAX_SUBDOMAINS if max_subdomains_cap is None else max(1, min(int(max_subdomains_cap), 500))
+    if len(all_subs) > cap:
+        logger.info("Capping %d subdomains to %d (server or Controller cap)", len(all_subs), cap)
+        all_subs = all_subs[:cap]
     
     # 2. DNSX (Live Check)
     await log_and_broadcast(f"Found {len(all_subs)} potential domains. Verifying live hosts with DNSX...")

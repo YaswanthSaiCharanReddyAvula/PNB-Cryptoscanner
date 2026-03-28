@@ -391,7 +391,11 @@ export default function CBOM() {
           <div className="rounded-xl border border-border bg-card p-5 no-print">
             <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Cipher Usage</h3>
             {cipherUsage.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No cipher data yet — scan a domain to see cipher usage.</p>
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No cipher data yet — run a scan from{" "}
+                <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+                .
+              </p>
             ) : (
               <div className="space-y-3">
                 {cipherUsage.map((cipher: any) => {
@@ -495,7 +499,9 @@ export default function CBOM() {
             </div>
             {perAppCbom.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground text-sm">
-                No per-application CBOM data — scan a domain to populate this table.
+                No per-application CBOM data — run a scan from{" "}
+                <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
+                .
               </div>
             ) : (
               <div className="overflow-x-auto">

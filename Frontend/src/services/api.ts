@@ -197,6 +197,12 @@ export const reportingService = {
   getNistCatalog: () => api.get("/threat-model/nist-catalog"),
 };
 
+/** Risk → target solution matrix from latest scan (TLS posture + PQC recommendations) */
+export const roadmapService = {
+  getSecurityRoadmap: (domain: string) =>
+    api.get(`/security-roadmap/${encodeURIComponent(domain.trim().toLowerCase())}`),
+};
+
 // ── DNS / Name Server ─────────────────────────────────────────────
 
 export const dnsService = {
@@ -211,14 +217,30 @@ export const cryptoService = {
 
 // ── Scanner ───────────────────────────────────────────────────────
 
+export type ScanControllerPayload = {
+  max_subdomains?: number;
+  execution_time_limit_seconds?: number;
+};
+
 export const scanService = {
-  startScan:       (domain: string) => api.post("/scan", { domain }),
+  startScan: (domain: string, controller?: ScanControllerPayload) =>
+    api.post("/scan", { domain, ...controller }),
   /** Phase 2: multiple domains (comma-free list); max domains enforced server-side */
-  startBatchScan: (domains: string[], opts?: { include_subdomains?: boolean; ports?: string }) =>
+  startBatchScan: (
+    domains: string[],
+    opts?: {
+      include_subdomains?: boolean;
+      ports?: string;
+    } & ScanControllerPayload,
+  ) =>
     api.post("/scan/batch", {
       domains,
       include_subdomains: opts?.include_subdomains ?? true,
       ports: opts?.ports,
+      ...(opts?.max_subdomains != null ? { max_subdomains: opts.max_subdomains } : {}),
+      ...(opts?.execution_time_limit_seconds != null
+        ? { execution_time_limit_seconds: opts.execution_time_limit_seconds }
+        : {}),
     }),
   getScanHistory: (domain: string, limit?: number, statusFilter?: string) =>
     api.get("/scans/history", {

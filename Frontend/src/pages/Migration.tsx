@@ -50,7 +50,6 @@ export default function Migration() {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [waivers, setWaivers] = useState<WaiverRow[]>([]);
   const [seeding, setSeeding] = useState(false);
-  const [seedDomain, setSeedDomain] = useState("");
   const [seedLimit, setSeedLimit] = useState(15);
 
   const [filterDomainInput, setFilterDomainInput] = useState("");
@@ -141,7 +140,6 @@ export default function Migration() {
     try {
       const lim = Math.min(80, Math.max(1, Number(seedLimit) || 15));
       const res = await migrationService.seedFromBacklog({
-        domain: seedDomain.trim() || undefined,
         limit: lim,
       });
       toast.success(`Seeded ${res.data?.seeded ?? 0} task(s) from backlog`);
@@ -274,15 +272,9 @@ export default function Migration() {
               </div>
               {isAdmin && (
                 <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
-                  <div className="space-y-1">
-                    <Label className="text-[10px] uppercase text-muted-foreground">Seed scan domain</Label>
-                    <Input
-                      value={seedDomain}
-                      onChange={(e) => setSeedDomain(e.target.value)}
-                      placeholder="Leave empty for latest scan"
-                      className="h-9 w-52 bg-secondary text-sm"
-                    />
-                  </div>
+                  <p className="w-full text-xs text-muted-foreground">
+                    Seeding uses the latest completed scan. Run scans from Overview.
+                  </p>
                   <div className="space-y-1">
                     <Label className="text-[10px] uppercase text-muted-foreground">Max tasks</Label>
                     <Input
