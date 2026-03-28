@@ -25,8 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 // ── Theme constants ───────────────────────────────────────────────────────────
-const GOLD = "#FBBC09";
-const GOLD_DARK = "#111111";
+const BRAND = "#2563eb";
+const ON_BRAND = "#f8fafc";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SubFilter = "New" | "False Positive" | "Confirmed" | "All";
@@ -130,13 +130,13 @@ function SortableTable<T extends Record<string, string>>({
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr style={{ backgroundColor: GOLD }}>
+            <tr style={{ backgroundColor: BRAND }}>
               {cols.map((col) => (
                 <th
                   key={String(col.key)}
                   onClick={() => handleSort(col.key)}
                   className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide cursor-pointer select-none whitespace-nowrap"
-                  style={{ color: GOLD_DARK }}
+                  style={{ color: ON_BRAND }}
                 >
                   <span className="flex items-center gap-1">
                     {col.header}
@@ -208,7 +208,7 @@ function SortableTable<T extends Record<string, string>>({
                   className="px-3 py-1 text-xs rounded border transition-colors"
                   style={
                     page === p
-                      ? { backgroundColor: GOLD, color: GOLD_DARK, borderColor: GOLD, fontWeight: 700 }
+                      ? { backgroundColor: BRAND, color: ON_BRAND, borderColor: BRAND, fontWeight: 700 }
                       : { borderColor: "hsl(var(--border))" }
                   }
                 >
@@ -451,7 +451,7 @@ export default function AssetDiscovery() {
         <Button
           variant="outline"
           className="flex items-center gap-2 border-border text-sm"
-          style={showGraph ? { borderColor: GOLD, color: GOLD } : {}}
+          style={showGraph ? { borderColor: BRAND, color: BRAND } : {}}
           onClick={() => setShowGraph((v) => !v)}
         >
           <Network size={15} />
@@ -562,7 +562,7 @@ export default function AssetDiscovery() {
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all border"
                 style={
                   active
-                    ? { backgroundColor: GOLD, color: GOLD_DARK, borderColor: GOLD }
+                    ? { backgroundColor: BRAND, color: ON_BRAND, borderColor: BRAND }
                     : { borderColor: "hsl(var(--border))", color: "hsl(var(--muted-foreground))" }
                 }
               >
@@ -571,7 +571,7 @@ export default function AssetDiscovery() {
                   className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
                   style={
                     active
-                      ? { backgroundColor: GOLD_DARK + "30", color: GOLD_DARK }
+                      ? { backgroundColor: "rgba(15,23,42,0.12)", color: "rgb(15,23,42)" }
                       : { backgroundColor: "hsl(var(--secondary))" }
                   }
                 >
@@ -594,7 +594,7 @@ export default function AssetDiscovery() {
                 className="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border transition-all"
                 style={
                   active
-                    ? { backgroundColor: "rgba(251,188,9,0.15)", color: GOLD, borderColor: `${GOLD}60` }
+                    ? { backgroundColor: "rgba(37,99,235,0.12)", color: BRAND, borderColor: `${BRAND}99` }
                     : { borderColor: "hsl(var(--border))", color: "hsl(var(--muted-foreground))" }
                 }
               >

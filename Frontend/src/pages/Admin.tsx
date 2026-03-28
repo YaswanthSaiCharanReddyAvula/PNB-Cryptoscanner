@@ -8,6 +8,7 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,8 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { adminService, reportingService } from "@/services/api";
+import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 
-const GOLD = "#FBBC09";
 
 export default function Admin() {
   const { user } = useAuth();
@@ -45,8 +46,29 @@ export default function Admin() {
   } | null>(null);
 
   const [exportEvents, setExportEvents] = useState<
-    { event_id?: string; export_type?: string; domain?: string; created_at?: string }[]
+    { event_id?: string; export_type?: string; domain?: string; actor?: string; created_at?: string }[]
   >([]);
+
+  type OpsSnapshot = {
+    generated_at?: string;
+    app?: { name?: string; version?: string };
+    database?: { ok?: boolean; error?: string | null };
+    scans?: {
+      running?: number;
+      pending?: number;
+      completed_last_24h?: number;
+      failed_last_7d?: number;
+    };
+    limits?: Record<string, number>;
+    recent_failures?: {
+      scan_id?: string;
+      domain?: string;
+      error?: string;
+      completed_at?: string;
+    }[];
+  };
+  const [opsSnapshot, setOpsSnapshot] = useState<OpsSnapshot | null>(null);
+  const [opsLoading, setOpsLoading] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -83,6 +105,20 @@ export default function Admin() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  const loadOps = async () => {
+    if (!isAdmin) return;
+    setOpsLoading(true);
+    try {
+      const r = await adminService.getOpsSnapshot();
+      setOpsSnapshot(r.data as OpsSnapshot);
+    } catch {
+      toast.error("Could not load operations snapshot (admin only).");
+      setOpsSnapshot(null);
+    } finally {
+      setOpsLoading(false);
+    }
+  };
 
   const savePolicy = async () => {
     if (!isAdmin) return;
@@ -181,6 +217,16 @@ export default function Admin() {
       a.remove();
       URL.revokeObjectURL(url);
       toast.success("Roadmap downloaded");
+      try {
+        const d = String(res.data?.domain || "").trim();
+        await adminService.logExport({
+          export_type: "migration_roadmap_json",
+          domain: d || undefined,
+        });
+      } catch {
+        /* audit log is best-effort */
+      }
+      await loadAll();
     } catch {
       toast.error("Could not download roadmap");
     }
@@ -199,29 +245,28 @@ export default function Admin() {
       a.remove();
       URL.revokeObjectURL(url);
       toast.success("Threat summary downloaded");
+      try {
+        const d = String(res.data?.domain || "").trim();
+        await adminService.logExport({
+          export_type: "threat_model_summary_json",
+          domain: d || undefined,
+        });
+      } catch {
+        /* best-effort */
+      }
+      await loadAll();
     } catch {
       toast.error("Could not download threat summary");
     }
   };
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-border"
-            style={{ backgroundColor: `${GOLD}18` }}
-          >
-            <Settings className="h-5 w-5" style={{ color: GOLD }} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Admin & reporting</h1>
-            <p className="text-sm text-muted-foreground">
-              Phase 4 — org policy, export center, and outbound integrations.
-            </p>
-          </div>
-        </div>
-      </motion.div>
+    <div className="space-y-8">
+      <DossierPageHeader
+        eyebrow="Console"
+        title="Admin & Reporting Exports"
+        description="Org policy, intelligence exports, and outbound integrations (webhooks)."
+      />
 
       {isEmployee && (
         <p className="text-xs text-muted-foreground flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-3 py-2">
@@ -235,8 +280,20 @@ export default function Admin() {
           <Loader2 className="h-4 w-4 animate-spin" /> Loading admin data…
         </div>
       ) : (
-        <Tabs defaultValue="policy" className="w-full">
-          <TabsList className="grid w-full max-w-lg grid-cols-3">
+        <Tabs
+          defaultValue="policy"
+          className="w-full"
+          onValueChange={(v) => {
+            if (v === "operations" && isAdmin) void loadOps();
+          }}
+        >
+          <TabsList
+            className={
+              isAdmin
+                ? "grid h-auto w-full max-w-4xl grid-cols-2 gap-1 sm:grid-cols-4"
+                : "grid w-full max-w-lg grid-cols-3"
+            }
+          >
             <TabsTrigger value="policy" className="gap-1.5">
               <Shield className="h-3.5 w-3.5" />
               Policy
@@ -249,6 +306,12 @@ export default function Admin() {
               <Link2 className="h-3.5 w-3.5" />
               Integrations
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="operations" className="gap-1.5">
+                <Activity className="h-3.5 w-3.5" />
+                Operations
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="policy" className="mt-6 space-y-5">
@@ -309,8 +372,7 @@ export default function Admin() {
                 type="button"
                 onClick={savePolicy}
                 disabled={!isAdmin || savingPolicy}
-                className="font-semibold"
-                style={{ backgroundColor: GOLD, color: "#111" }}
+                className="bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
               >
                 {savingPolicy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 Save policy
@@ -327,7 +389,7 @@ export default function Admin() {
                 On-demand JSON exports. Bundle downloads are recorded in the audit log below.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={downloadBundle} className="gap-2 border-[#FBBC09]/40">
+                <Button type="button" variant="outline" onClick={downloadBundle} className="gap-2 border-primary/40">
                   <FileDown className="h-4 w-4" />
                   Full scan bundle
                 </Button>
@@ -358,6 +420,7 @@ export default function Admin() {
                       <tr className="border-b border-border bg-secondary/40">
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Type</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Domain</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground">Actor</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Time (UTC)</th>
                       </tr>
                     </thead>
@@ -366,6 +429,7 @@ export default function Admin() {
                         <tr key={ev.event_id || i} className="border-b border-border/50">
                           <td className="px-4 py-2 font-mono text-xs">{ev.export_type || "—"}</td>
                           <td className="px-4 py-2 font-mono text-xs">{ev.domain || "—"}</td>
+                          <td className="px-4 py-2 text-xs text-muted-foreground">{ev.actor || "—"}</td>
                           <td className="px-4 py-2 text-xs text-muted-foreground">
                             {ev.created_at ? new Date(ev.created_at).toISOString() : "—"}
                           </td>
@@ -377,6 +441,118 @@ export default function Admin() {
               )}
             </div>
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="operations" className="mt-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground max-w-xl">
+                  Phase 7 — datastore ping, scan queue pressure, configured caps, and recent pipeline failures.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => void loadOps()}
+                  disabled={opsLoading}
+                >
+                  {opsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  Refresh
+                </Button>
+              </div>
+              {opsLoading && !opsSnapshot ? (
+                <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading ops snapshot…
+                </div>
+              ) : opsSnapshot ? (
+                <div className="space-y-5">
+                  <p className="text-[11px] text-muted-foreground">
+                    Generated <span className="font-mono">{opsSnapshot.generated_at ?? "—"}</span> UTC ·{" "}
+                    {opsSnapshot.app?.name} v{opsSnapshot.app?.version}
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MongoDB</p>
+                      <p className="mt-2 text-lg font-semibold">
+                        {opsSnapshot.database?.ok ? (
+                          <span className="text-emerald-600">Reachable</span>
+                        ) : (
+                          <span className="text-destructive">Error</span>
+                        )}
+                      </p>
+                      {opsSnapshot.database?.error && (
+                        <p className="mt-2 font-mono text-xs text-destructive break-all">{opsSnapshot.database.error}</p>
+                      )}
+                    </div>
+                    {[
+                      ["Running", opsSnapshot.scans?.running],
+                      ["Pending", opsSnapshot.scans?.pending],
+                      ["Completed (24h)", opsSnapshot.scans?.completed_last_24h],
+                      ["Failed (7d)", opsSnapshot.scans?.failed_last_7d],
+                    ].map(([label, n]) => (
+                      <div key={String(label)} className="rounded-xl border border-border bg-card p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+                        <p className="mt-2 text-2xl font-bold tabular-nums">{n ?? 0}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rounded-xl border border-border bg-card p-4 max-w-2xl">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Scanner limits</p>
+                    <ul className="mt-3 grid gap-1 text-sm sm:grid-cols-2">
+                      {opsSnapshot.limits &&
+                        Object.entries(opsSnapshot.limits).map(([k, v]) => (
+                          <li key={k} className="flex justify-between gap-4 border-b border-border/40 py-1 font-mono text-xs">
+                            <span className="text-muted-foreground">{k}</span>
+                            <span>{v}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                  <div className="rounded-xl border border-border bg-card overflow-hidden max-w-4xl">
+                    <div className="border-b border-border bg-secondary/40 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Recent failed scans
+                    </div>
+                    {!opsSnapshot.recent_failures?.length ? (
+                      <p className="p-6 text-sm text-muted-foreground">No failed scans on record.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-secondary/30">
+                              <th className="px-4 py-2 text-left font-medium text-muted-foreground">Domain</th>
+                              <th className="px-4 py-2 text-left font-medium text-muted-foreground">Scan ID</th>
+                              <th className="px-4 py-2 text-left font-medium text-muted-foreground">Error</th>
+                              <th className="px-4 py-2 text-left font-medium text-muted-foreground">Completed</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {opsSnapshot.recent_failures.map((f, i) => (
+                              <tr key={f.scan_id || i} className="border-b border-border/50 align-top">
+                                <td className="px-4 py-2 font-mono text-xs">{f.domain || "—"}</td>
+                                <td className="px-4 py-2 font-mono text-xs">{f.scan_id || "—"}</td>
+                                <td className="px-4 py-2 text-xs text-muted-foreground max-w-md whitespace-pre-wrap break-words">
+                                  {f.error || "—"}
+                                </td>
+                                <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                                  {f.completed_at
+                                    ? new Date(f.completed_at).toISOString().slice(0, 19).replace("T", " ")
+                                    : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground py-8">
+                  Snapshot not loaded — click Refresh, or re-open this tab.
+                </p>
+              )}
+            </TabsContent>
+          )}
 
           <TabsContent value="integrations" className="mt-6 space-y-5">
             <div className="rounded-xl border border-border bg-card p-6 space-y-4 max-w-2xl">
@@ -458,15 +634,14 @@ export default function Admin() {
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Slack and Jira URLs are stored for your records; only the outbound URL receives automated scan-complete
-                notifications today.
+                When &quot;POST on scan complete&quot; is on: generic JSON goes to the outbound URL (if set), the same
+                payload to Jira/automation URL (if set), and a short summary to Slack (if set).
               </p>
               <Button
                 type="button"
                 onClick={saveIntegrations}
                 disabled={!isAdmin || savingInt}
-                className="font-semibold"
-                style={{ backgroundColor: GOLD, color: "#111" }}
+                className="bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
               >
                 {savingInt ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 Save integrations

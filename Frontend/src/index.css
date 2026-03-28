@@ -4,69 +4,73 @@
 @tailwind components;
 @tailwind utilities;
 
+/* QuantumShield / Intelligence Dossier — global palette (matches Stitch mockups) */
 @layer base {
   :root {
-    --background: 342 100% 21%; /* #6B0020 Maroon background */
-    --foreground: 45 96% 51%; /* #FBBC09 Gold text default */
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
 
-    --card: 342 90% 18%;
-    --card-foreground: 45 96% 51%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
 
-    --popover: 342 90% 18%;
-    --popover-foreground: 45 96% 51%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
 
-    --primary: 45 96% 51%; /* Gold */
-    --primary-foreground: 342 100% 21%;
+    /* Primary actions: enterprise blue */
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
 
-    --secondary: 342 80% 25%;
-    --secondary-foreground: 45 96% 51%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
 
-    --muted: 342 85% 20%;
-    --muted-foreground: 45 70% 60%; /* Muted Gold/Rose */
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
 
-    --accent: 45 96% 51%; /* Gold */
-    --accent-foreground: 342 100% 21%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 11%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 342 70% 30%;
-    --input: 342 70% 30%;
-    --ring: 45 96% 51%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
 
     --radius: 0.75rem;
 
-    /* Sidebar specifically mapped to the image */
-    --sidebar-background: 342 100% 21%; /* Maroon */
-    --sidebar-foreground: 45 70% 60%; /* Muted gold for inactive text */
-    --sidebar-primary: 45 96% 51%; /* Gold */
-    --sidebar-primary-foreground: 342 100% 21%; /* Maroon text on gold pill */
-    --sidebar-accent: 45 96% 51%; /* Gold for hover/active */
-    --sidebar-accent-foreground: 342 100% 21%;
-    --sidebar-border: 342 70% 30%;
-    --sidebar-ring: 45 96% 51%;
+    /* Sidebar (shadcn tokens; AppSidebar also uses inline navy) */
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 214 20% 85%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 217 91% 60%;
+    --sidebar-accent-foreground: 214 20% 96%;
+    --sidebar-border: 222 30% 20%;
+    --sidebar-ring: 217 91% 60%;
 
-    /* Custom tokens */
-    --gold: 45 96% 51%;
-    --gold-dim: 45 70% 40%;
-    --deep-red: 342 100% 21%;
-    --deep-red-dim: 342 80% 15%;
-    --success: 152 60% 45%;
+    /* Legacy token names — now map to brand / risk (keeps tailwind `gold` / `deep-red` working) */
+    --gold: 221 83% 53%;
+    --gold-dim: 221 45% 42%;
+    --deep-red: 0 72% 51%;
+    --deep-red-dim: 0 63% 42%;
+
+    --success: 142 71% 45%;
     --warning: 38 92% 50%;
-    --info: 210 80% 55%;
-    --chart-1: 45 96% 51%;
-    --chart-2: 342 88% 35%;
-    --chart-3: 152 60% 45%;
-    --chart-4: 210 80% 55%;
-    --chart-5: 280 60% 55%;
+    --info: 217 91% 60%;
 
-    --gradient-gold: linear-gradient(135deg, hsl(45 96% 51%), hsl(38 92% 42%));
-    --gradient-red: linear-gradient(135deg, hsl(342 100% 21%), hsl(342 80% 15%));
-    --gradient-card: linear-gradient(145deg, hsl(342 90% 20%), hsl(342 90% 16%));
-    --shadow-gold: 0 4px 20px -4px hsl(45 96% 51% / 0.2);
-    --shadow-card: 0 4px 24px -8px hsl(0 0% 0% / 0.4);
-    --shadow-glow-gold: 0 0 30px -5px hsl(45 96% 51% / 0.15);
-    --shadow-glow-red: 0 0 30px -5px hsl(342 88% 35% / 0.15);
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 0 72% 51%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 221 83% 53%;
+
+    --gradient-gold: linear-gradient(135deg, hsl(221 83% 53%), hsl(217 91% 60%));
+    --gradient-red: linear-gradient(135deg, hsl(0 72% 51%), hsl(0 63% 42%));
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%), hsl(210 40% 98%));
+    --shadow-card: 0 4px 24px -8px hsl(222 47% 11% / 0.08);
+    --shadow-gold: 0 4px 20px -4px hsl(217 91% 60% / 0.22);
+    --shadow-glow-gold: 0 0 28px -4px hsl(217 91% 60% / 0.18);
+    --shadow-glow-red: 0 0 28px -4px hsl(0 72% 51% / 0.15);
   }
 }
 
@@ -88,12 +92,12 @@
 @layer utilities {
   .text-gradient-gold {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, hsl(45 96% 51%), hsl(38 92% 58%));
+    background-image: linear-gradient(135deg, hsl(221 83% 53%), hsl(217 91% 60%));
   }
 
   .text-gradient-red {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, hsl(342 88% 45%), hsl(350 70% 38%));
+    background-image: linear-gradient(135deg, hsl(0 72% 51%), hsl(24 95% 53%));
   }
 
   .card-glow-gold {
@@ -105,15 +109,15 @@
   }
 
   .bg-grid-pattern {
-    background-image: 
-      linear-gradient(hsl(220 14% 18% / 0.5) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(220 14% 18% / 0.5) 1px, transparent 1px);
+    background-image:
+      linear-gradient(hsl(214 32% 91% / 0.6) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(214 32% 91% / 0.6) 1px, transparent 1px);
     background-size: 40px 40px;
   }
 
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(220 14% 22%) transparent;
+    scrollbar-color: hsl(214 20% 82%) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -125,8 +129,21 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(220 14% 22%);
+    background-color: hsl(214 20% 78%);
     border-radius: 3px;
+  }
+
+  /* Routed app shell — same tokens as :root; keeps utility hooks for future theming */
+  .dossier-layout {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+
+  .dossier-layout main {
+    @apply text-slate-900;
+  }
+
+  .dossier-card {
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-sm;
   }
 }
 
@@ -135,7 +152,7 @@
     size: A4 landscape;
     margin: 10mm;
   }
-  
+
   body {
     background-color: white !important;
     color: black !important;
@@ -143,34 +160,29 @@
     print-color-adjust: exact !important;
   }
 
-  /* Force light theme elements for printing */
   .printable-cbom * {
     color: black !important;
     border-color: #ddd !important;
   }
 
-  /* Force table backgrounds to be white */
   table, th, td, .bg-card, .bg-secondary {
     background-color: white !important;
   }
-  
-  /* Retain critical badge colors by removing them from * inheritance */
+
   .bg-success\/15, .text-success, .border-success\/20,
   .bg-warning\/15, .text-warning, .border-warning\/20,
-  .bg-\[\#A20E37\]\/15, .text-\[\#A20E37\] {
+  .bg-destructive\/15, .text-destructive {
     border-color: currentColor !important;
   }
 
   .no-print {
     display: none !important;
   }
-  
-  /* Hide Vite sidebar or layout wrapper */
+
   nav, header, footer, aside, .sidebar {
     display: none !important;
   }
-  
-  /* Make content full width */
+
   main, #root, .flex, .flex-1, .h-screen, .w-full {
     width: 100% !important;
     max-width: none !important;

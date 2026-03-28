@@ -1,75 +1,50 @@
 import {
-  Home,
-  Server,
-  Network,
+  LayoutDashboard,
+  History,
+  Boxes,
   ShieldCheck,
+  AlertCircle,
+  Map,
+  Route,
+  ScrollText,
+  Settings,
+  LifeBuoy,
+  BookOpen,
+  Zap,
   Lock,
   Star,
   FileText,
-  Settings,
-  ClipboardList,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, Link } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
+  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-
-const GOLD = "#FBBC09";
-const MAROON = "#6B0020";
+import { Button } from "@/components/ui/button";
 
 const navItems = [
-  { title: "Home", url: "/", icon: Home },
-  { title: "Asset Inventory", url: "/asset-inventory", icon: Server },
-  { title: "Asset Discovery", url: "/asset-discovery", icon: Network },
+  { title: "Overview", url: "/", icon: LayoutDashboard },
+  { title: "Inventory Runs", url: "/inventory-runs", icon: History },
+  { title: "Inventory Assets", url: "/inventory", icon: Boxes },
   { title: "CBOM", url: "/cbom", icon: ShieldCheck },
+  { title: "Crypto Findings", url: "/crypto-findings", icon: AlertCircle },
   { title: "PQC Posture", url: "/pqc-posture", icon: Lock },
   { title: "Cyber Rating", url: "/cyber-rating", icon: Star },
-  { title: "Reporting", url: "/reporting", icon: FileText },
-  { title: "Migration", url: "/migration", icon: ClipboardList },
-  { title: "Admin", url: "/admin", icon: Settings },
+  { title: "Executive brief", url: "/executive-brief", icon: FileText },
+  { title: "Threat Map", url: "/asset-discovery", icon: Map },
+  { title: "Migration", url: "/migration", icon: Route },
+  { title: "Policy & Standards", url: "/policy", icon: ScrollText },
+  { title: "Admin & Reporting", url: "/admin", icon: Settings },
 ];
-
-// Mini PQC shield for sidebar header
-function SidebarShield({ collapsed }: { collapsed: boolean }) {
-  return (
-    <div className="flex items-center gap-3">
-      <svg
-        width={collapsed ? 30 : 34}
-        height={collapsed ? 34 : 38}
-        viewBox="0 0 44 50"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="flex-shrink-0"
-      >
-        <path
-          d="M22 2L4 9.5V23C4 33.5 12 42.8 22 47C32 42.8 40 33.5 40 23V9.5L22 2Z"
-          fill={MAROON}
-          stroke={GOLD}
-          strokeWidth="2.5"
-        />
-        <path d="M22 2L4 9.5V14L22 7L40 14V9.5L22 2Z" fill={GOLD} opacity="0.9" />
-        <text x="22" y="28" textAnchor="middle" fill={GOLD} fontSize="8" fontWeight="bold" fontFamily="monospace" letterSpacing="1">PNB</text>
-        <text x="22" y="37" textAnchor="middle" fill="white" fontSize="4.5" fontFamily="sans-serif" letterSpacing="0.5">PQC-READY</text>
-      </svg>
-      {!collapsed && (
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-bold" style={{ color: GOLD }}>QSCAS</span>
-          <span className="text-[9px]" style={{ color: `${GOLD}99` }}>Quantum-Safe Platform</span>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -82,59 +57,54 @@ export function AppSidebar() {
   return (
     <Sidebar
       collapsible="icon"
-      className="border-r-0"
-      style={{ backgroundColor: MAROON }}
+      className="border-r border-slate-800/50"
+      style={{ backgroundColor: "#0b1220" }}
     >
-      <SidebarHeader
-        className="p-4"
-        style={{ backgroundColor: MAROON }}
-      >
-        <SidebarShield collapsed={collapsed} />
+      <SidebarHeader className="border-b border-white/5 px-4 py-5">
+        <Link to="/" className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-500">
+            The Sentinel
+          </span>
+          {!collapsed && (
+            <span className="text-xs font-medium leading-snug text-slate-300">
+              Intelligence Dossier
+            </span>
+          )}
+        </Link>
+        {!collapsed && (
+          <div className="mt-3 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600/20 text-blue-400">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">QuantumShield</p>
+              <p className="text-[10px] text-slate-500">Crypto resilience</p>
+            </div>
+          </div>
+        )}
       </SidebarHeader>
 
-      <SidebarContent style={{ backgroundColor: MAROON }}>
+      <SidebarContent className="px-2 py-4">
         <SidebarGroup>
-          {!collapsed && (
-            <SidebarGroupLabel
-              className="text-[10px] uppercase tracking-widest font-semibold px-3 pt-2 pb-1"
-              style={{ color: `${GOLD}80` }}
-            >
-              Navigation
-            </SidebarGroupLabel>
-          )}
           <SidebarGroupContent>
-            <SidebarMenu className="gap-2 px-2">
+            <SidebarMenu className="gap-0.5">
               {navItems.map((item) => {
                 const active = isActive(item.url);
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={active}
-                      tooltip={item.title}
-                      className="hover:bg-transparent"
-                    >
+                    <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
-                        className="flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 text-[15px]"
-                        style={
+                        className={[
+                          "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors",
                           active
-                            ? {
-                                backgroundColor: GOLD,
-                                color: MAROON,
-                                fontWeight: 700,
-                              }
-                            : {
-                                color: "#dfa0a0", // Soft muted pinkish for inactive text
-                              }
-                        }
+                            ? "bg-white/[0.08] text-white shadow-[inset_3px_0_0_0_#3b82f6]"
+                            : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200",
+                        ].join(" ")}
                         activeClassName=""
                       >
-                        <item.icon
-                          className="h-5 w-5 flex-shrink-0"
-                          style={{ color: active ? MAROON : GOLD }}
-                        />
+                        <item.icon className="h-4 w-4 shrink-0 opacity-90" />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
                     </SidebarMenuButton>
@@ -145,6 +115,38 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      <SidebarFooter className="border-t border-white/5 p-3">
+        {!collapsed && (
+          <Button
+            asChild
+            className="mb-3 w-full rounded-lg bg-white text-slate-900 hover:bg-slate-100"
+          >
+            <Link to="/" className="gap-2 font-semibold">
+              <Zap className="h-4 w-4" />
+              New scan
+            </Link>
+          </Button>
+        )}
+        <div className="flex flex-col gap-1">
+          <a
+            href="#"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:text-slate-300"
+            onClick={(e) => e.preventDefault()}
+          >
+            <LifeBuoy className="h-3.5 w-3.5" />
+            {!collapsed && "Support"}
+          </a>
+          <a
+            href="#"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:text-slate-300"
+            onClick={(e) => e.preventDefault()}
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            {!collapsed && "Documentation"}
+          </a>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }

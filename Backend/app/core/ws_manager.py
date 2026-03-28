@@ -1,7 +1,18 @@
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, List, MutableMapping
+
 from fastapi import WebSocket
 import json
-import asyncio
+
+
+def enrich_ws_payload(payload: MutableMapping[str, Any], scan_id: str) -> Dict[str, Any]:
+    """Add scan_id and UTC timestamp to every outbound WS frame (Phase 1 contract)."""
+    out = dict(payload)
+    out["scan_id"] = scan_id
+    if "ts" not in out:
+        out["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return out
+
 
 class ConnectionManager:
     """
@@ -28,8 +39,10 @@ class ConnectionManager:
         await websocket.send_text(message)
 
     async def broadcast(self, message: Any, scan_id: str):
-        """Broadcasts a JSON-serializable message to all clients monitoring a specific scan."""
+        """Broadcast JSON to clients on this scan_id; dict payloads get scan_id + ts."""
         if scan_id in self.active_connections:
+            if isinstance(message, dict):
+                message = enrich_ws_payload(message, scan_id)
             payload = json.dumps(message)
             # Create a copy of the list to avoid issues with concurrent disconnects
             for connection in self.active_connections[scan_id][:]:

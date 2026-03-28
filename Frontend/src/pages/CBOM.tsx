@@ -11,9 +11,10 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import { Link } from "react-router-dom";
+import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { toast } from "sonner";
 import { cbomService, cryptoService, pqcService, reportingService } from "@/services/api";
-import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
+import { PQCBadge, determinePQCStatus, hndlRiskFromCrypto, PQCStatus } from "@/components/ui/PQCBadge";
 import { CheckCircle } from "lucide-react";
 
 const COLORS = ["hsl(45, 96%, 51%)", "hsl(342, 88%, 35%)", "hsl(152, 60%, 45%)", "hsl(210, 80%, 55%)", "hsl(280, 60%, 55%)"];
@@ -33,15 +34,12 @@ function mapCryptoToCbomAsset(r: any) {
   const tls    = r.tls_version   || "";
   const cipher = r.cipher_suite  || "";
   const kl     = r.key_length    || 0;
+  const klStr  = kl && kl !== "None" ? String(kl) : undefined;
 
   const isWeak     = ["RC4","DES","3DES","MD5","NULL","EXPORT","TLS 1.0","TLS 1.1"]
                        .some(p => cipher.includes(p) || tls.includes(p));
-  const isPQCSafe  = ["Kyber","Dilithium","FALCON","SPHINCS","ML-KEM","ML-DSA"]
-                       .some(p => cipher.toLowerCase().includes(p.toLowerCase()));
-  const pqcStatus  = isPQCSafe ? "quantum-safe"
-                   : isWeak    ? "vulnerable"
-                   : tls === "TLS 1.3" ? "pqc-ready" : "vulnerable";
-  const hndlRisk   = ["RSA","ECDH","ECDSA","DH"].some(p => cipher.includes(p));
+  const pqcStatus  = determinePQCStatus(tls, cipher, klStr);
+  const hndlRisk   = hndlRiskFromCrypto(tls, cipher, klStr);
 
   let rec = "No action needed";
   if (cipher.includes("RSA") || cipher.includes("DH"))
@@ -264,16 +262,17 @@ export default function CBOM() {
   const emptyState = !loading && cbomAssets.length === 0;
 
   return (
-    <div className="space-y-6 printable-cbom">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">CBOM</h1>
-          <p className="text-sm text-muted-foreground">Cryptographic Bill of Materials</p>
-        </div>
-      </motion.div>
+    <div className="space-y-8 printable-cbom">
+      <div className="no-print">
+        <DossierPageHeader
+          eyebrow="Cryptographic inventory"
+          title="Crypto Bill of Materials"
+          description="TLS, certificates, and algorithm inventory derived from the latest completed scan."
+        />
+      </div>
 
       {/* Summary Top Card */}
-      <div className="rounded-xl border border-border bg-card p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center no-print">
+      <div className="dossier-card flex flex-col items-start justify-between gap-4 p-6 sm:flex-row sm:items-center no-print">
         <div>
           <h2 className="text-lg font-bold text-foreground">CBOM Inventory Report</h2>
           <div className="text-sm text-muted-foreground mt-2 space-y-1">
@@ -282,7 +281,7 @@ export default function CBOM() {
             <p><strong>NIST Compliance:</strong> FIPS 140-3 / NIST SP 800-208</p>
           </div>
         </div>
-        <Button onClick={() => window.location.reload()} variant="outline" className="mt-4 sm:mt-0 gap-2 border-[#FBBC09]/50 text-[#FBBC09] hover:bg-[#FBBC09]/10 hover:text-[#FBBC09]">
+        <Button onClick={() => window.location.reload()} variant="outline" className="mt-4 gap-2 border-primary/50 text-primary hover:bg-primary/10 hover:text-primary sm:mt-0">
           <RefreshCw className="w-4 h-4" /> Regenerate
         </Button>
       </div>
@@ -308,7 +307,7 @@ export default function CBOM() {
           <ShieldCheck className="h-12 w-12 mx-auto mb-4 opacity-30" />
           <p className="text-lg font-medium">No CBOM data yet</p>
           <p className="text-sm max-w-md mx-auto">Complete a scan from the dashboard to populate CBOM charts and inventory.</p>
-          <Button asChild variant="outline" className="mt-6 border-[#FBBC09]/40 text-[#FBBC09]">
+          <Button asChild variant="outline" className="mt-6 border-primary/40 text-primary">
             <Link to="/">Open dashboard</Link>
           </Button>
         </div>
@@ -321,9 +320,9 @@ export default function CBOM() {
             <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2 xl:col-span-3">
               <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">PQC Asset Readiness Overview</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#FBBC09]/10 border border-[#FBBC09]/20">
-                  <ShieldCheck className="w-6 h-6 text-[#FBBC09] mb-2" />
-                  <span className="text-2xl font-bold text-[#FBBC09]">{pqcStats.safe}</span>
+                <div className="flex flex-col items-center justify-center rounded-lg border border-primary/20 bg-primary/10 p-4">
+                  <ShieldCheck className="mb-2 h-6 w-6 text-primary" />
+                  <span className="text-2xl font-bold text-primary">{pqcStats.safe}</span>
                   <span className="text-xs text-muted-foreground uppercase mt-1">Quantum Safe</span>
                 </div>
                 <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#0ea5e9]/10 border border-[#0ea5e9]/20">
@@ -336,9 +335,9 @@ export default function CBOM() {
                   <span className="text-2xl font-bold text-[#ef4444]">{pqcStats.vuln}</span>
                   <span className="text-xs text-muted-foreground uppercase mt-1">Vulnerable</span>
                 </div>
-                <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-[#A20E37]/10 border border-[#A20E37]/20">
-                  <ShieldAlert className="w-6 h-6 text-[#A20E37] mb-2" />
-                  <span className="text-2xl font-bold text-[#A20E37]">{pqcStats.hndl}</span>
+                <div className="flex flex-col items-center justify-center rounded-lg border border-destructive/20 bg-destructive/10 p-4">
+                  <ShieldAlert className="mb-2 h-6 w-6 text-destructive" />
+                  <span className="text-2xl font-bold text-destructive">{pqcStats.hndl}</span>
                   <span className="text-xs text-muted-foreground uppercase mt-1">HNDL Risk</span>
                 </div>
               </div>
@@ -397,20 +396,20 @@ export default function CBOM() {
               <div className="space-y-3">
                 {cipherUsage.map((cipher: any) => {
                   const pct = Math.round((cipher.count / CIPHER_MAX) * 100);
-                  const barColor = cipher.weak ? "#A20E37" : "#FBBC09";
+                  const barColor = cipher.weak ? "#dc2626" : "#2563eb";
                   return (
                     <div
                       key={cipher.name}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${cipher.weak ? "bg-[#A20E37]/10 border border-[#A20E37]/20" : ""}`}
+                      className={`flex items-center gap-3 rounded-lg px-3 py-2 ${cipher.weak ? "border border-destructive/20 bg-destructive/10" : ""}`}
                     >
                       <span
                         className="text-xs font-mono flex-1 min-w-0 truncate"
-                        style={{ color: cipher.weak ? "#A20E37" : "hsl(var(--foreground))" }}
+                        style={{ color: cipher.weak ? "#dc2626" : "hsl(var(--foreground))" }}
                         title={cipher.name}
                       >
                         {cipher.name}
                         {cipher.weak && (
-                          <span className="ml-2 text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded bg-[#A20E37]/20 text-[#A20E37]">WEAK</span>
+                          <span className="ml-2 rounded bg-destructive/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-destructive">WEAK</span>
                         )}
                       </span>
                       <div className="w-40 h-3 rounded-full bg-secondary overflow-hidden flex-shrink-0">
@@ -480,7 +479,7 @@ export default function CBOM() {
                 { key: "keyLength",            header: "Key Length" },
                 { key: "certExpiry",           header: "Cert Expiry" },
                 { key: "pqcStatus",            header: "PQC Status",  render: (r) => <PQCBadge status={r.pqcStatus as PQCStatus} /> },
-                { key: "hndlRisk",             header: "HNDL Risk",   render: (r) => r.hndlRisk ? <Badge className="bg-[#A20E37]/15 text-[#A20E37] border-[#A20E37]/20 uppercase text-[10px]">Yes</Badge> : <Badge className="bg-success/15 text-success border-success/20 uppercase text-[10px]">No</Badge> },
+                { key: "hndlRisk",             header: "HNDL Risk",   render: (r) => r.hndlRisk ? <Badge className="border-destructive/20 bg-destructive/15 text-[10px] uppercase text-destructive">Yes</Badge> : <Badge className="border-success/20 bg-success/15 text-[10px] uppercase text-success">No</Badge> },
                 { key: "recommendedMigration", header: "Recommended Migration" },
               ]}
             />
@@ -502,7 +501,7 @@ export default function CBOM() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr style={{ backgroundColor: "#FBBC09" }}>
+                    <tr className="bg-primary text-primary-foreground">
                       {[
                         "Application",
                         "Key Length",
@@ -517,7 +516,7 @@ export default function CBOM() {
                         "Guidance",
                         "Refs",
                       ].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: "#111" }}>{h}</th>
+                        <th key={h} className="whitespace-nowrap px-4 py-3 text-left font-bold uppercase tracking-wide text-primary-foreground">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -528,19 +527,19 @@ export default function CBOM() {
                         className="border-b border-border/40 hover:opacity-90 transition-opacity"
                         style={{
                           backgroundColor: row.weak
-                            ? "rgba(162,14,55,0.10)"
-                            : i % 2 === 0 ? "rgba(251,188,9,0.04)" : "transparent",
+                            ? "hsl(0 72% 51% / 0.08)"
+                            : i % 2 === 0 ? "hsl(221 83% 53% / 0.06)" : "transparent",
                         }}
                       >
                         <td className="px-4 py-2.5 font-mono text-foreground">{row.application}</td>
-                        <td className="px-4 py-2.5 font-mono" style={{ color: row.keyLength === "1024-bit" ? "#A20E37" : "inherit" }}>{row.keyLength}</td>
-                        <td className="px-4 py-2.5 font-mono max-w-[180px] truncate" style={{ color: row.weak ? "#A20E37" : "inherit" }} title={row.cipherSuite}>{row.cipherSuite}</td>
+                        <td className={`px-4 py-2.5 font-mono ${row.keyLength === "1024-bit" ? "text-destructive" : ""}`}>{row.keyLength}</td>
+                        <td className={`px-4 py-2.5 font-mono max-w-[180px] truncate ${row.weak ? "text-destructive" : ""}`} title={row.cipherSuite}>{row.cipherSuite}</td>
                         <td className="px-4 py-2.5">{row.ca}</td>
                         <td className="px-4 py-2.5 font-mono text-muted-foreground">{row.algorithmOid}</td>
                         <td className="px-4 py-2.5">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                             row.keyState === "Active" ? "bg-green-500/15 text-green-400"
-                            : row.keyState === "Revoked" ? "bg-[#A20E37]/15 text-[#A20E37]"
+                            : row.keyState === "Revoked" ? "bg-destructive/15 text-destructive"
                             : "bg-yellow-500/15 text-yellow-400"
                           }`}>{row.keyState}</span>
                         </td>

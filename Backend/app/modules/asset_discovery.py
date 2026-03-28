@@ -115,18 +115,24 @@ async def run_dnsx(subdomains: List[str]) -> List[str]:
         with open(temp_target, "w") as f:
             f.write("\n".join(subdomains))
             
+        # Do NOT use -resp-only here: it prints only RDATA (e.g. IPs), not hostnames.
+        # Our parser expects one FQDN per line, which is what `dnsx -silent` emits by default.
         output = await _run_command(
-            ["dnsx", "-l", temp_target, "-silent", "-resp-only", "-r", "8.8.8.8,1.1.1.1"], 
-            name="DNSX"
+            ["dnsx", "-l", temp_target, "-silent", "-r", "8.8.8.8,1.1.1.1"],
+            name="DNSX",
         )
-        
+
         live = []
         domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         for line in output.splitlines():
             line = line.strip()
-            if line and domain_regex.match(line) and "error" not in line.lower():
-                live.append(line)
-        return list(set(live))
+            if not line or "error" in line.lower():
+                continue
+            # e.g. "www.example.com [93.184.216.34]" when using -resp
+            host = line.split("[", 1)[0].strip() if "[" in line else line
+            if domain_regex.match(host):
+                live.append(host)
+        return list(dict.fromkeys(live))
     except Exception as exc:
         logger.error("DNSX failed: %s", exc)
         return []
@@ -301,3 +307,42 @@ async def discover_assets(domain: str, ports: str | None = None, broadcast_func 
 
     await log_and_broadcast(f"=== Discovery complete: {len(assets)} assets found ===")
     return assets
+
+
+async def merge_extra_hosts_into_assets(
+    existing: List[DiscoveredAsset],
+    extra_hosts: List[str],
+    ports: str | None = None,
+    broadcast_func=None,
+) -> List[DiscoveredAsset]:
+    """
+    Append port-scanned assets for hostnames not already in `existing`.
+    Used for CMDB-registered hosts, manual seed lists, and org inventory merges.
+    """
+    domain_regex = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    by_key: dict[str, DiscoveredAsset] = {}
+    for a in existing:
+        k = (a.subdomain or "").strip().lower()
+        if k:
+            by_key[k] = a
+
+    for raw in extra_hosts:
+        h = (raw or "").strip().lower()
+        if not h or h in by_key:
+            continue
+        if not domain_regex.match(h):
+            logger.warning("merge_extra_hosts: skipping invalid hostname %r", raw)
+            continue
+        msg = f"[Inventory merge] Port-scanning seed host: {h}"
+        logger.info(msg)
+        if broadcast_func:
+            await broadcast_func(msg)
+        try:
+            open_ports = await scan_ports(h, ports)
+            ip = socket.gethostbyname(h)
+        except Exception:
+            open_ports = [443]
+            ip = "unknown"
+        by_key[h] = DiscoveredAsset(subdomain=h, ip=ip, open_ports=open_ports)
+
+    return list(by_key.values())

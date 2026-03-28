@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Enums ────────────────────────────────────────────────────────
@@ -192,6 +192,29 @@ class ScanRequest(BaseModel):
     domain: str
     include_subdomains: bool = True
     ports: Optional[str] = None  # comma-separated, e.g. "443,8443"
+    # Org-wide inventory (Discovery phase extensions): explicit targets + registered catalog
+    additional_seed_hosts: Optional[List[str]] = Field(
+        default=None,
+        description="Extra hostnames to port-scan and assess (CMDB/manual/Git runner output, etc.)",
+    )
+    merge_registered_inventory: bool = Field(
+        default=False,
+        description="If true, merge hosts from /inventory/sources/import for this scan domain",
+    )
+
+    @field_validator("additional_seed_hosts")
+    @classmethod
+    def normalize_seeds(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if not v:
+            return None
+        if len(v) > 200:
+            raise ValueError("additional_seed_hosts: maximum 200 entries")
+        out: List[str] = []
+        for x in v:
+            s = str(x).strip().lower()
+            if s and s not in out:
+                out.append(s)
+        return out or None
 
 
 class BatchScanRequest(BaseModel):
@@ -199,6 +222,46 @@ class BatchScanRequest(BaseModel):
     domains: List[str]
     include_subdomains: bool = True
     ports: Optional[str] = None
+    merge_registered_inventory: bool = False
+
+
+class RegisteredAssetItem(BaseModel):
+    """One row from CMDB, cloud export, K8s ingress list, etc."""
+    host: str = Field(..., min_length=1, max_length=253)
+    parent_domain: Optional[str] = Field(
+        default=None,
+        max_length=253,
+        description="Scope for merge_registered_inventory (defaults to import-level parent_domain)",
+    )
+    external_id: Optional[str] = Field(default=None, max_length=256)
+    owner: Optional[str] = None
+    environment: Optional[str] = None
+    criticality: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InventorySourceImport(BaseModel):
+    """Bulk register assets from an external source (connector or file ingest)."""
+    source: str = Field(
+        ...,
+        min_length=1,
+        max_length=48,
+        description="Logical source: cmdb, cloud, k8s, git, pki, kms, manual, other",
+    )
+    parent_domain: Optional[str] = Field(
+        default=None,
+        max_length=253,
+        description="Default parent zone e.g. bank.in for all items",
+    )
+    items: List[RegisteredAssetItem] = Field(..., min_length=1, max_length=500)
+
+
+class SbomIngestRequest(BaseModel):
+    """Store a CycloneDX/SPDX-style JSON blob for a host (SAST/supply-chain path)."""
+    host: str = Field(..., min_length=1, max_length=253)
+    scan_domain: Optional[str] = Field(default=None, max_length=253)
+    format: str = Field(default="cyclonedx", max_length=32)
+    document: Dict[str, Any] = Field(..., description="Parsed SBOM root object")
 
 
 class AssetMetadataUpdate(BaseModel):
@@ -233,6 +296,12 @@ class IntegrationSettingsUpdate(BaseModel):
     notify_on_scan_complete: Optional[bool] = None
     slack_webhook_url: Optional[str] = None
     jira_webhook_url: Optional[str] = None
+
+
+class ExportAuditLogCreate(BaseModel):
+    """Client-recorded export (e.g. browser download of roadmap JSON)."""
+    export_type: str = Field(..., min_length=1, max_length=80)
+    domain: Optional[str] = None
 
 
 # ── Phase 5: Migration tasks & waivers ─────────────────────────────

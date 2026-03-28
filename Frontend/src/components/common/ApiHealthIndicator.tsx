@@ -43,11 +43,11 @@ export function ApiHealthIndicator() {
 
   return (
     <div
-      className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-md border border-border/60 bg-secondary/40"
+      className="hidden items-center gap-1.5 rounded-md border border-slate-200 bg-slate-100/80 px-2 py-1 lg:flex"
       title={`${label} (${getApiOrigin()})`}
     >
-      <span className={`h-2 w-2 rounded-full shrink-0 ${color}`} aria-hidden />
-      <span className="text-[10px] text-muted-foreground max-w-[120px] truncate">{label}</span>
+      <span className={`h-2 w-2 shrink-0 rounded-full ${color}`} aria-hidden />
+      <span className="max-w-[120px] truncate text-[10px] text-slate-600">{label}</span>
     </div>
   );
 }

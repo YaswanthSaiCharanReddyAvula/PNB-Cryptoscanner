@@ -17,28 +17,28 @@ const statusConfig: Record<
   "quantum-safe": {
     label: "Fully Quantum Safe",
     icon: ShieldCheck,
-    colorClass: "bg-[#FBBC09]/15 text-[#FBBC09] border-[#FBBC09]/30",
+    colorClass: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
     tooltip: "Uses NIST-standardized Post-Quantum Algorithms (e.g. Kyber, Dilithium, ML-KEM).",
     animate: true,
   },
   "pqc-ready": {
     label: "PQC Ready",
     icon: CheckCircle,
-    colorClass: "bg-[#0ea5e9]/15 text-[#0ea5e9] border-[#0ea5e9]/30",
+    colorClass: "bg-sky-500/15 text-sky-700 border-sky-500/30",
     tooltip: "Excellent classical security (e.g. TLS 1.3 with AES-256). Pre-quantum readiness.",
     animate: true,
   },
   "vulnerable": {
     label: "Quantum Vulnerable",
     icon: AlertTriangle,
-    colorClass: "bg-[#ef4444]/15 text-[#ef4444] border-[#ef4444]/30",
+    colorClass: "bg-red-500/15 text-red-700 border-red-500/30",
     tooltip: "Relies on algorithms vulerable to quantum computers (e.g. RSA, ECDH, ECC).",
     animate: false,
   },
   "hndl-risk": {
     label: "HNDL Risk",
     icon: ShieldAlert,
-    colorClass: "bg-[#A20E37]/15 text-[#A20E37] border-[#A20E37]/30",
+    colorClass: "bg-rose-800/15 text-rose-900 border-rose-800/30",
     tooltip: "Harvest Now, Decrypt Later risk. Weak algorithms (e.g. TLS 1.2 or below with RSA).",
     animate: false,
   },
@@ -63,7 +63,7 @@ export const PQCBadge: React.FC<PQCBadgeProps> = ({ status, className = "" }) =>
             {config.animate && (
               <div 
                 className={`absolute inset-0 rounded-full animate-ping opacity-20 ${
-                  status === "quantum-safe" ? "bg-[#FBBC09]" : "bg-[#0ea5e9]"
+                  status === "quantum-safe" ? "bg-emerald-500" : "bg-sky-500"
                 }`} 
                 style={{ animationDuration: '3s' }}
               />
@@ -125,4 +125,33 @@ export function determinePQCStatus(
   if (cipher) return "vulnerable"; // Any older classical cipher not explicitly caught
 
   return "unknown";
+}
+
+/**
+ * Harvest-relevant exposure aligned with the PQC engine: quantum-vulnerable / HNDL-class
+ * statuses, plus legacy weak crypto when not explicitly PQC-safe.
+ */
+export function hndlRiskFromCrypto(
+  tlsVersion: string | null | undefined,
+  cipherSuite: string | null | undefined,
+  keyLength: string | null | undefined,
+): boolean {
+  const tls = tlsVersion || "";
+  const cipher = cipherSuite || "";
+  const klStr =
+    keyLength && String(keyLength) !== "None" && String(keyLength).toLowerCase() !== "unknown"
+      ? String(keyLength)
+      : undefined;
+  const isWeak = ["RC4", "DES", "3DES", "MD5", "NULL", "EXPORT", "TLS 1.0", "TLS 1.1"].some(
+    (p) => cipher.includes(p) || tls.includes(p),
+  );
+  const isPQCSafe = ["Kyber", "Dilithium", "FALCON", "SPHINCS", "ML-KEM", "ML-DSA"].some((p) =>
+    cipher.toLowerCase().includes(p.toLowerCase()),
+  );
+  const pqcStatus = determinePQCStatus(tls, cipher, klStr);
+  return (
+    pqcStatus === "hndl-risk" ||
+    pqcStatus === "vulnerable" ||
+    (!isPQCSafe && isWeak)
+  );
 }

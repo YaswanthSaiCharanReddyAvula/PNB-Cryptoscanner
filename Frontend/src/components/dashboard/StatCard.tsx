@@ -12,7 +12,7 @@ interface StatCardProps {
 const variantStyles = {
   default: "border-border",
   gold: "border-primary/30 card-glow-gold",
-  red: "border-accent/30 card-glow-red",
+  red: "border-destructive/30 card-glow-red",
   success: "border-success/30",
   info: "border-info/30",
 };
@@ -20,7 +20,7 @@ const variantStyles = {
 const iconVariantStyles = {
   default: "bg-muted text-muted-foreground",
   gold: "bg-primary/15 text-primary",
-  red: "bg-accent/15 text-accent",
+  red: "bg-destructive/15 text-destructive",
   success: "bg-success/15 text-success",
   info: "bg-info/15 text-info",
 };

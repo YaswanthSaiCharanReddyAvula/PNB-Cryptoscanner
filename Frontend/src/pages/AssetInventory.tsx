@@ -4,6 +4,7 @@ import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { assetService } from "@/services/api";
+import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 
 function getExposure(ip: string) {
   if (!ip || ip === "N/A" || ip === "Unknown") return "Unknown";
@@ -18,6 +19,10 @@ function getExposure(ip: string) {
 export default function AssetInventory() {
   const [filterExposure, setFilterExposure] = useState("Public Only");
   const [discoveredAssets, setDiscoveredAssets] = useState<any[]>([]);
+  const [portfolioRows, setPortfolioRows] = useState<
+    { host: string; parentDomain: string; risk: string; owner: string; lastScan: string }[]
+  >([]);
+  const [portfolioMeta, setPortfolioMeta] = useState({ host_count: 0, scans_considered: 0 });
   const [stats, setStats] = useState({
     total: 0,
     publicCount: 0,
@@ -25,6 +30,35 @@ export default function AssetInventory() {
     ports: 0,
     locations: 0,
   });
+
+  useEffect(() => {
+    assetService
+      .getInventorySummary(80)
+      .then((res) => {
+        const d = res.data as {
+          hosts?: Record<string, unknown>[];
+          host_count?: number;
+          scans_considered?: number;
+        };
+        const hosts = Array.isArray(d.hosts) ? d.hosts : [];
+        setPortfolioMeta({
+          host_count: d.host_count ?? hosts.length,
+          scans_considered: d.scans_considered ?? 0,
+        });
+        setPortfolioRows(
+          hosts.map((h) => ({
+            host: String(h.host ?? "—"),
+            parentDomain: String(h.parent_domain ?? "—"),
+            risk: String(h.quantum_risk_level ?? "—"),
+            owner: String(h.owner ?? "—"),
+            lastScan: h.last_completed_at
+              ? new Date(String(h.last_completed_at)).toLocaleString()
+              : "—",
+          })),
+        );
+      })
+      .catch(() => setPortfolioRows([]));
+  }, []);
 
   useEffect(() => {
     assetService.getInventory()
@@ -72,11 +106,12 @@ export default function AssetInventory() {
   }, []);
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold text-foreground">Asset Inventory</h1>
-        <p className="text-sm text-muted-foreground">Discovered asset records and network mapping</p>
-      </motion.div>
+    <div className="space-y-8">
+      <DossierPageHeader
+        eyebrow="Intelligence dossier / inventory"
+        title="Inventory Assets"
+        description="Discovery feed from the graph service plus Phase 2 deduplicated hosts from recent completed scans and org metadata."
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
         {[
@@ -92,6 +127,27 @@ export default function AssetInventory() {
           </div>
         ))}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Portfolio view: {portfolioMeta.host_count} unique host(s) from up to{" "}
+        {portfolioMeta.scans_considered} recent completed scan(s) (
+        <code className="rounded bg-muted px-1 py-0.5 text-[10px]">GET /inventory/summary</code>
+        ).
+      </p>
+      <DataTable
+        title="Portfolio hosts (deduplicated)"
+        searchable
+        searchKeys={["host", "parentDomain", "owner", "risk"]}
+        pageSize={10}
+        data={portfolioRows}
+        columns={[
+          { key: "host", header: "Host", render: (r) => <span className="font-mono text-sm text-primary">{r.host as string}</span> },
+          { key: "parentDomain", header: "Root domain" },
+          { key: "risk", header: "Quantum risk" },
+          { key: "owner", header: "Owner" },
+          { key: "lastScan", header: "Last completed" },
+        ]}
+      />
 
       <div className="flex items-center gap-3">
         <span className="text-sm font-semibold text-foreground tracking-wide uppercase">Show:</span>

@@ -14,15 +14,15 @@ import { toast } from "sonner";
 import { useScan } from "@/hooks/useScan";
 import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 
-const GOLD  = "#FBBC09";
-const RED   = "#A20E37";
-const GREEN = "#22c55e";
+const BRAND = "#2563eb";
+const RED = "#dc2626";
+const GREEN = "#16a34a";
 const TIER_THRESHOLDS = { elite: 700, standard: 400 };
 
 function getTier(score: number): { label: string; color: string; bg: string } {
   if (score > TIER_THRESHOLDS.elite)  return { label: "Elite-PQC", color: GREEN, bg: "rgba(34,197,94,0.12)" };
-  if (score >= TIER_THRESHOLDS.standard) return { label: "Standard", color: GOLD, bg: "rgba(251,188,9,0.12)" };
-  return { label: "Legacy", color: RED, bg: "rgba(162,14,55,0.12)" };
+  if (score >= TIER_THRESHOLDS.standard) return { label: "Standard", color: BRAND, bg: "rgba(37,99,235,0.12)" };
+  return { label: "Legacy", color: RED, bg: "rgba(220,38,38,0.12)" };
 }
 
 function scaleScore(raw100: number) {
@@ -39,14 +39,14 @@ function computeScoreFromScan(v1: any): number {
 // Reference tables — NOT scan data, kept as-is
 const TIER_REFERENCE = [
   { status: "Elite-PQC",                          icon: <CheckCircle2 size={16} color={GREEN} />, rating: "> 700",       color: GREEN },
-  { status: "Standard",                           icon: <ArrowUpCircle size={16} color={GOLD} />, rating: "400 till 700", color: GOLD  },
+  { status: "Standard",                           icon: <ArrowUpCircle size={16} color={BRAND} />, rating: "400 till 700", color: BRAND  },
   { status: "Legacy",                             icon: <CircleDot    size={16} color={RED}  />, rating: "< 400",        color: RED   },
   { status: "Maximum Score after normalisation*", icon: null,                                     rating: "1000",         color: "#94a3b8" },
 ];
 
 const TIER_CRITERIA = [
   { tier: "Tier-1 Elite",    level: "High",     compliance: "TLS 1.2/1.3 only · AES-GCM / ChaCha20 · ECDHE key exchange · Cert ≥ 2048-bit · HSTS enabled",          action: "Maintain Configuration; periodic monitoring",    actionColor: GREEN },
-  { tier: "Tier-2 Standard", level: "Moderate", compliance: "TLS 1.2 + legacy allowed · Key > 2048-bit · Minor cipher weaknesses",                                    action: "Improve gradually; disable legacy protocols",     actionColor: GOLD  },
+  { tier: "Tier-2 Standard", level: "Moderate", compliance: "TLS 1.2 + legacy allowed · Key > 2048-bit · Minor cipher weaknesses",                                    action: "Improve gradually; disable legacy protocols",     actionColor: BRAND  },
   { tier: "Tier-3 Legacy",   level: "Low",      compliance: "TLS 1.0/1.1 enabled · Weak ciphers (CBC, 3DES) · Possible self-signed certs",                            action: "Remediation required; upgrade TLS stack",        actionColor: "#f97316" },
   { tier: "Critical",        level: "Critical", compliance: "SSL v2/v3 enabled · Key < 1024-bit · No HSTS",                                                           action: "Immediate action; block or isolate service",      actionColor: RED   },
 ];
@@ -60,11 +60,13 @@ export default function CyberRating() {
   const [simTls,         setSimTls]         = useState(false);
   const [simPqc,         setSimPqc]         = useState(false);
   const [simBusy,        setSimBusy]        = useState(false);
-  const [simResult,       setSimResult]       = useState<{
+  const [simResult, setSimResult] = useState<{
     baseline_score_100: number;
     projected_score_100: number;
     delta: number;
     note?: string;
+    assumptions?: { assume_tls_13_all?: boolean; assume_pqc_hybrid_kem?: boolean };
+    nist_pqc_references?: Record<string, { label: string; url: string }>;
   } | null>(null);
 
   const { user } = useAuth();
@@ -124,7 +126,22 @@ export default function CyberRating() {
         assume_tls_13_all: simTls,
         assume_pqc_hybrid_kem: simPqc,
       });
-      setSimResult(res.data);
+      const d = res.data as {
+        baseline_score_100?: number;
+        projected_score_100?: number;
+        delta?: number;
+        note?: string;
+        assumptions?: { assume_tls_13_all?: boolean; assume_pqc_hybrid_kem?: boolean };
+        nist_pqc_references?: Record<string, { label: string; url: string }>;
+      };
+      setSimResult({
+        baseline_score_100: Number(d.baseline_score_100 ?? 0),
+        projected_score_100: Number(d.projected_score_100 ?? 0),
+        delta: Number(d.delta ?? 0),
+        note: d.note,
+        assumptions: d.assumptions,
+        nist_pqc_references: d.nist_pqc_references,
+      });
     } catch {
       toast.error("No completed scan to simulate, or the API is unreachable.");
       setSimResult(null);
@@ -151,13 +168,13 @@ export default function CyberRating() {
               onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleScan()}
               className="pl-10 bg-secondary border-border" disabled={isScanning} />
           </div>
-          <Button onClick={handleScan} disabled={isEmployee || !domain || isScanning} className="px-6 font-semibold" style={{ backgroundColor: GOLD, color: "#111" }}>
+          <Button onClick={handleScan} disabled={isEmployee || !domain || isScanning} className="bg-primary px-6 font-semibold text-primary-foreground hover:bg-primary/90">
             {isEmployee ? <Lock className="mr-2 h-4 w-4" /> : isScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Analyze
           </Button>
         </div>
         {!isScanning && scannedDomain && stageIndex >= 5 && (
-          <p className="text-xs text-muted-foreground mt-2">Showing results for: <span className="font-medium" style={{ color: GOLD }}>{scannedDomain}</span></p>
+          <p className="text-xs text-muted-foreground mt-2">Showing results for: <span className="font-medium text-primary">{scannedDomain}</span></p>
         )}
       </div>
 
@@ -195,8 +212,8 @@ export default function CyberRating() {
               </p>
               <div className="flex gap-2 flex-wrap mt-1">
                 <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(34,197,94,0.12)", color: GREEN, border: "1px solid rgba(34,197,94,0.25)" }}>Elite-PQC &gt; 700</span>
-                <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(251,188,9,0.12)", color: GOLD,  border: "1px solid rgba(251,188,9,0.25)"  }}>Standard 400–700</span>
-                <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(162,14,55,0.12)", color: RED,   border: "1px solid rgba(162,14,55,0.25)"  }}>Legacy &lt; 400</span>
+                <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(37,99,235,0.12)", color: BRAND,  border: "1px solid rgba(37,99,235,0.28)"  }}>Standard 400–700</span>
+                <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(220,38,38,0.12)", color: RED,   border: "1px solid rgba(220,38,38,0.28)"  }}>Legacy &lt; 400</span>
               </div>
             </div>
           </>
@@ -232,7 +249,7 @@ export default function CyberRating() {
             type="button"
             variant="outline"
             size="sm"
-            className="lg:ml-auto border-[#FBBC09]/50 text-[#FBBC09] hover:bg-[#FBBC09]/10"
+            className="lg:ml-auto border-primary/50 text-primary hover:bg-primary/10"
             onClick={runScoreSimulation}
             disabled={simBusy}
           >
@@ -249,7 +266,7 @@ export default function CyberRating() {
             </div>
             <div className="rounded-lg bg-secondary/40 px-3 py-2">
               <p className="text-[10px] uppercase text-muted-foreground">Projected (0–100)</p>
-              <p className="text-lg font-bold" style={{ color: GOLD }}>{simResult.projected_score_100}</p>
+              <p className="text-lg font-bold text-primary">{simResult.projected_score_100}</p>
               <p className="text-[10px] text-muted-foreground">≈ {Math.round(simResult.projected_score_100 * 10)} / 1000</p>
             </div>
             <div className="rounded-lg bg-secondary/40 px-3 py-2">
@@ -261,8 +278,41 @@ export default function CyberRating() {
             </div>
           </div>
         )}
+        {simResult?.assumptions && (
+          <p className="text-[11px] text-muted-foreground mt-3">
+            {(() => {
+              const p: string[] = [];
+              if (simResult.assumptions?.assume_tls_13_all) p.push("TLS 1.3 everywhere");
+              if (simResult.assumptions?.assume_pqc_hybrid_kem) p.push("PQC/hybrid KEM");
+              return p.length
+                ? `Applied: ${p.join(" · ")}`
+                : "Applied: no uplift toggles (baseline only).";
+            })()}
+          </p>
+        )}
         {simResult?.note && (
-          <p className="text-[11px] text-muted-foreground mt-3 leading-relaxed">{simResult.note}</p>
+          <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">{simResult.note}</p>
+        )}
+        {simResult?.nist_pqc_references && (
+          <div className="mt-4 rounded-lg border border-border/80 bg-secondary/20 p-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Related NIST publications (reference)
+            </p>
+            <ul className="space-y-1.5">
+              {Object.entries(simResult.nist_pqc_references).map(([k, ref]) => (
+                <li key={k}>
+                  <a
+                    href={ref.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline"
+                  >
+                    {ref.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </motion.div>
 

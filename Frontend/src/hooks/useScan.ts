@@ -8,13 +8,27 @@ const STAGES = [
   { label: "Analyzing crypto", progress: 60 },
   { label: "Evaluating quantum risk", progress: 80 },
   { label: "Generating CBOM", progress: 90 },
-  { label: "Complete", progress: 100 }
+  { label: "Complete", progress: 100 },
 ];
+
+/** Map MongoDB `current_stage` (and similar labels) to ScanProgressBar step 0–4; 5 = all done. */
+export function backendStageToStep(currentStage: string | undefined): number {
+  if (!currentStage) return 0;
+  const s = currentStage.toLowerCase();
+  if (s.includes("asset") || s.includes("initialis")) return 0;
+  if (s.includes("tls")) return 1;
+  if (s.includes("crypto")) return 2;
+  if (s.includes("quantum")) return 3;
+  if (s.includes("cbom")) return 4;
+  if (s.includes("recommendation") || s.includes("http header") || s.includes("cve")) return 4;
+  return 0;
+}
 
 export function useScan() {
   const [isScanning, setIsScanning] = useState(false);
   const [targetDomain, setTargetDomain] = useState<string | null>(null);
-  
+  const [scanId, setScanId] = useState<string | null>(null);
+
   const [stageIndex, setStageIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -23,80 +37,88 @@ export function useScan() {
       setTargetDomain(domain);
       setStageIndex(0);
       setErrorMsg(null);
+      setScanId(null);
       setIsScanning(true);
-      
-      // Fire the POST endpoint
-      await scanService.startScan(domain);
-    } catch (err: any) {
+
+      const res = await scanService.startScan(domain);
+      const id = (res.data as { scan_id?: string })?.scan_id ?? null;
+      if (id) setScanId(id);
+      else console.warn("startScan: API did not return scan_id — live console WebSocket will not connect.");
+    } catch (err: unknown) {
       console.error(err);
-      setErrorMsg(err.response?.data?.detail || "Failed to start scan");
+      const ax = err as { response?: { data?: { detail?: string } } };
+      setErrorMsg(ax.response?.data?.detail || "Failed to start scan");
       setIsScanning(false);
+      setScanId(null);
     }
   }, []);
 
-  // Progressive simulated stages via elapsed time
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isScanning && stageIndex < 4) {
-      interval = setInterval(() => {
-        setStageIndex(prev => Math.min(prev + 1, 4));
-      }, 4500); // advance every 4.5s automatically up to stage 4
-    }
-    return () => clearInterval(interval);
-  }, [isScanning, stageIndex]);
-
-  // Polling with React Query
   const { data: results, error, isError } = useQuery({
-    queryKey: ['scanResults', targetDomain],
+    queryKey: ["scanResults", targetDomain, scanId],
     queryFn: async () => {
       if (!targetDomain) return null;
       try {
         const res = await scanService.getResults(targetDomain);
         return res.data;
-      } catch (err: any) {
-        if (err.response?.status === 404) {
-          // If 404, it means the background job hasn't persisted the first stage yet
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 404) {
           return { status: "pending", _simulated: true };
         }
         throw err;
       }
     },
     enabled: isScanning && !!targetDomain,
-    // Provide a function to refetchInterval: return number (ms) or false to stop
     refetchInterval: (query) => {
       if (!isScanning) return false;
-      const data = query.state.data;
-      if (!data) return 3000;
+      const data = query.state.data as { status?: string } | null;
+      if (!data) return 2000;
       if (data.status === "completed" || data.status === "failed") return false;
-      return 3000;
+      return 2000;
     },
-    retry: false 
+    retry: false,
   });
 
-  // Watch for completion / failure from polling
   useEffect(() => {
-    if (results && !results._simulated) {
-      if (results.status === "completed") {
-        setStageIndex(5); // Complete
-        setIsScanning(false);
-      } else if (results.status === "failed") {
-        setIsScanning(false);
-        setErrorMsg("Scan failed on backend.");
-      }
+    if (!results || (results as { _simulated?: boolean })._simulated) return;
+
+    const r = results as {
+      status?: string;
+      current_stage?: string;
+      scan_id?: string;
+    };
+
+    if (r.status === "completed") {
+      setStageIndex(5);
+      setIsScanning(false);
+      return;
     }
+    if (r.status === "failed") {
+      setIsScanning(false);
+      setErrorMsg("Scan failed on backend.");
+      return;
+    }
+
+    if (r.status === "running" || r.status === "pending") {
+      setStageIndex(backendStageToStep(r.current_stage));
+    }
+  }, [results]);
+
+  useEffect(() => {
     if (isError && error) {
       setIsScanning(false);
       setErrorMsg(error.message || "An unexpected error occurred during polling.");
     }
-  }, [results, isError, error]);
+  }, [isError, error]);
 
   return {
     isScanning,
-    progress: STAGES[stageIndex].progress,
-    currentStage: STAGES[stageIndex].label,
-    stageIndex, // Exposing for ScanProgressBar
-    results: results && !results._simulated ? results : null,
+    scanId,
+    progress: STAGES[Math.min(stageIndex, 5)]?.progress ?? 0,
+    currentStage: STAGES[Math.min(stageIndex, 5)]?.label ?? "",
+    stageIndex,
+    results: results && !(results as { _simulated?: boolean })._simulated ? results : null,
     error: errorMsg,
-    startScan
+    startScan,
   };
 }

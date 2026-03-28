@@ -74,26 +74,6 @@ export default function Login() {
         className="w-full max-w-md mx-4"
       >
         <div className="rounded-2xl border border-border bg-card p-8 shadow-2xl">
-          {/* Partner Logos Strip */}
-          <div className="flex items-center justify-around gap-2 pb-5 mb-5 border-b border-border/60">
-            {[
-              { code: "DFS", label: "Dept. of Financial Services", bg: "#1a237e" },
-              { code: "IITK", label: "IIT Kanpur", bg: "#7b1111" },
-              { code: "PNB", label: "Punjab National Bank", bg: "#A20E37" },
-              { code: "GMRIT", label: "GMR Institute", bg: "#1b5e20" },
-            ].map((logo) => (
-              <div key={logo.code} className="flex flex-col items-center gap-1">
-                <div
-                  className="h-10 w-10 rounded-lg flex items-center justify-center text-white font-bold text-[10px] text-center leading-tight"
-                  style={{ backgroundColor: logo.bg }}
-                >
-                  {logo.code}
-                </div>
-                <span className="text-[8px] text-muted-foreground text-center max-w-[52px] leading-tight hidden sm:block">{logo.label}</span>
-              </div>
-            ))}
-          </div>
-
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-primary mb-4">

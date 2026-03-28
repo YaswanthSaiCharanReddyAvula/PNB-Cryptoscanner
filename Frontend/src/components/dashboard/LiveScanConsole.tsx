@@ -10,9 +10,16 @@ interface LiveScanConsoleProps {
   isOpen: boolean;
   onClose: () => void;
   scanId: string | null;
+  wsStatus?: 'connecting' | 'open' | 'closed';
 }
 
-export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({ messages, isOpen, onClose, scanId }) => {
+export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({
+  messages,
+  isOpen,
+  onClose,
+  scanId,
+  wsStatus = 'closed',
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,11 +42,17 @@ export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({ messages, isOp
         <div className="flex items-center gap-2">
           <Terminal className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground tracking-tight">Live Scan Console</span>
-          {scanId && (
-            <Badge variant="outline" className="text-[10px] font-mono opacity-60">
-              {scanId.slice(0, 8)}...
-            </Badge>
-          )}
+          <Badge
+            variant="outline"
+            className="max-w-[140px] truncate text-[10px] font-mono opacity-80"
+            title={scanId ? `${scanId} · ${wsStatus}` : wsStatus}
+          >
+            {!scanId
+              ? wsStatus === 'connecting'
+                ? 'connecting…'
+                : 'no scan id'
+              : `${scanId.slice(0, 8)}…`}
+          </Badge>
         </div>
         <button
           onClick={onClose}
@@ -88,6 +101,13 @@ export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({ messages, isOp
                   {msg.message}
                 </span>
               )}
+
+              {msg.type === 'metrics' && msg.data && (
+                <span className="text-emerald-700">
+                  <span className="mr-1.5 text-emerald-600/80">◆</span>
+                  Metrics: {JSON.stringify(msg.data)}
+                </span>
+              )}
             </div>
           ))}
           
@@ -102,8 +122,18 @@ export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({ messages, isOp
       {/* Footer */}
       <div className="p-2 px-4 border-t border-border bg-muted/10 text-[10px] text-muted-foreground flex justify-between items-center">
         <div className="flex items-center gap-1.5">
-          <div className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-          <span>Real-time stream active</span>
+          <div
+            className={`h-1.5 w-1.5 rounded-full ${
+              wsStatus === 'open' ? 'animate-pulse bg-emerald-500' : wsStatus === 'connecting' ? 'animate-pulse bg-amber-500' : 'bg-zinc-400'
+            }`}
+          />
+          <span>
+            {wsStatus === 'open'
+              ? 'WebSocket connected'
+              : wsStatus === 'connecting'
+                ? 'Connecting…'
+                : 'Stream idle'}
+          </span>
         </div>
         <span>{messages.length} log entries</span>
       </div>

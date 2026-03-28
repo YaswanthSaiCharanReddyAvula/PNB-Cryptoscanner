@@ -1,45 +1,108 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, CheckCircle, XCircle, Lock } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle, XCircle, Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  Label,
 } from "recharts";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { pqcService } from "@/services/api";
 
-const GOLD  = "#FBBC09";
-const RED   = "#A20E37";
-const GREEN = "#22c55e";
-const NAVY  = "#0d1b2a";
+/** Enterprise blue (primary) — matches Intelligence Dossier mockups */
+const BRAND = "#2563eb";
+const RED = "#dc2626";
+const GREEN = "#16a34a";
+const NAVY = "#0b1220";
 
-const tooltipStyle = {
+const chartTooltipLight = {
   contentStyle: {
-    background: "hsl(220, 18%, 13%)",
-    border: "1px solid hsl(220, 14%, 20%)",
-    borderRadius: "8px",
+    background: "rgba(255,255,255,0.96)",
+    border: "1px solid rgb(226 232 240)",
+    borderRadius: "12px",
     fontSize: "12px",
-    color: "hsl(210, 20%, 92%)",
+    color: "rgb(15 23 42)",
+    boxShadow: "0 12px 40px -12px rgb(15 23 42 / 0.18)",
   },
+  cursor: { fill: "rgb(59 130 246 / 0.06)" },
+  labelStyle: { color: "rgb(71 85 105)", fontWeight: 600 },
 };
 
-const HEAT_COLOR = ["#22c55e", "#f97316", "#A20E37"];
-const HEAT_LABEL = ["Safe or No Risk", "Medium Risk", "High Risk"];
+const HEAT_STYLES = [
+  {
+    label: "Safe or No Risk",
+    swatch: "bg-gradient-to-br from-emerald-400 to-teal-600 shadow-sm ring-1 ring-emerald-200/60",
+    className:
+      "bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 shadow-[0_8px_24px_-6px_rgba(16,185,129,0.55)] ring-1 ring-white/40",
+  },
+  {
+    label: "Medium Risk",
+    swatch: "bg-gradient-to-br from-amber-400 to-orange-600 shadow-sm ring-1 ring-orange-200/60",
+    className:
+      "bg-gradient-to-br from-amber-400 via-orange-500 to-orange-600 shadow-[0_8px_24px_-6px_rgba(249,115,22,0.5)] ring-1 ring-white/35",
+  },
+  {
+    label: "High Risk",
+    swatch: "bg-gradient-to-br from-rose-500 to-red-700 shadow-sm ring-1 ring-red-200/50",
+    className:
+      "bg-gradient-to-br from-rose-500 via-red-600 to-red-800 shadow-[0_8px_24px_-6px_rgba(220,38,38,0.55)] ring-1 ring-white/30",
+  },
+];
 // Static heatmap — represents scoring system (not scan data)
-const HEATMAP = [[2,2,1],[2,1,0],[1,0,0]];
+const HEATMAP = [
+  [2, 2, 1],
+  [2, 1, 0],
+  [1, 0, 0],
+];
+
+function PieCenterLabel({ viewBox, dominantName, dominantPct }: { viewBox?: { cx?: number; cy?: number }; dominantName: string; dominantPct: number }) {
+  const cx = viewBox?.cx ?? 0;
+  const cy = viewBox?.cy ?? 0;
+  return (
+    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" className="pointer-events-none select-none">
+      <tspan x={cx} dy="-0.15em" className="fill-slate-500 text-[10px] font-semibold uppercase tracking-wider">
+        Share
+      </tspan>
+      <tspan x={cx} dy="1.35em" className="fill-slate-800 text-lg font-bold tabular-nums">
+        {dominantPct}%
+      </tspan>
+      <tspan x={cx} dy="1.15em" className="fill-slate-500 text-[9px] font-medium">
+        {dominantName.length > 14 ? `${dominantName.slice(0, 12)}…` : dominantName}
+      </tspan>
+    </text>
+  );
+}
 
 function scoreTier(s: number) {
   if (s > 700) return { label: "Elite-PQC", color: GREEN };
-  if (s >= 400) return { label: "Standard",  color: GOLD };
+  if (s >= 400) return { label: "Standard",  color: BRAND };
   return              { label: "Legacy",     color: RED  };
 }
 
 const BarLabel = (props: any) => {
   const { x, y, width, value } = props;
+  if (value == null || value === 0) return null;
   return (
-    <text x={x + width / 2} y={y - 6} textAnchor="middle" fill="white" fontSize={12} fontWeight={700}>
+    <text
+      x={x + width / 2}
+      y={y - 8}
+      textAnchor="middle"
+      fill="#fff"
+      fontSize={12}
+      fontWeight={700}
+      style={{ textShadow: "0 1px 3px rgb(0 0 0 / 0.45)" }}
+    >
       {value}
     </text>
   );
@@ -65,23 +128,34 @@ export default function PQCPosture() {
   // Computed from real API data
   const classificationData = posture ? [
     { name: "Elite",    count: posture.elite_count    || 0, color: GREEN },
-    { name: "Standard", count: posture.standard_count || 0, color: GOLD  },
+    { name: "Standard", count: posture.standard_count || 0, color: BRAND  },
     { name: "Critical", count: posture.critical_apps  || 0, color: RED   },
   ] : [];
 
   const pieData = posture ? [
     { name: "Elite-PQC Ready", value: posture.elite_pqc_pct   || 0, color: GREEN },
-    { name: "Standard",        value: posture.standard_pct    || 0, color: GOLD  },
+    { name: "Standard",        value: posture.standard_pct    || 0, color: BRAND  },
     { name: "Legacy",          value: posture.legacy_pct      || 0, color: "#f97316" },
     { name: "Critical",        value: posture.critical_pct    || 0, color: RED   },
   ] : [];
+
+  const dominantSlice =
+    pieData.length > 0
+      ? pieData.reduce((a, b) => (Number(b.value) > Number(a.value) ? b : a), pieData[0])
+      : { name: "—", value: 0 };
+
+  const barFill: Record<string, string> = {
+    Elite: "url(#gradeElite)",
+    Standard: "url(#gradeStandard)",
+    Critical: "url(#gradeCritical)",
+  };
 
   const assetPqcData    = posture?.asset_pqc_status || [];
   const recommendations = posture?.recommendations   || [];
 
   const statsText = posture ? [
     { label: "Elite-PQC Ready", value: `${posture.elite_pqc_pct || 0}%`, color: GREEN },
-    { label: "Standard",        value: `${posture.standard_pct  || 0}%`, color: GOLD  },
+    { label: "Standard",        value: `${posture.standard_pct  || 0}%`, color: BRAND  },
     { label: "Legacy",          value: `${posture.legacy_pct    || 0}%`, color: "#f97316" },
     { label: "Critical Apps",   value: `${posture.critical_apps || 0}`,  color: RED   },
     ...(typeof posture.pqc_kem_endpoints === "number"
@@ -110,7 +184,7 @@ export default function PQCPosture() {
         <p className="text-sm max-w-md mx-auto">
           Run a scan from the dashboard. Posture is derived from the latest completed scan (TLS and inventory).
         </p>
-        <Button asChild variant="outline" className="mt-6 border-[#FBBC09]/40 text-[#FBBC09]">
+        <Button asChild variant="outline" className="mt-6 border-primary/40 text-primary">
           <Link to="/">Open dashboard</Link>
         </Button>
       </div>
@@ -120,7 +194,7 @@ export default function PQCPosture() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl overflow-hidden" style={{ backgroundColor: NAVY, border: `1px solid ${GOLD}22` }}>
+      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl overflow-hidden" style={{ backgroundColor: NAVY, border: `1px solid ${BRAND}33` }}>
         <div className="px-6 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-bold text-white tracking-wide">PQC Compliance Dashboard</h1>
@@ -144,21 +218,64 @@ export default function PQCPosture() {
       </motion.div>
 
       {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Bar chart */}
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Assets by Classification Grade</h3>
-          {classificationData.every(d => d.count === 0) ? (
-            <div className="flex items-center justify-center h-[220px] text-muted-foreground text-sm">No classification data yet</div>
+        <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100">
+          <h3 className="mb-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">
+            Assets by Classification Grade
+          </h3>
+          {classificationData.every((d) => d.count === 0) ? (
+            <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
+              No classification data yet
+            </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={classificationData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 14%, 20%)" />
-                <XAxis dataKey="name" tick={{ fill: "hsl(215, 15%, 60%)", fontSize: 12 }} />
-                <YAxis tick={{ fill: "hsl(215, 15%, 60%)", fontSize: 11 }} />
-                <Tooltip {...tooltipStyle} />
-                <Bar dataKey="count" radius={[6,6,0,0]} label={<BarLabel />}>
-                  {classificationData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={classificationData} margin={{ top: 24, right: 12, left: -8, bottom: 4 }}>
+                <defs>
+                  <linearGradient id="gradeElite" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#15803d" />
+                    <stop offset="100%" stopColor="#4ade80" />
+                  </linearGradient>
+                  <linearGradient id="gradeStandard" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#1d4ed8" />
+                    <stop offset="100%" stopColor="#60a5fa" />
+                  </linearGradient>
+                  <linearGradient id="gradeCritical" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#991b1b" />
+                    <stop offset="100%" stopColor="#f87171" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgb(241 245 249)" strokeWidth={1} vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: "rgb(100 116 139)", fontSize: 12, fontWeight: 500 }}
+                  dy={6}
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: "rgb(148 163 184)", fontSize: 11 }}
+                  width={36}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  {...chartTooltipLight}
+                  formatter={(v: number) => [v, "Assets"]}
+                  labelFormatter={(l) => String(l)}
+                />
+                <Bar
+                  dataKey="count"
+                  maxBarSize={52}
+                  radius={[12, 12, 6, 6]}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  label={<BarLabel />}
+                >
+                  {classificationData.map((entry, i) => (
+                    <Cell key={i} fill={barFill[entry.name] ?? entry.color} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -166,42 +283,130 @@ export default function PQCPosture() {
         </div>
 
         {/* Pie chart */}
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Application Status</h3>
-          {pieData.every(d => d.value === 0) ? (
-            <div className="flex items-center justify-center h-[220px] text-muted-foreground text-sm">No status data yet</div>
+        <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100">
+          <h3 className="mb-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Application Status</h3>
+          {pieData.every((d) => d.value === 0) ? (
+            <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">No status data yet</div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
-                <Pie data={pieData} cx="40%" cy="50%" innerRadius={50} outerRadius={85} dataKey="value" strokeWidth={2} stroke="hsl(220, 22%, 10%)">
-                  {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                <defs>
+                  <linearGradient id="pieElite" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#22c55e" />
+                    <stop offset="100%" stopColor="#4ade80" />
+                  </linearGradient>
+                  <linearGradient id="pieStandard" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#1d4ed8" />
+                    <stop offset="100%" stopColor="#93c5fd" />
+                  </linearGradient>
+                  <linearGradient id="pieLegacy" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#ea580c" />
+                    <stop offset="100%" stopColor="#fb923c" />
+                  </linearGradient>
+                  <linearGradient id="pieCritical" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#b91c1c" />
+                    <stop offset="100%" stopColor="#f87171" />
+                  </linearGradient>
+                </defs>
+                <Pie
+                  data={pieData}
+                  cx="42%"
+                  cy="50%"
+                  innerRadius={56}
+                  outerRadius={88}
+                  paddingAngle={2}
+                  cornerRadius={8}
+                  dataKey="value"
+                  stroke="#fff"
+                  strokeWidth={3}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                >
+                  {pieData.map((entry, i) => {
+                    const gid =
+                      entry.name === "Elite-PQC Ready"
+                        ? "pieElite"
+                        : entry.name === "Standard"
+                          ? "pieStandard"
+                          : entry.name === "Legacy"
+                            ? "pieLegacy"
+                            : "pieCritical";
+                    return <Cell key={i} fill={`url(#${gid})`} />;
+                  })}
+                  <Label
+                    position="center"
+                    content={(props: { viewBox?: { cx?: number; cy?: number } }) => (
+                      <PieCenterLabel
+                        viewBox={props.viewBox}
+                        dominantName={dominantSlice.name}
+                        dominantPct={Math.round(Number(dominantSlice.value))}
+                      />
+                    )}
+                  />
                 </Pie>
-                <Tooltip {...tooltipStyle} formatter={(v: number) => [`${v}%`, ""]} />
-                <Legend layout="vertical" align="right" verticalAlign="middle" iconType="circle" iconSize={9}
-                  formatter={(value) => <span style={{ color: "hsl(215, 15%, 70%)", fontSize: 11 }}>{value}</span>} />
+                <Tooltip
+                  {...chartTooltipLight}
+                  formatter={(v: number) => [`${v}%`, "Share"]}
+                />
+                <Legend
+                  layout="vertical"
+                  align="right"
+                  verticalAlign="middle"
+                  iconType="circle"
+                  iconSize={10}
+                  wrapperStyle={{ paddingLeft: 8 }}
+                  formatter={(value) => (
+                    <span className="text-[11px] font-medium text-slate-600">{value}</span>
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
           )}
         </div>
 
         {/* Heatmap (static — represents risk model, not scan data) */}
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Risk Overview</h3>
-          <div className="flex flex-col items-center gap-3 mt-2">
-            <div className="grid grid-cols-3 gap-2">
-              {HEATMAP.map((row, ri) =>
-                row.map((level, ci) => (
-                  <div key={`${ri}-${ci}`} className="w-16 h-16 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-md"
-                    style={{ backgroundColor: HEAT_COLOR[level], opacity: 0.85 + level * 0.1 }} title={HEAT_LABEL[level]}>
-                    {level === 2 ? "H" : level === 1 ? "M" : "✓"}
-                  </div>
-                ))
-              )}
+        <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white via-slate-50/50 to-slate-100/40 p-5 shadow-sm ring-1 ring-slate-100">
+          <h3 className="mb-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Risk Overview</h3>
+          <div className="mt-1 flex flex-col items-center gap-5">
+            <div
+              className="relative rounded-2xl bg-slate-100/60 p-4 ring-1 ring-inset ring-slate-200/80"
+              style={{
+                backgroundImage:
+                  "radial-gradient(ellipse 120% 80% at 50% 0%, rgb(255 255 255 / 0.9), transparent 55%)",
+              }}
+            >
+              <div className="grid grid-cols-3 gap-3">
+                {HEATMAP.map((row, ri) =>
+                  row.map((level, ci) => {
+                    const idx = ri * 3 + ci;
+                    return (
+                      <motion.div
+                        key={`${ri}-${ci}`}
+                        initial={{ opacity: 0, scale: 0.88, y: 6 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        transition={{ delay: idx * 0.04, type: "spring", stiffness: 380, damping: 22 }}
+                        whileHover={{ scale: 1.06, y: -2 }}
+                        className={`flex h-[4.25rem] w-[4.25rem] items-center justify-center rounded-2xl text-white sm:h-[4.5rem] sm:w-[4.5rem] ${HEAT_STYLES[level].className}`}
+                        title={HEAT_STYLES[level].label}
+                      >
+                        {level === 2 ? (
+                          <span className="text-sm font-black tracking-tight drop-shadow-md">H</span>
+                        ) : level === 1 ? (
+                          <span className="text-sm font-black tracking-tight drop-shadow-md">M</span>
+                        ) : (
+                          <Check className="h-7 w-7 stroke-[3] drop-shadow-md" aria-hidden />
+                        )}
+                      </motion.div>
+                    );
+                  }),
+                )}
+              </div>
             </div>
-            <div className="flex gap-4 mt-2 flex-wrap justify-center">
-              {HEAT_LABEL.map((label, i) => (
-                <div key={label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <div className="w-3 h-3 rounded" style={{ backgroundColor: HEAT_COLOR[i] }} /> {label}
+            <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
+              {HEAT_STYLES.map((h) => (
+                <div key={h.label} className="flex items-center gap-2 text-[11px] font-medium text-slate-600">
+                  <span className={`h-3 w-3 shrink-0 rounded-md ${h.swatch}`} aria-hidden />
+                  {h.label}
                 </div>
               ))}
             </div>
@@ -221,16 +426,16 @@ export default function PQCPosture() {
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr style={{ backgroundColor: GOLD }}>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase" style={{ color: "#111" }}>Assets Name</th>
-                  <th className="px-4 py-3 text-center text-xs font-bold uppercase" style={{ color: "#111" }}>PQC Support</th>
+                <tr style={{ backgroundColor: BRAND }}>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase text-white">Assets Name</th>
+                  <th className="px-4 py-3 text-center text-xs font-bold uppercase text-white">PQC Support</th>
                 </tr>
               </thead>
               <tbody>
                 {assetPqcData.map((asset: any, i: number) => (
                   <tr key={i} onClick={() => setSelectedAsset(asset)}
                     className="border-b border-border/40 cursor-pointer hover:bg-secondary/40 transition-colors"
-                    style={{ backgroundColor: selectedAsset?.asset_name === asset.asset_name ? `${GOLD}15` : i % 2 === 0 ? "rgba(162,14,55,0.04)" : "transparent" }}>
+                    style={{ backgroundColor: selectedAsset?.asset_name === asset.asset_name ? `${BRAND}22` : i % 2 === 0 ? "rgba(37,99,235,0.06)" : "transparent" }}>
                     <td className="px-4 py-3 font-mono text-xs text-foreground">{asset.asset_name}</td>
                     <td className="px-4 py-3 text-center">
                       {asset.pqc_supported
@@ -283,7 +488,7 @@ export default function PQCPosture() {
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center gap-3 min-h-[200px]">
               <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
-                <CheckCircle size={22} color={GOLD} />
+                <CheckCircle size={22} color={BRAND} />
               </div>
               <p className="text-sm text-muted-foreground">Click an asset row to view its details</p>
             </div>
@@ -295,7 +500,7 @@ export default function PQCPosture() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4 flex items-center gap-2">
-            <AlertTriangle size={15} color={GOLD} /> Improvement Recommendations
+            <AlertTriangle size={15} color={BRAND} /> Improvement Recommendations
           </h3>
           {recommendations.length === 0 ? (
             <p className="text-sm text-muted-foreground">No recommendations yet — scan a domain first.</p>
@@ -303,7 +508,7 @@ export default function PQCPosture() {
             <div className="space-y-2">
               {recommendations.map((rec: string, i: number) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg" style={{ backgroundColor: "rgba(251,188,9,0.06)", border: "1px solid rgba(251,188,9,0.15)" }}>
-                  <span style={{ color: GOLD }} className="text-base mt-0.5 flex-shrink-0">{i === 0 ? "⚠" : "→"}</span>
+                  <span style={{ color: BRAND }} className="text-base mt-0.5 flex-shrink-0">{i === 0 ? "⚠" : "→"}</span>
                   <span className="text-sm text-foreground">{rec}</span>
                 </div>
               ))}
@@ -311,7 +516,7 @@ export default function PQCPosture() {
           )}
         </div>
 
-        <div className="rounded-xl p-5 flex flex-col justify-between" style={{ backgroundColor: NAVY, border: `1px solid ${GOLD}20` }}>
+        <div className="rounded-xl p-5 flex flex-col justify-between" style={{ backgroundColor: NAVY, border: `1px solid ${BRAND}33` }}>
           <div>
             <h3 className="text-sm font-semibold text-white uppercase tracking-wide mb-3">NIST PQC Standards Reference</h3>
             <div className="space-y-2">
@@ -321,7 +526,7 @@ export default function PQCPosture() {
                 { id: "FIPS 205", name: "SLH-DSA / SPHINCS+", desc: "Stateless Hash-Based Signature" },
               ].map((std) => (
                 <div key={std.id} className="flex items-start gap-3 p-2.5 rounded-lg" style={{ backgroundColor: "rgba(255,255,255,0.05)" }}>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded flex-shrink-0 mt-0.5" style={{ backgroundColor: GOLD, color: "#111" }}>{std.id}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded flex-shrink-0 mt-0.5" style={{ backgroundColor: BRAND, color: "#f8fafc" }}>{std.id}</span>
                   <div>
                     <p className="text-xs font-semibold text-white">{std.name}</p>
                     <p className="text-[10px] text-blue-300">{std.desc}</p>
@@ -330,7 +535,7 @@ export default function PQCPosture() {
               ))}
             </div>
           </div>
-          <a href="https://csrc.nist.gov/projects/post-quantum-cryptography" target="_blank" rel="noopener noreferrer" className="mt-4 text-xs font-medium hover:underline" style={{ color: GOLD }}>
+          <a href="https://csrc.nist.gov/projects/post-quantum-cryptography" target="_blank" rel="noopener noreferrer" className="mt-4 text-xs font-medium hover:underline" style={{ color: BRAND }}>
             View NIST Standards →
           </a>
         </div>

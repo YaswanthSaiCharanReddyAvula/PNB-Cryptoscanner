@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Server,
@@ -9,11 +10,15 @@ import {
   ShieldAlert,
   Search,
   Loader2,
+  Layers,
+  ScrollText,
+  ListTodo,
 } from "lucide-react";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -21,15 +26,17 @@ import {
   assetService,
   dnsService,
   cryptoService,
+  scanService,
 } from "@/services/api";
 import { ThreatModelPanel } from "@/components/dashboard/ThreatModelPanel";
 import { toast } from "sonner";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { LiveScanConsole } from "@/components/dashboard/LiveScanConsole";
-import { PQCBadge, determinePQCStatus, PQCStatus } from "@/components/ui/PQCBadge";
+import { PQCBadge, determinePQCStatus, hndlRiskFromCrypto, PQCStatus } from "@/components/ui/PQCBadge";
 import { HNDLAlert } from "@/components/ui/HNDLAlert";
 import { useScan } from "@/hooks/useScan";
 import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
+import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import {
   PieChart,
   Pie,
@@ -44,23 +51,55 @@ import {
   CartesianGrid,
 } from "recharts";
 
-const CHART_COLORS = [
-  "hsl(45, 96%, 51%)",
-  "hsl(342, 88%, 35%)",
-  "hsl(152, 60%, 45%)",
-  "hsl(210, 80%, 55%)",
-  "hsl(280, 60%, 55%)",
+/** Gradient pairs for donuts / bars — enterprise blue + semantic accents */
+const DIST_GRADIENT_STOPS: { from: string; to: string }[] = [
+  { from: "#38bdf8", to: "#2563eb" },
+  { from: "#c084fc", to: "#7c3aed" },
+  { from: "#4ade80", to: "#16a34a" },
+  { from: "#fbbf24", to: "#d97706" },
+  { from: "#94a3b8", to: "#475569" },
 ];
 
-const TOOLTIP_STYLE = {
+const CHART_TOOLTIP = {
   contentStyle: {
-    background: "hsl(220, 18%, 13%)",
-    border: "1px solid hsl(220, 14%, 20%)",
-    borderRadius: "8px",
+    background: "rgba(255,255,255,0.96)",
+    border: "1px solid rgb(226 232 240)",
+    borderRadius: "12px",
     fontSize: "12px",
-    color: "hsl(210, 20%, 92%)",
+    color: "rgb(15 23 42)",
+    boxShadow: "0 10px 40px -12px rgb(15 23 42 / 0.2)",
   },
+  cursor: { fill: "rgb(59 130 246 / 0.06)" },
+  labelStyle: { color: "rgb(71 85 105)", fontWeight: 600 },
 };
+
+const CHART_AXIS_TICK = { fill: "rgb(100 116 139)", fontSize: 11, fontWeight: 500 };
+const CHART_GRID = { stroke: "rgb(226 232 240)", strokeDasharray: "4 6" };
+
+/** Aligned with backend `Settings.MAX_BATCH_DOMAINS` */
+const MAX_BATCH_DOMAINS = 25;
+
+function ChartCard({
+  title,
+  children,
+  scanning,
+}: {
+  title: string;
+  children: ReactNode;
+  scanning?: boolean;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white via-slate-50/40 to-white p-5 shadow-sm">
+      {scanning && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/75 backdrop-blur-sm">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
+      <h3 className="mb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">{title}</h3>
+      {children}
+    </div>
+  );
+}
 
 
 
@@ -93,18 +132,13 @@ const certBadge = (status: string) => {
   );
 };
 
+/** Mirrors Backend `classify_asset_ports` → display labels for WS / v1 fallback rows */
 function inferAssetTypeFromPorts(ports: number[]) {
   const p = new Set(ports || []);
   if (p.has(443) || p.has(8443) || p.has(80) || p.has(8080)) return "Web App";
-  if (p.has(22) || p.has(3389)) return "Server";
-  return "Other";
+  if (p.has(22) || p.has(3389) || p.has(21) || p.has(3306) || p.has(5432)) return "Server";
+  return "API";
 }
-
-const isHNDLVulnerable = (keyLength?: string, cipherSuite?: string) => {
-  const kl = (keyLength || "").toUpperCase();
-  const cs = (cipherSuite || "").toUpperCase();
-  return kl.includes("RSA") || cs.includes("ECDH") || cs.includes("ECDSA");
-};
 
 export default function Dashboard() {
   const [domain, setDomain] = useState("");
@@ -126,12 +160,32 @@ export default function Dashboard() {
   const [activityFeed, setActivityFeed] = useState<any[]>([]);
   const [geoPins, setGeoPins] = useState<any[]>([]);
 
-  const { isScanning, stageIndex, results, error, startScan } = useScan();
+  const { isScanning, stageIndex, results, error, startScan, scanId } = useScan();
 
   const [initialLoadDone, setInitialLoadDone] = useState(false);
-  const [activeScanId, setActiveScanId] = useState<string | null>(null);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const { messages, clearMessages } = useWebSocket(activeScanId);
+  const { messages, clearMessages, status: wsStatus } = useWebSocket(scanId);
+
+  const [batchRaw, setBatchRaw] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+
+  const [policyAlignment, setPolicyAlignment] = useState<{
+    has_scan?: boolean;
+    scan_domain?: string;
+    policy?: { min_tls_version?: string; require_forward_secrecy?: boolean };
+    alignment?: {
+      tls_endpoints?: number;
+      below_min_tls?: number;
+      unknown_tls_version?: number;
+      forward_secrecy_heuristic_flags?: number;
+    };
+    note?: string;
+  } | null>(null);
+
+  const [migrationSnapshot, setMigrationSnapshot] = useState<{
+    open_tasks?: number;
+    pending_waivers?: number;
+  } | null>(null);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -176,15 +230,19 @@ export default function Dashboard() {
 
   const refreshDashboardData = async (v1FallbackPayload: any = null) => {
     try {
-      const [sumRes, assetRes, dnsRes, cryptoRes, distRes] = await Promise.all([
+      const [sumRes, assetRes, dnsRes, cryptoRes, distRes, polRes, migRes] = await Promise.all([
         dashboardService.getSummary().catch(() => ({ data: null })),
         assetService.getAll({ page_size: 100 }).catch(() => ({ data: { items: [] } })),
         dnsService.getNameServerRecords().catch(() => ({ data: [] })),
         cryptoService.getCryptoSecurityData().catch(() => ({ data: [] })),
-        assetService.getDistribution().catch(() => ({ data: [] }))
+        assetService.getDistribution().catch(() => ({ data: [] })),
+        dashboardService.getPolicyAlignment().catch(() => ({ data: null })),
+        dashboardService.getMigrationSnapshot().catch(() => ({ data: null })),
       ]);
 
       if (sumRes.data) setSummary(sumRes.data);
+      setPolicyAlignment(polRes.data ?? null);
+      setMigrationSnapshot(migRes.data ?? null);
       if (dnsRes.data) setNameServerData(dnsRes.data);
       if (distRes.data) setDistributionData(distRes.data);
       
@@ -201,13 +259,13 @@ export default function Dashboard() {
         keyLength: a.key_length && a.key_length !== "None" ? `${a.key_length}`.includes("-bit") ? a.key_length : `${a.key_length}-bit` : "",
         lastScan: a.last_scan ? new Date(a.last_scan).toLocaleDateString() : "",
         pqcStatus: determinePQCStatus(a.tls_version, a.cipher_suite, a.key_length?.toString()),
-        hndlRisk: isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite),
+        hndlRisk: hndlRiskFromCrypto(a.tls_version, a.cipher_suite, a.key_length?.toString()),
       }));
       setAssetInventoryData(formattedInventory);
 
       let hCount = 0;
       assets.forEach((a: any) => {
-        if (isHNDLVulnerable(a.key_length?.toString(), a.cipher_suite)) {
+        if (hndlRiskFromCrypto(a.tls_version, a.cipher_suite, a.key_length?.toString())) {
           hCount++;
         }
       });
@@ -218,8 +276,18 @@ export default function Dashboard() {
       const ipv4Count = assets.filter((a: any) => a.ipv4 && !a.ipv6).length;
       const ipv6Count = assets.filter((a: any) => a.ipv6).length;
       const ipData = [];
-      if (ipv4Count > 0) ipData.push({ name: "IPv4", value: Math.round((ipv4Count / assets.length) * 100), color: "hsl(210, 80%, 55%)" });
-      if (ipv6Count > 0) ipData.push({ name: "IPv6", value: Math.round((ipv6Count / assets.length) * 100), color: "hsl(280, 60%, 55%)" });
+      if (ipv4Count > 0)
+        ipData.push({
+          name: "IPv4",
+          value: Math.round((ipv4Count / assets.length) * 100),
+          grad: "ipv4",
+        });
+      if (ipv6Count > 0)
+        ipData.push({
+          name: "IPv6",
+          value: Math.round((ipv6Count / assets.length) * 100),
+          grad: "ipv6",
+        });
       setIpVersionData(ipData);
 
       // Asset Risk Distribution
@@ -228,8 +296,13 @@ export default function Dashboard() {
         const r = a.risk || "Low";
         if (riskCounts[r] !== undefined) riskCounts[r]++;
       });
-      const riskColors: Record<string, string> = { Critical: "hsl(342, 88%, 35%)", High: "hsl(45, 96%, 51%)", Medium: "hsl(210, 80%, 55%)", Low: "hsl(152, 60%, 45%)" };
-      setAssetRiskData(Object.keys(riskCounts).map(k => ({ name: k, count: riskCounts[k], color: riskColors[k] })));
+      setAssetRiskData(
+        Object.keys(riskCounts).map((k) => ({
+          name: k,
+          count: riskCounts[k],
+          key: k,
+        }))
+      );
 
       // Cert Expiry (Mock derived from status for now)
       const expiryCounts: Record<string, number> = { "Expired": 0, "Soon": 0, "Valid": 0 };
@@ -239,9 +312,9 @@ export default function Dashboard() {
         else expiryCounts["Valid"]++;
       });
       setCertExpiryData([
-        { name: "30 Days", count: expiryCounts["Soon"], color: "hsl(45, 96%, 51%)" },
-        { name: "90 Days", count: expiryCounts["Valid"], color: "hsl(210, 80%, 55%)" },
-        { name: "Expired", count: expiryCounts["Expired"], color: "hsl(342, 88%, 35%)" },
+        { name: "30 Days", count: expiryCounts["Soon"], key: "soon" },
+        { name: "90 Days", count: expiryCounts["Valid"], key: "valid" },
+        { name: "Expired", count: expiryCounts["Expired"], key: "expired" },
       ]);
       
       if (cryptoRes.data) {
@@ -303,7 +376,11 @@ export default function Dashboard() {
           keyLength: "",
           lastScan: v1.completed_at ? new Date(v1.completed_at).toLocaleDateString() : "",
           pqcStatus: determinePQCStatus(tls.tls_version, tls.cipher_suite, tls.certificate?.public_key_size?.toString()),
-          hndlRisk: isHNDLVulnerable(tls.certificate?.public_key_size?.toString(), tls.cipher_suite),
+          hndlRisk: hndlRiskFromCrypto(
+            tls.tls_version,
+            tls.cipher_suite,
+            tls.certificate?.public_key_size?.toString(),
+          ),
         };
       })
     );
@@ -311,7 +388,14 @@ export default function Dashboard() {
     let hCount3 = 0;
     v1Assets.forEach((a: any) => {
       const tls = v1Tls.find((t: any) => t.host === a.subdomain) || {};
-      if (isHNDLVulnerable(tls.certificate?.public_key_size?.toString(), tls.cipher_suite)) hCount3++;
+      if (
+        hndlRiskFromCrypto(
+          tls.tls_version,
+          tls.cipher_suite,
+          tls.certificate?.public_key_size?.toString(),
+        )
+      )
+        hCount3++;
     });
     setHndlCount(hCount3);
     setTotalAssetsCount(v1Assets.length);
@@ -352,23 +436,68 @@ export default function Dashboard() {
       setScannedDomain(targetDomain);
       clearMessages();
       setIsConsoleOpen(true);
-      
-      // Need to simulate a scan ID if no web socket returns one immediately
-      setActiveScanId("pending..."); 
-      
+
       await startScan(targetDomain);
     }
   };
 
+  const parseBatchDomains = (raw: string) => {
+    const parts = raw
+      .split(/[\n,;\t]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of parts) {
+      if (!seen.has(p)) {
+        seen.add(p);
+        out.push(p);
+      }
+    }
+    return out;
+  };
+
+  const handleBatchScan = async () => {
+    const list = parseBatchDomains(batchRaw);
+    if (list.length === 0) {
+      toast.error("Add at least one domain (one per line or comma-separated).");
+      return;
+    }
+    if (list.length > MAX_BATCH_DOMAINS) {
+      toast.error(`Portfolio batch is limited to ${MAX_BATCH_DOMAINS} domains per request.`);
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      const res = await scanService.startBatchScan(list);
+      const data = res.data as {
+        batch_id?: string;
+        queued?: number;
+      };
+      const n = data.queued ?? list.length;
+      const bid = data.batch_id;
+      toast.success(
+        `Queued ${n} scan(s)${bid ? ` · batch ${bid.slice(0, 8)}…` : ""}. Track jobs under Inventory Runs.`,
+      );
+      setBatchRaw("");
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: { detail?: string } } };
+      toast.error(ax.response?.data?.detail || "Batch scan failed.");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Security overview and asset monitoring</p>
-      </motion.div>
+    <div className="space-y-8">
+      <DossierPageHeader
+        eyebrow="Executive intelligence summary"
+        title="Overview"
+        description="Enterprise-wide cryptographic resilience, live scan orchestration, and fleet posture at a glance."
+      />
 
       {/* Domain Input */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="dossier-card p-5">
         <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Scan Domain</h3>
         <div className="flex gap-3">
           <div className="relative flex-1">
@@ -394,7 +523,60 @@ export default function Dashboard() {
         )}
       </div>
 
-      <ScanProgressBar isScanning={isScanning} stageIndex={stageIndex} targetDomain={scannedDomain} />
+      <div className="dossier-card p-5">
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-foreground">
+              Portfolio batch scan
+            </h3>
+          </div>
+          <Link
+            to="/inventory-runs"
+            className="text-xs font-medium text-blue-600 hover:text-blue-700"
+          >
+            Inventory Runs →
+          </Link>
+        </div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Queue up to {MAX_BATCH_DOMAINS} root domains in one request. Jobs share a global concurrency
+          limit on the server (Phase 2).
+        </p>
+        <Textarea
+          placeholder={"example.com\nbank.example.org"}
+          value={batchRaw}
+          onChange={(e) => setBatchRaw(e.target.value)}
+          disabled={batchBusy}
+          rows={4}
+          className="resize-y bg-secondary/50 font-mono text-sm border-border"
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleBatchScan}
+            disabled={batchBusy}
+            className="border border-slate-200 bg-white hover:bg-slate-50"
+          >
+            {batchBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Queue batch
+          </Button>
+          <span className="text-[11px] text-muted-foreground">
+            Parsed: {parseBatchDomains(batchRaw).length} domain(s)
+          </span>
+        </div>
+      </div>
+
+      <ScanProgressBar
+        isScanning={isScanning}
+        stageIndex={stageIndex}
+        targetDomain={scannedDomain}
+        pipelineStageLabel={
+          isScanning && results && typeof (results as { current_stage?: string }).current_stage === "string"
+            ? (results as { current_stage: string }).current_stage
+            : null
+        }
+      />
       
       {hndlCount > 0 && (
         <HNDLAlert 
@@ -415,6 +597,66 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {policyAlignment?.has_scan &&
+        policyAlignment.alignment &&
+        (policyAlignment.alignment.tls_endpoints ?? 0) > 0 && (
+          <div
+            className={`flex flex-col gap-2 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+              (policyAlignment.alignment.below_min_tls ?? 0) > 0 ||
+              (policyAlignment.alignment.forward_secrecy_heuristic_flags ?? 0) > 0
+                ? "border-amber-300/90 bg-amber-50/95 text-amber-950"
+                : "border-emerald-200/90 bg-emerald-50/80 text-emerald-950"
+            }`}
+          >
+            <div className="flex gap-3">
+              <ScrollText className="mt-0.5 h-5 w-5 shrink-0 opacity-80" aria-hidden />
+              <div>
+                <p className="text-sm font-semibold">Policy vs latest scan</p>
+                <p className="mt-1 text-xs leading-relaxed opacity-90">
+                  Target: TLS ≥ {policyAlignment.policy?.min_tls_version ?? "—"}
+                  {policyAlignment.policy?.require_forward_secrecy ? " · forward secrecy on" : ""}
+                  {" · "}
+                  <span className="font-mono">{policyAlignment.scan_domain}</span> —{" "}
+                  {policyAlignment.alignment.tls_endpoints} TLS endpoint(s):{" "}
+                  <strong>{policyAlignment.alignment.below_min_tls ?? 0}</strong> below min version,{" "}
+                  <strong>{policyAlignment.alignment.unknown_tls_version ?? 0}</strong> unknown version,{" "}
+                  <strong>{policyAlignment.alignment.forward_secrecy_heuristic_flags ?? 0}</strong> FS heuristic
+                  flags. Indicative only.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/policy"
+              className="shrink-0 text-xs font-semibold underline underline-offset-2 sm:ml-4"
+            >
+              Edit policy →
+            </Link>
+          </div>
+        )}
+
+      {migrationSnapshot &&
+        ((migrationSnapshot.open_tasks ?? 0) > 0 || (migrationSnapshot.pending_waivers ?? 0) > 0) && (
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-3">
+              <ListTodo className="mt-0.5 h-5 w-5 shrink-0 text-slate-600" aria-hidden />
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Migration queue</p>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  <strong>{migrationSnapshot.open_tasks ?? 0}</strong> open / in-progress task(s)
+                  {" · "}
+                  <strong>{migrationSnapshot.pending_waivers ?? 0}</strong> waiver(s) awaiting review
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/migration"
+              className="shrink-0 text-xs font-semibold text-slate-800 underline underline-offset-2"
+            >
+              Open migration planner →
+            </Link>
+          </div>
+        )}
+
       {/* No scan yet banner */}
       {initialLoadDone &&
         !isScanning &&
@@ -432,108 +674,230 @@ export default function Dashboard() {
       )}
 
       {/* Charts Row — 4 cols */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-        {/* Chart 1 — Assets Distribution (existing donut) */}
-        <div className="rounded-xl border border-border bg-card p-5 relative">
-          {isScanning && (
-            <div className="absolute inset-0 bg-card/80 backdrop-blur-sm z-20 rounded-xl flex items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          )}
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Assets Distribution</h3>
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <ChartCard title="Assets Distribution" scanning={isScanning}>
           {distributionData.length === 0 ? (
-            <div className="flex items-center justify-center h-[220px]">
-              <p className="text-sm text-muted-foreground text-center">Scan a domain to see asset distribution</p>
+            <div className="flex h-[248px] items-center justify-center">
+              <p className="text-center text-sm text-muted-foreground">Scan a domain to see asset distribution</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={248}>
               <PieChart>
-                <Pie data={distributionData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                <defs>
+                  {distributionData.map((_, i) => {
+                    const { from, to } = DIST_GRADIENT_STOPS[i % DIST_GRADIENT_STOPS.length];
+                    return (
+                      <linearGradient key={i} id={`dist-grad-${i}`} x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor={from} />
+                        <stop offset="100%" stopColor={to} />
+                      </linearGradient>
+                    );
+                  })}
+                </defs>
+                <Pie
+                  data={distributionData}
+                  cx="50%"
+                  cy="46%"
+                  innerRadius="42%"
+                  outerRadius="72%"
+                  paddingAngle={2.5}
+                  cornerRadius={8}
+                  dataKey="value"
+                  stroke="#fff"
+                  strokeWidth={2}
+                >
                   {distributionData.map((_, i) => (
-                    <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    <Cell key={`cell-${i}`} fill={`url(#dist-grad-${i})`} />
                   ))}
                 </Pie>
-                <Tooltip {...TOOLTIP_STYLE} />
-                <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215, 15%, 55%)" }} />
+                <Tooltip {...CHART_TOOLTIP} formatter={(v: number) => [v, "Assets"]} />
+                <Legend
+                  verticalAlign="bottom"
+                  height={36}
+                  iconType="circle"
+                  iconSize={8}
+                  formatter={(value) => <span className="text-[11px] font-medium text-slate-600">{value}</span>}
+                  wrapperStyle={{ paddingTop: 8 }}
+                />
               </PieChart>
             </ResponsiveContainer>
           )}
-        </div>
+        </ChartCard>
 
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">IP Version Breakdown</h3>
+        <ChartCard title="IP Version Breakdown">
           {ipVersionData.length === 0 ? (
-            <div className="flex items-center justify-center h-[220px]">
-              <p className="text-sm text-muted-foreground text-center">Scan a domain to see IP breakdown</p>
+            <div className="flex h-[248px] items-center justify-center">
+              <p className="text-center text-sm text-muted-foreground">Scan a domain to see IP breakdown</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={248}>
               <PieChart>
+                <defs>
+                  <linearGradient id="ip-grad-v4" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#60a5fa" />
+                    <stop offset="100%" stopColor="#1d4ed8" />
+                  </linearGradient>
+                  <linearGradient id="ip-grad-v6" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#c084fc" />
+                    <stop offset="100%" stopColor="#6d28d9" />
+                  </linearGradient>
+                </defs>
                 <Pie
                   data={ipVersionData}
-                  cx="50%" cy="50%"
-                  innerRadius={55} outerRadius={80}
+                  cx="50%"
+                  cy="46%"
+                  innerRadius="44%"
+                  outerRadius="72%"
+                  paddingAngle={ipVersionData.length > 1 ? 3 : 0}
+                  cornerRadius={8}
                   dataKey="value"
+                  stroke="#fff"
                   strokeWidth={2}
-                  stroke="hsl(220,22%,10%)"
                   label={({ cx, cy, value, name }) => (
                     <>
-                      <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={22} fontWeight={700}>{value}%</text>
-                      <text x={cx} y={cy + 14} textAnchor="middle" fill="hsl(215,15%,55%)" fontSize={10}>{name}</text>
+                      <text
+                        x={cx}
+                        y={cy! - 5}
+                        textAnchor="middle"
+                        fill="rgb(15 23 42)"
+                        fontSize={20}
+                        fontWeight={700}
+                      >
+                        {value}%
+                      </text>
+                      <text
+                        x={cx}
+                        y={cy! + 14}
+                        textAnchor="middle"
+                        fill="rgb(100 116 139)"
+                        fontSize={11}
+                        fontWeight={500}
+                      >
+                        {name}
+                      </text>
                     </>
                   )}
                   labelLine={false}
                 >
-                  {ipVersionData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  {ipVersionData.map((entry, i) => (
+                    <Cell key={i} fill={`url(#ip-grad-${entry.grad === "ipv6" ? "v6" : "v4"})`} />
+                  ))}
                 </Pie>
-                <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`]} />
-                <Legend wrapperStyle={{ fontSize: "10px", color: "hsl(215,15%,55%)" }} />
+                <Tooltip {...CHART_TOOLTIP} formatter={(v: number) => [`${v}%`, "Share"]} />
+                <Legend
+                  verticalAlign="bottom"
+                  height={36}
+                  iconType="circle"
+                  iconSize={8}
+                  formatter={(value) => <span className="text-[11px] font-medium text-slate-600">{value}</span>}
+                  wrapperStyle={{ paddingTop: 8 }}
+                />
               </PieChart>
             </ResponsiveContainer>
           )}
-        </div>
+        </ChartCard>
 
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Cert Expiry Timeline</h3>
-          {certExpiryData.every(d => d.count === 0) ? (
-            <div className="flex items-center justify-center h-[220px]">
-              <p className="text-sm text-muted-foreground text-center">Scan a domain to see expiry timeline</p>
+        <ChartCard title="Cert Expiry Timeline">
+          {certExpiryData.every((d) => d.count === 0) ? (
+            <div className="flex h-[248px] items-center justify-center">
+              <p className="text-center text-sm text-muted-foreground">Scan a domain to see expiry timeline</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={certExpiryData} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" horizontal={false} />
-                <XAxis type="number" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-                <YAxis type="category" dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} width={72} />
-                <Tooltip {...TOOLTIP_STYLE} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                  {certExpiryData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+            <ResponsiveContainer width="100%" height={248}>
+              <BarChart
+                data={certExpiryData}
+                layout="vertical"
+                margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+                barCategoryGap={18}
+              >
+                <defs>
+                  <linearGradient id="cert-grad-soon" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#fcd34d" />
+                    <stop offset="100%" stopColor="#ea580c" />
+                  </linearGradient>
+                  <linearGradient id="cert-grad-valid" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#7dd3fc" />
+                    <stop offset="100%" stopColor="#2563eb" />
+                  </linearGradient>
+                  <linearGradient id="cert-grad-expired" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#fb7185" />
+                    <stop offset="100%" stopColor="#be123c" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid {...CHART_GRID} horizontal={false} vertical />
+                <XAxis
+                  type="number"
+                  tick={CHART_AXIS_TICK}
+                  tickLine={false}
+                  axisLine={{ stroke: "rgb(203 213 225)" }}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  tick={CHART_AXIS_TICK}
+                  width={76}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip {...CHART_TOOLTIP} formatter={(v: number) => [v, "Certificates"]} />
+                <Bar dataKey="count" radius={[0, 10, 10, 0]} barSize={20} animationDuration={600}>
+                  {certExpiryData.map((entry) => (
+                    <Cell key={entry.key} fill={`url(#cert-grad-${entry.key})`} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
-        </div>
+        </ChartCard>
 
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Asset Risk Distribution</h3>
-          {assetRiskData.every(d => d.count === 0) ? (
-            <div className="flex items-center justify-center h-[220px]">
-              <p className="text-sm text-muted-foreground text-center">Scan a domain to see risk levels</p>
+        <ChartCard title="Asset Risk Distribution">
+          {assetRiskData.every((d) => d.count === 0) ? (
+            <div className="flex h-[248px] items-center justify-center">
+              <p className="text-center text-sm text-muted-foreground">Scan a domain to see risk levels</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={assetRiskData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220,14%,20%)" />
-                <XAxis dataKey="name" tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-                <YAxis tick={{ fill: "hsl(215,15%,55%)", fontSize: 10 }} />
-                <Tooltip {...TOOLTIP_STYLE} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                  {assetRiskData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+            <ResponsiveContainer width="100%" height={248}>
+              <BarChart
+                data={assetRiskData}
+                margin={{ top: 12, right: 8, left: -8, bottom: 4 }}
+                barCategoryGap="22%"
+              >
+                <defs>
+                  <linearGradient id="risk-grad-Critical" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#fecaca" />
+                    <stop offset="100%" stopColor="#dc2626" />
+                  </linearGradient>
+                  <linearGradient id="risk-grad-High" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#fed7aa" />
+                    <stop offset="100%" stopColor="#ea580c" />
+                  </linearGradient>
+                  <linearGradient id="risk-grad-Medium" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#fde68a" />
+                    <stop offset="100%" stopColor="#ca8a04" />
+                  </linearGradient>
+                  <linearGradient id="risk-grad-Low" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#bbf7d0" />
+                    <stop offset="100%" stopColor="#16a34a" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid {...CHART_GRID} vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  tick={CHART_AXIS_TICK}
+                  tickLine={false}
+                  axisLine={{ stroke: "rgb(203 213 225)" }}
+                />
+                <YAxis tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} width={36} allowDecimals={false} />
+                <Tooltip {...CHART_TOOLTIP} formatter={(v: number) => [v, "Assets"]} />
+                <Bar dataKey="count" radius={[10, 10, 0, 0]} maxBarSize={48} animationDuration={600}>
+                  {assetRiskData.map((entry) => (
+                    <Cell key={entry.key} fill={`url(#risk-grad-${entry.key})`} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
-        </div>
+        </ChartCard>
       </div>
 
       {/* Asset Inventory Table */}
@@ -550,14 +914,14 @@ export default function Dashboard() {
             <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">Assets Inventory</h3>
             <div className="flex items-center gap-2">
               <button
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
-                style={{ borderColor: "#FBBC09", color: "#FBBC09" }}
+                type="button"
+                className="flex items-center gap-1.5 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
               >
                 + Add Asset ▾
               </button>
               <button
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors"
-                style={{ backgroundColor: "#FBBC09", color: "#111" }}
+                type="button"
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 onClick={handleScan}
                 disabled={isScanning}
               >
@@ -575,7 +939,7 @@ export default function Dashboard() {
               { key: "type", header: "Type" },
               { key: "owner", header: "Owner" },
               { key: "risk", header: "Risk", render: (r) => riskBadge(r.risk as string) },
-              { key: "hndlRisk", header: "HNDL Risk", render: (r) => r.hndlRisk ? <Badge className="bg-[#A20E37]/15 text-[#A20E37] border-[#A20E37]/20 uppercase text-[10px]">Yes</Badge> : <Badge className="bg-success/15 text-success border-success/20 uppercase text-[10px]">No</Badge> },
+              { key: "hndlRisk", header: "HNDL Risk", render: (r) => r.hndlRisk ? <Badge className="border-destructive/20 bg-destructive/15 text-[10px] uppercase text-destructive">Yes</Badge> : <Badge className="border-success/20 bg-success/15 text-[10px] uppercase text-success">No</Badge> },
               { key: "certStatus", header: "Cert Status", render: (r) => certBadge(r.certStatus as string) },
               { key: "pqcStatus", header: "PQC Status", render: (r) => <PQCBadge status={r.pqcStatus as PQCStatus} /> },
             ]}
@@ -669,12 +1033,10 @@ export default function Dashboard() {
                   style={{ left: pin.x, top: pin.y, transform: "translate(-50%,-100%)" }}
                 >
                   <div
-                    className="w-3 h-3 rounded-full border-2 border-white shadow-lg"
-                    style={{ backgroundColor: "#FBBC09" }}
+                    className="h-3 w-3 rounded-full border-2 border-white bg-primary shadow-lg"
                   />
                   <div
-                    className="mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap"
-                    style={{ backgroundColor: "#FBBC09", color: "#111" }}
+                    className="mt-1 whitespace-nowrap rounded bg-primary px-1.5 py-0.5 text-[9px] font-bold text-primary-foreground"
                   >
                     {pin.city}
                   </div>
@@ -689,7 +1051,8 @@ export default function Dashboard() {
         isOpen={isConsoleOpen}
         onClose={() => setIsConsoleOpen(false)}
         messages={messages}
-        scanId={activeScanId}
+        scanId={scanId}
+        wsStatus={wsStatus}
       />
     </div>
   );

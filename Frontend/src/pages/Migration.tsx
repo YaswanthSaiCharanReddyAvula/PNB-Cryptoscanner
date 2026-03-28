@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import {
   ClipboardList,
   Loader2,
@@ -16,8 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { migrationService } from "@/services/api";
+import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 
-const GOLD = "#FBBC09";
 
 type TaskRow = {
   task_id: string;
@@ -39,6 +38,7 @@ type WaiverRow = {
   expiry?: string;
   impacted_assets?: string[];
   status?: string;
+  created_by?: string;
 };
 
 export default function Migration() {
@@ -50,6 +50,12 @@ export default function Migration() {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [waivers, setWaivers] = useState<WaiverRow[]>([]);
   const [seeding, setSeeding] = useState(false);
+  const [seedDomain, setSeedDomain] = useState("");
+  const [seedLimit, setSeedLimit] = useState(15);
+
+  const [filterDomainInput, setFilterDomainInput] = useState("");
+  const [filterStatusInput, setFilterStatusInput] = useState("");
+  const [taskQuery, setTaskQuery] = useState<{ domain?: string; status_filter?: string }>({});
 
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -64,7 +70,10 @@ export default function Migration() {
     setLoading(true);
     try {
       const [t, w] = await Promise.all([
-        migrationService.listTasks(),
+        migrationService.listTasks({
+          domain: taskQuery.domain,
+          status_filter: taskQuery.status_filter,
+        }),
         migrationService.listWaivers(),
       ]);
       setTasks(Array.isArray(t.data?.tasks) ? t.data.tasks : []);
@@ -74,7 +83,7 @@ export default function Migration() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [taskQuery]);
 
   useEffect(() => {
     load();
@@ -130,7 +139,11 @@ export default function Migration() {
     if (!isAdmin) return;
     setSeeding(true);
     try {
-      const res = await migrationService.seedFromBacklog({ limit: 15 });
+      const lim = Math.min(80, Math.max(1, Number(seedLimit) || 15));
+      const res = await migrationService.seedFromBacklog({
+        domain: seedDomain.trim() || undefined,
+        limit: lim,
+      });
       toast.success(`Seeded ${res.data?.seeded ?? 0} task(s) from backlog`);
       await load();
     } catch {
@@ -138,6 +151,13 @@ export default function Migration() {
     } finally {
       setSeeding(false);
     }
+  };
+
+  const applyTaskFilters = () => {
+    setTaskQuery({
+      domain: filterDomainInput.trim() || undefined,
+      status_filter: filterStatusInput.trim() || undefined,
+    });
   };
 
   const addWaiver = async () => {
@@ -188,23 +208,12 @@ export default function Migration() {
   };
 
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-border"
-            style={{ backgroundColor: `${GOLD}18` }}
-          >
-            <ClipboardList className="h-5 w-5" style={{ color: GOLD }} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Migration</h1>
-            <p className="text-sm text-muted-foreground">
-              Phase 5 — remediation tasks and crypto waivers (exceptions).
-            </p>
-          </div>
-        </div>
-      </motion.div>
+    <div className="space-y-8">
+      <DossierPageHeader
+        eyebrow="Modernization"
+        title="Migration Planner"
+        description="Orchestrate PQC transition phases, waivers, and backlog tasks tied to scan evidence."
+      />
 
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-12">
@@ -221,22 +230,85 @@ export default function Migration() {
           </TabsList>
 
           <TabsContent value="tasks" className="mt-6 space-y-6">
-            <div className="flex flex-wrap items-center gap-2">
-              {isAdmin && (
+            <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 max-w-3xl">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase text-muted-foreground">Filter domain</Label>
+                  <Input
+                    value={filterDomainInput}
+                    onChange={(e) => setFilterDomainInput(e.target.value)}
+                    placeholder="e.g. bank.in"
+                    className="h-9 w-44 bg-secondary text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase text-muted-foreground">Status</Label>
+                  <select
+                    value={filterStatusInput}
+                    onChange={(e) => setFilterStatusInput(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-secondary px-2 text-sm"
+                  >
+                    <option value="">All</option>
+                    <option value="open">open</option>
+                    <option value="in_progress">in_progress</option>
+                    <option value="done">done</option>
+                    <option value="cancelled">cancelled</option>
+                  </select>
+                </div>
+                <Button type="button" variant="secondary" size="sm" className="h-9" onClick={applyTaskFilters}>
+                  Apply filters
+                </Button>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  onClick={runSeed}
-                  disabled={seeding}
-                  className="gap-2 border-[#FBBC09]/40"
+                  className="h-9 text-muted-foreground"
+                  onClick={() => {
+                    setFilterDomainInput("");
+                    setFilterStatusInput("");
+                    setTaskQuery({});
+                  }}
                 >
-                  {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sprout className="h-4 w-4" />}
-                  Seed from scan backlog
+                  Clear
                 </Button>
+              </div>
+              {isAdmin && (
+                <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Seed scan domain</Label>
+                    <Input
+                      value={seedDomain}
+                      onChange={(e) => setSeedDomain(e.target.value)}
+                      placeholder="Leave empty for latest scan"
+                      className="h-9 w-52 bg-secondary text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Max tasks</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={80}
+                      value={seedLimit}
+                      onChange={(e) => setSeedLimit(Number(e.target.value) || 15)}
+                      className="h-9 w-24 bg-secondary text-sm"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={runSeed}
+                    disabled={seeding}
+                    className="h-9 gap-2 border-primary/40"
+                  >
+                    {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sprout className="h-4 w-4" />}
+                    Seed from backlog
+                  </Button>
+                </div>
               )}
               {!isAdmin && (
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <p className="text-xs text-muted-foreground flex items-center gap-1 border-t border-border pt-3">
                   <Lock className="h-3 w-3" /> Backlog seeding is admin-only.
                 </p>
               )}
@@ -267,7 +339,7 @@ export default function Migration() {
                   />
                 </div>
               </div>
-              <Button type="button" onClick={addTask} style={{ backgroundColor: GOLD, color: "#111" }} className="font-semibold gap-2">
+              <Button type="button" onClick={addTask} className="gap-2 bg-primary font-semibold text-primary-foreground hover:bg-primary/90">
                 <Plus className="h-4 w-4" />
                 Add task
               </Button>
@@ -356,7 +428,7 @@ export default function Migration() {
                   placeholder="host1.bank.in&#10;legacy-app.bank.in"
                 />
               </div>
-              <Button type="button" onClick={addWaiver} style={{ backgroundColor: GOLD, color: "#111" }} className="font-semibold gap-2">
+              <Button type="button" onClick={addWaiver} className="gap-2 bg-primary font-semibold text-primary-foreground hover:bg-primary/90">
                 <Plus className="h-4 w-4" />
                 Submit waiver
               </Button>
@@ -376,6 +448,9 @@ export default function Migration() {
                         <span className="text-sm font-semibold">{w.requestor}</span>
                         <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-secondary text-muted-foreground">{w.status}</span>
                       </div>
+                      {w.created_by && (
+                        <p className="text-[10px] text-muted-foreground">Submitted as {w.created_by}</p>
+                      )}
                       <p className="text-sm text-muted-foreground leading-relaxed">{w.reason}</p>
                       {w.impacted_assets && w.impacted_assets.length > 0 && (
                         <p className="text-xs font-mono text-muted-foreground">

@@ -77,7 +77,7 @@ QuantumShield addresses this by **automating discovery + inspection**, **normali
 | **Real-time UX** | WebSocket updates during scan. |
 | **Data** | MongoDB for scan documents and supporting collections (metadata, policy, integrations, tasks, waivers, export audit). |
 | **Dashboards** | Dashboard summary, asset inventory, asset discovery (graph/tab views), CBOM, PQC posture, cyber rating, migration, admin. |
-| **Portfolio** | Scan history, scan diff, inventory summary, asset metadata CRUD. |
+| **Portfolio** | Scan history, scan diff, inventory summary, asset metadata CRUD, registered inventory import, optional SBOM ingest, scan-time merge of registered/seed hosts. |
 | **Exports & reporting** | Export bundle JSON; reporting domains/generate; migration roadmap; threat-model summary + NIST catalog; quantum score **simulation** (what-if). |
 | **Governance** | Org crypto policy, integration settings (webhooks, masked URLs), migration tasks CRUD + seed-from-backlog, waivers workflow, export history. |
 | **Ops** | Health check, rate limiting, CORS configuration, optional DB wipe/reset in dev. |
@@ -147,6 +147,7 @@ QuantumShield addresses this by **automating discovery + inspection**, **normali
 
 - **FR-INV-1:** System SHALL list **recent scans** per domain and **diff** two scans.
 - **FR-INV-2:** System SHALL provide **deduplicated host inventory** across recent completed scans with optional metadata overlay.
+- **FR-INV-3:** System SHALL support **bulk registration** of external asset rows (CMDB/cloud/K8s/Git-style `source` labels), optional **SBOM JSON** storage per host, and **scan-time merge** of registered or explicitly seeded hostnames into discovery.
 
 ### 7.7 Administration and integrations
 
@@ -162,7 +163,7 @@ QuantumShield addresses this by **automating discovery + inspection**, **normali
 
 ### 7.9 Frontend application
 
-- **FR-FE-1:** Application SHALL provide routes: Dashboard, Asset Inventory, Asset Discovery, CBOM, PQC Posture, Cyber Rating, Reporting (if enabled), Admin, Migration.
+- **FR-FE-1:** Application SHALL provide routes: Dashboard, Asset Inventory, Asset Discovery, CBOM, PQC Posture, Cyber Rating, Executive brief (Phase 6), Reporting (if enabled), Admin, Migration.
 - **FR-FE-2:** Application SHALL show **API connectivity** state to the backend.
 - **FR-FE-3:** Unauthenticated users SHALL be redirected to login.
 
@@ -199,10 +200,10 @@ QuantumShield addresses this by **automating discovery + inspection**, **normali
 All routes are under the configured API prefix (e.g. `/api/v1`). Representative groups:
 
 - **Scanner:** `POST /scan`, `POST /scan/batch`, `GET /results/{domain}`
-- **Dashboard:** `GET /dashboard/summary`, assets/stats/distribution, `GET /discovery/*`
+- **Dashboard:** `GET /dashboard/summary`, `GET /dashboard/executive-brief` (Phase 6), `GET /dashboard/ops-snapshot` (Phase 7, admin), assets/stats/distribution, `GET /discovery/*`
 - **CBOM:** `GET /cbom/summary`, `/cbom/per-app`, `/cbom/charts`, `/cbom/{domain}`
 - **PQC / rating:** `/pqc/*`, `/cyber-rating`, `/cyber-rating/risk-factors`, `POST /quantum-score/simulate`
-- **Portfolio:** `/scans/history`, `/scans/diff`, `/inventory/summary`, `/assets/metadata`
+- **Portfolio:** `/scans/history`, `/scans/diff`, `/inventory/summary`, `/inventory/sources/import`, `/inventory/registered`, `/inventory/sbom`, `/assets/metadata`
 - **Reports / threat / migration:** `/reports/export-bundle`, `/migration/roadmap`, `/threat-model/*`
 - **Admin:** `/admin/policy`, `/admin/integrations`, `/admin/exports/history`, `/migration/tasks*`, `/migration/waivers*`
 - **Auth:** `POST /auth/login`
@@ -220,6 +221,8 @@ Refer to OpenAPI at `/docs` on a running backend for the authoritative contract.
 | **Phase 3** | Analysis depth | NIST/threat enrichment, quantum simulation |
 | **Phase 4** | Policy | Org crypto policy, integrations |
 | **Phase 5** | Execution | Migration tasks, waivers, backlog seeding |
+| **Phase 6** | Stakeholder reporting | `GET /dashboard/executive-brief`, print/JSON brief UI, export audit hooks |
+| **Phase 7** | Operational visibility | `GET /dashboard/ops-snapshot` (admin), Mongo ping, queue counts, limits, failed-scan excerpts |
 
 ---
 

@@ -8,6 +8,10 @@ Endpoints:
   GET  /quantum-score/{domain}    → retrieve quantum readiness score
 
   GET  /dashboard/summary         → dashboard KPI stats
+  GET  /dashboard/policy-alignment → org policy vs latest scan TLS (indicative)
+  GET  /dashboard/migration-snapshot → open tasks & pending waiver counts (Phase 5)
+  GET  /dashboard/executive-brief   → stakeholder KPI rollup (Phase 6)
+  GET  /dashboard/ops-snapshot      → DB + scan queue health (admin, Phase 7)
   GET  /assets                    → all discovered assets
   GET  /assets/stats              → asset type counts
   GET  /assets/distribution       → asset type distribution for pie chart
@@ -30,8 +34,12 @@ Endpoints:
   POST /quantum-score/simulate    → what-if score projection (TLS 1.3 / PQC hybrid assumptions)
   POST /scan/batch                → queue multiple domain scans (portfolio)
   GET  /scans/history             → completed scan list for a domain
+  GET  /scans/recent              → recent scan jobs across all domains (portfolio)
   GET  /scans/diff                → compare two scans (new/removed hosts, TLS deltas)
   GET  /inventory/summary         → deduplicated hosts across recent scans
+  POST /inventory/sources/import  → register external assets (CMDB/cloud/K8s/Git-style sources)
+  GET  /inventory/registered      → list registered inventory rows
+  POST /inventory/sbom            → attach SBOM JSON to a host (supply-chain / SAST path)
   PUT  /assets/metadata           → upsert host metadata (owner/env/criticality)
   POST /assets/metadata/bulk    → bulk metadata upsert
   GET  /discovery/assets          → discovered asset inventory (tabbed view)
@@ -42,6 +50,7 @@ Endpoints:
   GET  /admin/integrations        → outbound webhooks (masked)
   PUT  /admin/integrations      → update integrations (admin)
   GET  /admin/exports/history     → export audit log
+  POST /admin/exports/log         → record client-side export (audit)
   GET  /migration/tasks           → migration backlog tasks (Phase 5)
   POST /migration/tasks           → create task
   PATCH /migration/tasks/{id}     → update task
@@ -54,8 +63,9 @@ Endpoints:
 """
 
 import asyncio
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -67,7 +77,9 @@ from app.db.connection import get_database
 from app.db.models import (
     AssetMetadataUpdate,
     BatchScanRequest,
+    InventorySourceImport,
     IntegrationSettingsUpdate,
+    ExportAuditLogCreate,
     MigrationTaskCreate,
     MigrationTaskUpdate,
     OrgCryptoPolicyUpdate,
@@ -80,6 +92,7 @@ from app.db.models import (
     CryptoComponent,
     QuantumScore,
     Recommendation,
+    SbomIngestRequest,
     ScanRequest,
     ScanResult,
     ScanStatus,
@@ -102,9 +115,11 @@ from app.modules.threat_nist_mapping import (
     enrich_cbom_component_dict,
     simulate_quantum_score,
 )
-from app.modules.webhook_notify import post_json_webhook
+from app.modules.webhook_notify import post_json_webhook, post_slack_incoming_webhook
 from app.core.ws_manager import manager as ws_manager
+from app.utils.asset_type import asset_type_label, classify_asset_ports
 from app.utils.logger import get_logger
+from app.utils.policy_alignment import summarize_tls_vs_policy
 
 logger = get_logger(__name__)
 
@@ -146,6 +161,8 @@ INTEGRATION_SETTINGS_COLLECTION = "integration_settings"
 EXPORT_AUDIT_COLLECTION = "export_audit"
 MIGRATION_TASKS_COLLECTION = "migration_tasks"
 WAIVERS_COLLECTION = "waivers"
+REGISTERED_ASSETS_COLLECTION = "registered_assets"
+SBOM_ARTIFACTS_COLLECTION = "sbom_artifacts"
 
 _DEFAULT_ORG_POLICY: Dict[str, Any] = {
     "min_tls_version": "1.2",
@@ -178,18 +195,32 @@ async def _notify_scan_complete_hooks(scan_id: str, domain: str, quantum_score: 
     doc = await db[INTEGRATION_SETTINGS_COLLECTION].find_one({"_id": "default"})
     if not doc or not doc.get("notify_on_scan_complete"):
         return
+    payload = {
+        "event": "quantumshield.scan.completed",
+        "scan_id": scan_id,
+        "domain": domain,
+        "quantum_score": quantum_score or {},
+    }
     url = (doc.get("outbound_webhook_url") or "").strip()
-    if not url:
-        return
-    await post_json_webhook(
-        url,
-        {
-            "event": "quantumshield.scan.completed",
-            "scan_id": scan_id,
-            "domain": domain,
-            "quantum_score": quantum_score,
-        },
-    )
+    if url:
+        await post_json_webhook(url, payload)
+
+    slack_u = (doc.get("slack_webhook_url") or "").strip()
+    if slack_u:
+        qs = quantum_score or {}
+        risk = qs.get("risk_level", "n/a")
+        score = qs.get("score", "n/a")
+        text = (
+            f"*QuantumShield* — scan completed\n"
+            f"• Domain: `{domain}`\n"
+            f"• Scan ID: `{scan_id}`\n"
+            f"• Risk: `{risk}` · Score: `{score}`"
+        )
+        await post_slack_incoming_webhook(slack_u, text)
+
+    jira_u = (doc.get("jira_webhook_url") or "").strip()
+    if jira_u:
+        await post_json_webhook(jira_u, payload)
 
 
 async def _run_scan_pipeline_gated(scan_id: str, request: ScanRequest) -> None:
@@ -198,37 +229,64 @@ async def _run_scan_pipeline_gated(scan_id: str, request: ScanRequest) -> None:
         await _run_scan_pipeline(scan_id, request)
 
 
+async def _registered_hostnames_for_domain(db, domain: str, lim: int = 500) -> List[str]:
+    """Hosts previously imported via /inventory/sources/import scoped to this scan domain."""
+    d = (domain or "").strip().lower()
+    if not d:
+        return []
+    esc = re.escape(d)
+    q: dict = {
+        "$or": [
+            {"parent_domain": d},
+            {"host": {"$regex": rf"^(.+\.)?{esc}$"}},
+        ]
+    }
+    out: List[str] = []
+    cursor = db[REGISTERED_ASSETS_COLLECTION].find(q).limit(lim)
+    async for doc in cursor:
+        h = (doc.get("host") or "").strip().lower()
+        if h and h not in out:
+            out.append(h)
+    return out
+
+
 # ── Helper: run full pipeline ────────────────────────────────────
 
 async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
     """
-    Execute the complete scanning pipeline in the background.
+    Execute the full scan pipeline in the background (8 stages, MongoDB only).
 
-    Pipeline stages:
-      1. Asset discovery (subdomains + port scan)
-      2. TLS scanning (all protocols, all ciphers, cert chain)
-      3. Crypto analysis of TLS results
+    Stages:
+      1. Asset discovery (subdomains, ports, DNS NS, optional inventory merge / seed hosts)
+      2. TLS scanning
+      3. Crypto analysis
       4. Quantum risk scoring
       5. CBOM generation
       6. PQC recommendations
-      7. HTTP security headers scan
+      7. HTTP security headers
       8. CVE / known-attack mapping
-      9. PostgreSQL sync
 
-    Results are persisted to MongoDB at each stage.
+    WebSocket frames from this pipeline include type, scan_id, ts (see enrich_ws_payload).
     """
     db = get_database()
     collection = db[SCANS_COLLECTION]
 
     try:
-        # Mark as running
+        # Mark as running — expose stage early so UI/poll stay in sync during discovery
         await collection.update_one(
             {"scan_id": scan_id},
-            {"$set": {"status": ScanStatus.RUNNING.value, "started_at": datetime.utcnow()}},
+            {
+                "$set": {
+                    "status": ScanStatus.RUNNING.value,
+                    "started_at": datetime.utcnow(),
+                    "current_stage": "Asset Discovery",
+                    "progress": 5,
+                }
+            },
         )
 
         # ── Stage 1: Asset Discovery ─────────────────────────────
-        logger.info("[%s] Stage 1/9: Asset Discovery", scan_id)
+        logger.info("[%s] Stage 1/8: Asset Discovery", scan_id)
 
         async def broadcast_tool_log(msg: str):
             await ws_manager.broadcast({
@@ -247,6 +305,23 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         assets = await asset_discovery.discover_assets(
             request.domain, ports=request.ports, broadcast_func=broadcast_tool_log
         )
+
+        seed_hosts: List[str] = []
+        if request.additional_seed_hosts:
+            seed_hosts.extend(request.additional_seed_hosts)
+        if request.merge_registered_inventory:
+            seed_hosts.extend(await _registered_hostnames_for_domain(db, request.domain))
+        seed_hosts = list(dict.fromkeys(seed_hosts))
+        if seed_hosts:
+            await broadcast_tool_log(
+                f"Merging {len(seed_hosts)} inventory/seed host(s) into discovery set…"
+            )
+            assets = await asset_discovery.merge_extra_hosts_into_assets(
+                assets,
+                seed_hosts,
+                ports=request.ports,
+                broadcast_func=broadcast_tool_log,
+            )
 
         # Merge org metadata from inventory (Phase 2)
         meta_coll = db[ASSET_METADATA_COLLECTION]
@@ -276,14 +351,9 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             {"$set": {"dns_records": [r.model_dump() for r in dns_records]}},
         )
 
-        def infer_type(ports):
-            p = set(ports)
-            if any(x in p for x in [80, 443, 8080, 8443]): return "web_app"
-            if any(x in p for x in [22, 3389]): return "server"
-            return "other"
-
-        web_count = sum(1 for a in assets if infer_type(a.open_ports) == "web_app")
-        srv_count = sum(1 for a in assets if infer_type(a.open_ports) == "server")
+        web_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "web_app")
+        srv_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "server")
+        api_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "api")
 
         await ws_manager.broadcast({
             "type": "metrics",
@@ -292,7 +362,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
                 "total_assets": len(assets),
                 "public_web_apps": web_count,
                 "servers": srv_count,
-                "apis": 0,
+                "apis": api_count,
             }
         }, scan_id)
 
@@ -314,7 +384,20 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 2: TLS Scanning ────────────────────────────────
-        logger.info("[%s] Stage 2/9: TLS Scanning", scan_id)
+        logger.info("[%s] Stage 2/8: TLS Scanning", scan_id)
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {"current_stage": "TLS Scanning", "progress": 20}},
+        )
+        await ws_manager.broadcast(
+            {
+                "type": "status",
+                "stage": 2,
+                "status": "running",
+                "message": "TLS scanning (testssl / handshake probes)…",
+            },
+            scan_id,
+        )
         tls_tasks = []
         for asset in assets:
             for port in asset.open_ports:
@@ -344,7 +427,20 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 3: Crypto Analysis ────────────────────────────
-        logger.info("[%s] Stage 3/9: Crypto Analysis", scan_id)
+        logger.info("[%s] Stage 3/8: Crypto Analysis", scan_id)
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {"current_stage": "Crypto Analysis", "progress": 40}},
+        )
+        await ws_manager.broadcast(
+            {
+                "type": "status",
+                "stage": 3,
+                "status": "running",
+                "message": "Crypto analysis…",
+            },
+            scan_id,
+        )
         all_components: List[CryptoComponent] = []
         for tls_info in tls_results:
             components = crypto_analyzer.analyze(tls_info)
@@ -360,7 +456,20 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 4: Quantum Risk Scoring ────────────────────────
-        logger.info("[%s] Stage 4/9: Quantum Risk Scoring", scan_id)
+        logger.info("[%s] Stage 4/8: Quantum Risk Scoring", scan_id)
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {"current_stage": "Quantum Risk", "progress": 60}},
+        )
+        await ws_manager.broadcast(
+            {
+                "type": "status",
+                "stage": 4,
+                "status": "running",
+                "message": "Quantum risk scoring…",
+            },
+            scan_id,
+        )
         q_score = quantum_risk_engine.calculate_score(all_components)
 
         is_high_risk = 1 if q_score.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH] else 0
@@ -381,7 +490,20 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 5: CBOM Generation ────────────────────────────
-        logger.info("[%s] Stage 5/9: CBOM Generation", scan_id)
+        logger.info("[%s] Stage 5/8: CBOM Generation", scan_id)
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {"current_stage": "CBOM Generation", "progress": 75}},
+        )
+        await ws_manager.broadcast(
+            {
+                "type": "status",
+                "stage": 5,
+                "status": "running",
+                "message": "CBOM generation…",
+            },
+            scan_id,
+        )
         scan_data = ScanResult(
             scan_id=scan_id,
             domain=request.domain,
@@ -398,7 +520,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 6: Recommendations ────────────────────────────
-        logger.info("[%s] Stage 6/9: PQC Recommendations", scan_id)
+        logger.info("[%s] Stage 6/8: PQC Recommendations", scan_id)
         recs = recommendation_engine.get_recommendations(all_components, q_score)
 
         await collection.update_one(
@@ -411,7 +533,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 7: HTTP Security Headers ───────────────────────
-        logger.info("[%s] Stage 7/9: HTTP Security Headers", scan_id)
+        logger.info("[%s] Stage 7/8: HTTP Security Headers", scan_id)
         headers_tasks = [scan_headers(asset.subdomain) for asset in assets]
         headers_results = await asyncio.gather(*headers_tasks, return_exceptions=True)
         headers_results = [r for r in headers_results if not isinstance(r, Exception)]
@@ -426,7 +548,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         )
 
         # ── Stage 8: CVE / Known-Attack Mapping ──────────────────
-        logger.info("[%s] Stage 8/8: CVE Mapping", scan_id)
+        logger.info("[%s] Stage 8/8: CVE / Known-Attack Mapping", scan_id)
         cve_findings = map_cves(tls_results)
 
         await collection.update_one(
@@ -459,13 +581,22 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
     except Exception as exc:
         logger.exception("[%s] ❌ Scan pipeline failed: %s", scan_id, exc)
+        err_text = str(exc)[:500]
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
                 "status": ScanStatus.FAILED.value,
-                "error": str(exc),
+                "error": err_text,
                 "completed_at": datetime.utcnow(),
             }},
+        )
+        await ws_manager.broadcast(
+            {
+                "type": "status",
+                "status": "failed",
+                "message": err_text,
+            },
+            scan_id,
         )
 
 
@@ -532,6 +663,7 @@ async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundT
             domain=domain,
             include_subdomains=body.include_subdomains,
             ports=body.ports,
+            merge_registered_inventory=body.merge_registered_inventory,
         )
         initial = ScanResult(
             scan_id=scan_id,
@@ -584,6 +716,45 @@ async def scans_history(domain: str, limit: int = 20, status_filter: Optional[st
             }
         )
     return {"domain": domain.strip().lower(), "count": len(out), "scans": out}
+
+
+@router.get(
+    "/scans/recent",
+    summary="Recent scans across all domains (portfolio queue view)",
+    tags=["Portfolio"],
+)
+async def scans_recent(limit: int = 80, status_filter: Optional[str] = None):
+    """Newest scan jobs first — avoids N+1 polling per domain on the Inventory Runs page."""
+    lim = min(max(limit, 1), 200)
+    q: dict = {}
+    if status_filter in ("completed", "failed", "running", "pending"):
+        q["status"] = status_filter
+    db = get_database()
+    cursor = (
+        db[SCANS_COLLECTION]
+        .find(q)
+        .sort([("started_at", -1), ("completed_at", -1)])
+        .limit(lim)
+    )
+    out: List[dict] = []
+    async for doc in cursor:
+        doc.pop("_id", None)
+        qs = doc.get("quantum_score") or {}
+        if not isinstance(qs, dict):
+            qs = {}
+        out.append(
+            {
+                "scan_id": doc.get("scan_id"),
+                "domain": doc.get("domain"),
+                "batch_id": doc.get("batch_id"),
+                "status": doc.get("status"),
+                "started_at": doc.get("started_at"),
+                "completed_at": doc.get("completed_at"),
+                "quantum_score": qs.get("score"),
+                "risk_level": qs.get("risk_level"),
+            }
+        )
+    return {"count": len(out), "scans": out}
 
 
 def _asset_host_set(scan_doc: dict) -> set:
@@ -712,6 +883,119 @@ async def inventory_summary(limit_scans: int = 100):
     }
 
 
+@router.post(
+    "/inventory/sources/import",
+    summary="Register assets from CMDB, cloud, K8s, Git jobs, etc.",
+    tags=["Portfolio"],
+)
+async def import_inventory_sources(
+    body: InventorySourceImport,
+    user: User = Depends(get_current_user),
+):
+    """
+    Upserts `registered_assets` and mirrors owner/env/criticality into `asset_metadata`
+    so the existing scan pipeline picks them up on merge_registered_inventory.
+    """
+    db = get_database()
+    now = datetime.utcnow()
+    src = body.source.strip()[:48]
+    default_parent = (body.parent_domain or "").strip().lower() or None
+    n = 0
+    for item in body.items:
+        h = item.host.strip().lower()
+        if not h:
+            continue
+        pd = (item.parent_domain or default_parent or "").strip().lower() or None
+        doc = {
+            "host": h,
+            "parent_domain": pd,
+            "source": src,
+            "external_id": (item.external_id or "").strip()[:256] or None,
+            "owner": item.owner,
+            "environment": item.environment,
+            "criticality": item.criticality,
+            "notes": item.notes,
+            "updated_at": now,
+            "updated_by": user.email,
+        }
+        await db[REGISTERED_ASSETS_COLLECTION].update_one(
+            {"host": h},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        meta_patch = {
+            k: v
+            for k, v in {
+                "owner": item.owner,
+                "environment": item.environment,
+                "criticality": item.criticality,
+            }.items()
+            if v is not None and str(v).strip() != ""
+        }
+        if meta_patch:
+            meta_patch["updated_at"] = now
+            await db[ASSET_METADATA_COLLECTION].update_one(
+                {"host": h},
+                {"$set": meta_patch},
+                upsert=True,
+            )
+        n += 1
+    return {"status": "ok", "source": src, "upserted": n}
+
+
+@router.get("/inventory/registered", summary="List registered external inventory hosts", tags=["Portfolio"])
+async def list_registered_assets(
+    domain: Optional[str] = None,
+    source: Optional[str] = None,
+    limit: int = 200,
+    _user: User = Depends(get_current_user),
+):
+    lim = min(max(limit, 1), 500)
+    db = get_database()
+    q: dict = {}
+    conds: List[dict] = []
+    if domain:
+        d = domain.strip().lower()
+        esc = re.escape(d)
+        conds.append({"$or": [{"parent_domain": d}, {"host": {"$regex": rf"^(.+\.)?{esc}$"}}]})
+    if source:
+        conds.append({"source": source.strip()[:48]})
+    if len(conds) == 1:
+        q = conds[0]
+    elif len(conds) > 1:
+        q = {"$and": conds}
+    cursor = db[REGISTERED_ASSETS_COLLECTION].find(q).sort("host", 1).limit(lim)
+    rows: List[dict] = []
+    async for doc in cursor:
+        doc.pop("_id", None)
+        rows.append(doc)
+    return {"count": len(rows), "assets": rows}
+
+
+@router.post("/inventory/sbom", summary="Store SBOM JSON for a host (CycloneDX/SPDX-style)", tags=["Portfolio"])
+async def ingest_sbom_artifact(
+    body: SbomIngestRequest,
+    user: User = Depends(get_current_user),
+):
+    """Supply-chain / SAST hook: persists raw JSON for dashboards or future library-level CBOM."""
+    db = get_database()
+    aid = uuid.uuid4().hex
+    host = body.host.strip().lower()
+    sd = (body.scan_domain or "").strip().lower() or None
+    doc = {
+        "artifact_id": aid,
+        "host": host,
+        "scan_domain": sd,
+        "format": (body.format or "cyclonedx").strip()[:32],
+        "document": body.document,
+        "created_at": datetime.utcnow(),
+        "created_by": user.email,
+    }
+    await db[SBOM_ARTIFACTS_COLLECTION].insert_one(doc)
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    return out
+
+
 @router.put("/assets/metadata", summary="Upsert metadata for one host", tags=["Portfolio"])
 async def put_asset_metadata(body: AssetMetadataUpdate):
     host = body.host.strip().lower()
@@ -790,8 +1074,9 @@ async def get_cbom_summary(domain: str = None):
             "weak_cryptography": 0, "certificate_issues": 0
         }
 
-    cbom_report = doc.get("cbom_report", {})
-    risk_summary = cbom_report.get("risk_summary", {})
+    cbom_report = doc.get("cbom_report") or {}
+    _rs = cbom_report.get("risk_summary")
+    risk_summary = _rs if isinstance(_rs, dict) else {}
     
     # Map fields to match frontend expectations
     return {
@@ -817,8 +1102,8 @@ async def get_cbom_per_app(domain: str = None):
         return []
         
     # Standardize output for the table + Phase 3 threat ↔ NIST enrichment
-    cbom_report = doc.get("cbom_report", {})
-    components = cbom_report.get("components", [])
+    cbom_report = doc.get("cbom_report") or {}
+    components = cbom_report.get("components", []) or []
     return [enrich_cbom_component_dict(dict(c)) for c in components]
 
 @router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
@@ -839,7 +1124,8 @@ async def get_cbom_charts(domain: str = None):
 
     for scan in scans:
         # Use cbom_report components for better granularity if available
-        all_components = scan.get("cbom_report", {}).get("components", [])
+        cr = scan.get("cbom_report") or {}
+        all_components = cr.get("components", []) or []
         if not all_components:
             # Fallback to tls_results if cbom_report missing
             all_components = []
@@ -871,7 +1157,14 @@ async def get_cbom_charts(domain: str = None):
         "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
         "top_certificate_authorities": [{"name": k, "value": v} for k, v in cas.items()],
         "encryption_protocols": [{"name": k, "value": v} for k, v in tls_versions.items()],
-        "cipher_usage": [{"name": k, "value": v, "weak": ("MD5" in k or "RC4" in k or "DES" in k or "TLSv1.0" in k)} for k, v in cipher_usage.items()],
+        "cipher_usage": [
+            {
+                "name": k,
+                "value": v,
+                "weak": ("MD5" in str(k) or "RC4" in str(k) or "DES" in str(k) or "TLSv1.0" in str(k)),
+            }
+            for k, v in cipher_usage.items()
+        ],
     }
 
 
@@ -907,37 +1200,35 @@ async def get_quantum_score(domain: str):
 # Dashboard Summary
 # ════════════════════════════════════════════════════════════════════
 
-@router.get("/dashboard/summary", summary="Get dashboard summary stats", tags=["Dashboard"])
-async def get_dashboard_summary():
-    db = get_database()
-    scans = await db[SCANS_COLLECTION].find(
-        {"status": "completed"}, sort=[("completed_at", -1)]
-    ).to_list(length=100)
 
+def _compute_dashboard_kpis_from_completed_scans(scans: List[dict]) -> dict:
+    """Shared KPI math for /dashboard/summary and /dashboard/executive-brief."""
     total_assets = sum(len(s.get("assets", [])) for s in scans)
-    tls_all = []
+    tls_all: List[dict] = []
     for s in scans:
-        tls_all.extend(s.get("tls_results", []))
+        tls_all.extend(s.get("tls_results", []) or [])
     expiring = sum(
-        1 for t in tls_all
-        if t.get("certificate", {}) and
-        0 < (t.get("certificate", {}).get("days_until_expiry") or 365) <= 30
+        1
+        for t in tls_all
+        if t.get("certificate", {})
+        and 0 < (t.get("certificate", {}).get("days_until_expiry") or 365) <= 30
     )
     high_risk = sum(
-        1 for s in scans
-        if s.get("quantum_score", {}).get("risk_level") in ["high", "critical"]
+        1
+        for s in scans
+        if (s.get("quantum_score") or {}).get("risk_level") in ["high", "critical"]
     )
 
     public_web_apps = 0
     apis = 0
     servers = 0
-    
+
     for s in scans:
-        for a in s.get("assets", []):
-            ports = a.get("open_ports", [])
-            if any(p in [80, 443, 8080, 8443] for p in ports):
+        for a in s.get("assets", []) or []:
+            cat = classify_asset_ports(a.get("open_ports") or [])
+            if cat == "web_app":
                 public_web_apps += 1
-            elif any(p in [22, 21, 3306, 5432] for p in ports):
+            elif cat == "server":
                 servers += 1
             else:
                 apis += 1
@@ -949,6 +1240,245 @@ async def get_dashboard_summary():
         "servers": servers,
         "expiring_certificates": expiring,
         "high_risk_assets": high_risk,
+    }
+
+
+@router.get("/dashboard/summary", summary="Get dashboard summary stats", tags=["Dashboard"])
+async def get_dashboard_summary():
+    db = get_database()
+    scans = await db[SCANS_COLLECTION].find(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    ).to_list(length=100)
+    return _compute_dashboard_kpis_from_completed_scans(scans)
+
+
+@router.get(
+    "/dashboard/policy-alignment",
+    summary="Org crypto policy vs latest completed scan (indicative)",
+    tags=["Dashboard"],
+)
+async def get_policy_alignment(_user: User = Depends(get_current_user)):
+    """Phase 4: surface policy targets against the newest TLS inventory."""
+    db = get_database()
+    pol_doc = await db[ORG_POLICY_COLLECTION].find_one({"_id": "default"})
+    merged = {**_DEFAULT_ORG_POLICY}
+    if pol_doc:
+        for k in merged:
+            if k in pol_doc and pol_doc[k] is not None:
+                merged[k] = pol_doc[k]
+
+    scan = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    policy_public = {
+        "min_tls_version": merged.get("min_tls_version"),
+        "require_forward_secrecy": merged.get("require_forward_secrecy"),
+        "pqc_readiness_target": merged.get("pqc_readiness_target") or "",
+    }
+    if not scan:
+        return {
+            "has_scan": False,
+            "policy": policy_public,
+            "alignment": None,
+            "note": "No completed scan to compare.",
+        }
+
+    tls = scan.get("tls_results") or []
+    alignment = summarize_tls_vs_policy(
+        tls,
+        str(merged.get("min_tls_version") or "1.2"),
+        bool(merged.get("require_forward_secrecy")),
+    )
+    return {
+        "has_scan": True,
+        "scan_domain": scan.get("domain"),
+        "policy": policy_public,
+        "alignment": alignment,
+    }
+
+
+@router.get(
+    "/dashboard/migration-snapshot",
+    summary="Migration execution counts (open tasks, pending waivers)",
+    tags=["Dashboard"],
+)
+async def get_migration_snapshot(_user: User = Depends(get_current_user)):
+    """Phase 5: lightweight KPIs for the dashboard without loading full task lists."""
+    db = get_database()
+    open_tasks = await db[MIGRATION_TASKS_COLLECTION].count_documents(
+        {"status": {"$in": ["open", "in_progress"]}}
+    )
+    pending_waivers = await db[WAIVERS_COLLECTION].count_documents({"status": "pending"})
+    return {
+        "open_tasks": open_tasks,
+        "pending_waivers": pending_waivers,
+    }
+
+
+@router.get(
+    "/dashboard/executive-brief",
+    summary="Stakeholder rollup: KPIs, policy, migration, domain posture (Phase 6)",
+    tags=["Dashboard"],
+)
+async def get_executive_brief(_user: User = Depends(get_current_user)):
+    """
+    Single JSON for leadership demos and print/PDF workflows.
+    Heuristic only — same qualifiers as dashboard summary and policy alignment.
+    """
+    db = get_database()
+    now = datetime.now(timezone.utc)
+    scans = await db[SCANS_COLLECTION].find(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    ).to_list(length=100)
+
+    kpis = _compute_dashboard_kpis_from_completed_scans(scans)
+    open_tasks = await db[MIGRATION_TASKS_COLLECTION].count_documents(
+        {"status": {"$in": ["open", "in_progress"]}}
+    )
+    pending_waivers = await db[WAIVERS_COLLECTION].count_documents({"status": "pending"})
+
+    unique_hosts: set[str] = set()
+    for s in scans:
+        for a in s.get("assets", []) or []:
+            h = (a.get("subdomain") or "").strip().lower()
+            if h:
+                unique_hosts.add(h)
+
+    pol_doc = await db[ORG_POLICY_COLLECTION].find_one({"_id": "default"})
+    merged = {**_DEFAULT_ORG_POLICY}
+    if pol_doc:
+        for k in merged:
+            if k in pol_doc and pol_doc[k] is not None:
+                merged[k] = pol_doc[k]
+
+    policy_public = {
+        "min_tls_version": merged.get("min_tls_version"),
+        "require_forward_secrecy": merged.get("require_forward_secrecy"),
+        "pqc_readiness_target": merged.get("pqc_readiness_target") or "",
+    }
+
+    latest = scans[0] if scans else None
+    alignment = None
+    if latest:
+        tls = latest.get("tls_results") or []
+        alignment = summarize_tls_vs_policy(
+            tls,
+            str(merged.get("min_tls_version") or "1.2"),
+            bool(merged.get("require_forward_secrecy")),
+        )
+
+    domain_latest: dict[str, dict] = {}
+    for s in scans:
+        d = (s.get("domain") or "").strip().lower()
+        if not d or d in domain_latest:
+            continue
+        qs = s.get("quantum_score") or {}
+        if not isinstance(qs, dict):
+            qs = {}
+        domain_latest[d] = {
+            "domain": s.get("domain"),
+            "risk_level": qs.get("risk_level"),
+            "score": qs.get("score"),
+            "completed_at": s.get("completed_at"),
+        }
+
+    def _sort_key(row: dict) -> float:
+        t = row.get("completed_at")
+        if t is None:
+            return 0.0
+        if hasattr(t, "timestamp"):
+            return float(t.timestamp())
+        return 0.0
+
+    domains_roll = sorted(domain_latest.values(), key=_sort_key, reverse=True)[:30]
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "disclaimer": (
+            "Heuristic portfolio snapshot for stakeholder discussion; "
+            "not a compliance or audit attestation."
+        ),
+        "kpis": kpis,
+        "portfolio": {
+            "unique_hosts_observed": len(unique_hosts),
+            "completed_scans_in_window": len(scans),
+        },
+        "migration": {
+            "open_tasks": open_tasks,
+            "pending_waivers": pending_waivers,
+        },
+        "policy": {
+            "has_scan": latest is not None,
+            "scan_domain": latest.get("domain") if latest else None,
+            "targets": policy_public,
+            "alignment": alignment,
+        },
+        "domains": domains_roll,
+    }
+
+
+@router.get(
+    "/dashboard/ops-snapshot",
+    summary="Operator health: DB ping, scan queue counts, recent failures (Phase 7)",
+    tags=["Dashboard"],
+)
+async def get_ops_snapshot(_admin: User = Depends(require_admin)):
+    """Admin-only pipeline / datastore visibility for the operations console."""
+    db = get_database()
+    now = datetime.now(timezone.utc)
+    db_ok = True
+    db_err: Optional[str] = None
+    try:
+        await db.command("ping")
+    except Exception as exc:
+        db_ok = False
+        db_err = str(exc)[:240]
+
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    running = await db[SCANS_COLLECTION].count_documents({"status": "running"})
+    pending = await db[SCANS_COLLECTION].count_documents({"status": "pending"})
+    completed_24h = await db[SCANS_COLLECTION].count_documents(
+        {"status": "completed", "completed_at": {"$gte": day_ago}}
+    )
+    failed_7d = await db[SCANS_COLLECTION].count_documents(
+        {"status": "failed", "completed_at": {"$gte": week_ago}}
+    )
+
+    recent_failures: List[dict] = []
+    async for doc in (
+        db[SCANS_COLLECTION]
+        .find({"status": "failed"})
+        .sort("completed_at", -1)
+        .limit(12)
+    ):
+        recent_failures.append(
+            {
+                "scan_id": doc.get("scan_id"),
+                "domain": doc.get("domain"),
+                "error": (doc.get("error") or "")[:280],
+                "completed_at": doc.get("completed_at"),
+            }
+        )
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "app": {"name": settings.APP_NAME, "version": settings.APP_VERSION},
+        "database": {"ok": db_ok, "error": db_err},
+        "scans": {
+            "running": running,
+            "pending": pending,
+            "completed_last_24h": completed_24h,
+            "failed_last_7d": failed_7d,
+        },
+        "limits": {
+            "max_concurrent_scans": settings.MAX_CONCURRENT_SCANS,
+            "max_batch_domains": settings.MAX_BATCH_DOMAINS,
+            "max_subdomains": settings.MAX_SUBDOMAINS,
+            "scan_timeout_seconds": settings.SCAN_TIMEOUT,
+        },
+        "recent_failures": recent_failures,
     }
 
 
@@ -971,9 +1501,9 @@ async def get_assets():
             tls = tls_map.get(host, {})
             cert = tls.get("certificate") or {}
             
-            # Infer fields
-            ports = a.get("open_ports", [443])
-            a_type = "Web App" if any(p in [80, 443, 8080, 8443] for p in ports) else "API"
+            # Infer fields (must match /dashboard/summary and /assets/distribution)
+            ports = a.get("open_ports") or []
+            a_type = asset_type_label(classify_asset_ports(ports))
             
             days = cert.get("days_until_expiry")
             if days is None: cert_status_slug = "unknown"
@@ -1007,13 +1537,6 @@ async def get_assets():
     }
 
 
-    return {
-        "total": 0, "web_apps": 0, "apis": 0,
-        "servers": 0, "gateways": 0, "other": 0,
-    }
-
-
-
 @router.get("/assets/distribution", summary="Get asset type distribution", tags=["Assets"])
 async def get_asset_distribution():
     db = get_database()
@@ -1027,10 +1550,10 @@ async def get_asset_distribution():
     
     for s in scans:
         for a in s.get("assets", []):
-            ports = a.get("open_ports", [])
-            if any(p in [80, 443, 8080, 8443] for p in ports):
+            cat = classify_asset_ports(a.get("open_ports") or [])
+            if cat == "web_app":
                 public_web_apps += 1
-            elif any(p in [22, 21, 3306, 5432] for p in ports):
+            elif cat == "server":
                 servers += 1
             else:
                 apis += 1
@@ -1485,6 +2008,7 @@ async def get_threat_model_summary(domain: Optional[str] = None):
     )
 
     return {
+        "domain": scan.get("domain") if scan else None,
         "vectors": [
             {
                 "id": "shor",
@@ -1615,6 +2139,25 @@ async def get_export_audit_history(limit: int = 50, _user: User = Depends(get_cu
         row.pop("_id", None)
         events.append(row)
     return {"count": len(events), "events": events}
+
+
+@router.post("/admin/exports/log", summary="Record an export audit event", tags=["Admin"])
+async def post_export_audit_log(
+    body: ExportAuditLogCreate,
+    user: User = Depends(get_current_user),
+):
+    """When the UI downloads roadmap/threat JSON client-side, it can log the event here."""
+    db = get_database()
+    doc = {
+        "event_id": uuid.uuid4().hex,
+        "export_type": body.export_type.strip()[:80],
+        "domain": (body.domain or "").strip().lower() or None,
+        "created_at": datetime.utcnow(),
+        "actor": user.email,
+    }
+    await db[EXPORT_AUDIT_COLLECTION].insert_one(doc)
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    return out
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1803,6 +2346,7 @@ async def create_waiver(
         "expiry": body.expiry,
         "impacted_assets": body.impacted_assets or [],
         "status": body.status if body.status in ("pending", "draft") else "pending",
+        "created_by": _user.email,
         "created_at": now,
         "updated_at": now,
     }
@@ -1932,10 +2476,9 @@ async def get_network_graph(domain: Optional[str] = None):
         cert = tls.get("certificate") or {}
         days = cert.get("days_until_expiry")
         
-        # Categorization
-        ports = asset.get("open_ports", [])
-        is_web = any(p in [80, 443, 8080, 8443] for p in ports)
-        asset_type = "web_app" if is_web else "server" if any(p in [22, 3389] for p in ports) else "other"
+        # Categorization (aligned with dashboard distribution)
+        ports = asset.get("open_ports") or []
+        asset_type = classify_asset_ports(ports)
         
         # Risk assessment (simplified logic matching dashboard)
         risk = "low"

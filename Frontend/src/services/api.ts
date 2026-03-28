@@ -76,6 +76,12 @@ export const userService = {
 
 export const dashboardService = {
   getSummary: () => api.get("/dashboard/summary"),
+  /** Phase 4: org policy vs latest scan TLS (indicative) */
+  getPolicyAlignment: () => api.get("/dashboard/policy-alignment"),
+  /** Phase 5: open migration tasks + pending waivers (counts) */
+  getMigrationSnapshot: () => api.get("/dashboard/migration-snapshot"),
+  /** Phase 6: stakeholder rollup (KPIs, policy, migration, domains) */
+  getExecutiveBrief: () => api.get("/dashboard/executive-brief"),
 };
 
 // ── Assets ───────────────────────────────────────────────────────
@@ -96,6 +102,12 @@ export const assetService = {
   }) => api.put("/assets/metadata", body),
   bulkMetadata: (items: { host: string; owner?: string; environment?: string; criticality?: string }[]) =>
     api.post("/assets/metadata/bulk", items),
+  /** Register external assets (CMDB/cloud/K8s/Git-style); optional merge into scans */
+  importRegisteredAssets: (body: Record<string, unknown>) => api.post("/inventory/sources/import", body),
+  listRegisteredAssets: (params?: { domain?: string; source?: string; limit?: number }) =>
+    api.get("/inventory/registered", { params }),
+  /** CycloneDX/SPDX-style JSON blob per host */
+  ingestSbom: (body: Record<string, unknown>) => api.post("/inventory/sbom", body),
 };
 
 // ── Discovery ─────────────────────────────────────────────────────
@@ -165,18 +177,16 @@ export const adminService = {
   putIntegrations: (body: Record<string, unknown>) => api.put("/admin/integrations", body),
   getExportHistory: (limit?: number) =>
     api.get("/admin/exports/history", { params: limit != null ? { limit } : {} }),
+  logExport: (body: { export_type: string; domain?: string | null }) =>
+    api.post("/admin/exports/log", body),
+  /** Phase 7: Mongo ping, scan queue, limits, recent failures (admin-only) */
+  getOpsSnapshot: () => api.get("/dashboard/ops-snapshot"),
 };
 
-// ── Reporting ─────────────────────────────────────────────────────
+// ── Reports & threat-model (exports, bundles, roadmap) ──────────
 
 export const reportingService = {
   getDomains:     () => api.get("/reporting/domains"),
-  generateReport: (type: string, params: { format: string; scheduled_at?: string; filters?: any }) => {
-    // Use the /reporting/generate endpoint for all types
-    const body = { ...params, reportType: type };
-    const config = type !== "scheduler" ? { responseType: "blob" as const } : {};
-    return api.post("/reporting/generate", body, config);
-  },
   exportBundle: (domain?: string) =>
     api.get("/reports/export-bundle", { params: domain ? { domain } : {} }),
   getThreatModelSummary: (domain?: string) =>
@@ -214,6 +224,14 @@ export const scanService = {
     api.get("/scans/history", {
       params: {
         domain,
+        ...(limit != null ? { limit } : {}),
+        ...(statusFilter ? { status_filter: statusFilter } : {}),
+      },
+    }),
+  /** Phase 2: single query for portfolio run list (replaces per-domain N+1) */
+  getRecentScans: (limit?: number, statusFilter?: string) =>
+    api.get("/scans/recent", {
+      params: {
         ...(limit != null ? { limit } : {}),
         ...(statusFilter ? { status_filter: statusFilter } : {}),
       },

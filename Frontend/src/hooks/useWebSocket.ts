@@ -15,13 +15,41 @@ function getBackendWsOrigin(): string {
 
 export type WSMessage = {
   type: 'status' | 'log' | 'data' | 'error' | 'metrics';
-  stage?: number;
+  stage?: number | string;
   status?: 'pending' | 'running' | 'completed' | 'failed' | 'update';
   message?: string;
   assets_count?: number;
   assets?: any[];
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
 };
+
+/** Normalize pipeline broadcasts (`type`) and DB-poll frames from `ws.py` (no `type`). */
+function parseWsPayload(raw: unknown): WSMessage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+
+  if (typeof o.type === 'string') {
+    return o as unknown as WSMessage;
+  }
+
+  if (typeof o.status === 'string') {
+    const st = o.status as WSMessage['status'];
+    const msg =
+      typeof o.message === 'string'
+        ? o.message
+        : typeof o.stage === 'string'
+          ? `${o.stage}…`
+          : 'Scan update';
+    return {
+      type: 'status',
+      status: st === 'running' || st === 'completed' || st === 'failed' || st === 'update' || st === 'pending' ? st : 'update',
+      message: msg,
+      stage: o.stage as string | number | undefined,
+    };
+  }
+
+  return null;
+}
 
 export const useWebSocket = (scanId: string | null) => {
   const [messages, setMessages] = useState<WSMessage[]>([]);
@@ -44,8 +72,11 @@ export const useWebSocket = (scanId: string | null) => {
 
     socket.onmessage = (event) => {
       try {
-        const message: WSMessage = JSON.parse(event.data);
-        setMessages((prev) => [...prev, message]);
+        const parsed = JSON.parse(event.data);
+        const message = parseWsPayload(parsed);
+        if (message) {
+          setMessages((prev) => [...prev, message]);
+        }
       } catch (err) {
         console.error('Failed to parse WebSocket message', err);
       }

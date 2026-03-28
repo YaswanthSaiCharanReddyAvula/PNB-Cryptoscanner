@@ -2,7 +2,8 @@ import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.core.ws_manager import manager
+
+from app.core.ws_manager import enrich_ws_payload, manager
 from app.db.connection import get_database
 from app.utils.logger import get_logger
 
@@ -25,16 +26,11 @@ _STAGE_LABELS = {
 @router.websocket("/ws/scan/{scan_id}")
 async def websocket_endpoint(websocket: WebSocket, scan_id: str):
     """
-    WebSocket endpoint that polls MongoDB every 2 s and pushes structured
-    stage/progress JSON to the connected frontend client.
+    Polls MongoDB every 2s and pushes stage/progress (backup to pipeline broadcasts).
 
-    Message format (running):
-        {"stage": "Asset Discovery", "progress": 20, "status": "running",
-         "message": "Scanning subdomains..."}
-
-    Message format (completed):
-        {"stage": "Complete", "progress": 100, "status": "completed",
-         "scan_id": "...", "domain": "..."}
+    Frames include type, scan_id, ts (UTC) for parity with pipeline ws_manager.broadcast:
+        {"type": "status", "stage": "...", "progress": N, "status": "running",
+         "message": "...", "scan_id": "...", "ts": "..."}
     """
     await manager.connect(websocket, scan_id)
     logger.info("WS client connected for scan: %s", scan_id)
@@ -57,34 +53,56 @@ async def websocket_endpoint(websocket: WebSocket, scan_id: str):
                 domain    = doc.get("domain", "")
 
                 if db_status == "completed":
-                    await websocket.send_text(json.dumps({
-                        "stage":    "Complete",
-                        "progress": 100,
-                        "status":   "completed",
-                        "scan_id":  scan_id,
-                        "domain":   domain,
-                        "message":  "Scan completed successfully.",
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            enrich_ws_payload(
+                                {
+                                    "type": "status",
+                                    "stage": "Complete",
+                                    "progress": 100,
+                                    "status": "completed",
+                                    "domain": domain,
+                                    "message": "Scan completed successfully.",
+                                },
+                                scan_id,
+                            )
+                        )
+                    )
                     break
 
                 elif db_status == "failed":
-                    await websocket.send_text(json.dumps({
-                        "stage":    stage,
-                        "progress": progress,
-                        "status":   "failed",
-                        "scan_id":  scan_id,
-                        "message":  doc.get("error", "Scan failed."),
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            enrich_ws_payload(
+                                {
+                                    "type": "status",
+                                    "stage": stage,
+                                    "progress": progress,
+                                    "status": "failed",
+                                    "message": doc.get("error", "Scan failed."),
+                                },
+                                scan_id,
+                            )
+                        )
+                    )
                     break
 
                 else:
                     label = _STAGE_LABELS.get(stage, stage)
-                    await websocket.send_text(json.dumps({
-                        "stage":    label,
-                        "progress": progress,
-                        "status":   "running",
-                        "message":  f"{label}…",
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            enrich_ws_payload(
+                                {
+                                    "type": "status",
+                                    "stage": label,
+                                    "progress": progress,
+                                    "status": "running",
+                                    "message": f"{label}…",
+                                },
+                                scan_id,
+                            )
+                        )
+                    )
 
             await asyncio.sleep(2)
 

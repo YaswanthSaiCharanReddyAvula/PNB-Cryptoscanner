@@ -14,9 +14,16 @@ interface ScanProgressBarProps {
   isScanning: boolean;
   stageIndex: number;
   targetDomain?: string | null;
+  /** Backend `current_stage` for accurate sub-label while polling */
+  pipelineStageLabel?: string | null;
 }
 
-export function ScanProgressBar({ isScanning, stageIndex, targetDomain }: ScanProgressBarProps) {
+export function ScanProgressBar({
+  isScanning,
+  stageIndex,
+  targetDomain,
+  pipelineStageLabel,
+}: ScanProgressBarProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -42,25 +49,39 @@ export function ScanProgressBar({ isScanning, stageIndex, targetDomain }: ScanPr
           initial={{ opacity: 0, height: 0, y: -20 }}
           animate={{ opacity: 1, height: "auto", y: 0 }}
           exit={{ opacity: 0, height: 0 }}
-          className="w-full bg-card border border-[#FBBC09]/30 rounded-xl p-5 shadow-lg relative overflow-hidden mb-6"
+          className="relative mb-6 w-full overflow-hidden rounded-xl border border-primary/25 bg-card p-5 shadow-lg"
         >
           {/* Subtle glow background */}
-          <div className="absolute top-0 right-1/4 w-96 h-96 bg-[#FBBC09]/5 rounded-full blur-3xl -z-10" />
+          <div className="absolute -z-10 right-1/4 top-0 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
 
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 relative z-10">
+          <div className="relative z-10 mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
-              <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
-                <Target className="w-4 h-4 text-[#FBBC09]" />
+              <h3 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+                <Target className="h-4 w-4 text-primary" />
                 Scan Pipeline Active
               </h3>
               <p className="text-sm text-muted-foreground">
-                {isScanning 
-                  ? <span className="flex items-center gap-2">Analyzing <strong className="text-foreground">{targetDomain}</strong>...</span>
-                  : stageIndex >= 5 ? <span className="text-success font-medium">Scan completed successfully.</span> : "Preparation..."}
+                {isScanning ? (
+                  <span className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                    <span>
+                      Analyzing <strong className="text-foreground">{targetDomain}</strong>
+                      …
+                    </span>
+                    {pipelineStageLabel ? (
+                      <span className="text-xs font-medium text-primary/90 sm:text-sm">
+                        {pipelineStageLabel}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : stageIndex >= 5 ? (
+                  <span className="font-medium text-success">Scan completed successfully.</span>
+                ) : (
+                  "Preparation..."
+                )}
               </p>
             </div>
             {isScanning && (
-              <div className="flex items-center gap-2 text-[#FBBC09] font-mono bg-[#FBBC09]/10 px-3 py-1.5 rounded-md border border-[#FBBC09]/20 shadow-sm shrink-0">
+              <div className="flex shrink-0 items-center gap-2 rounded-md border border-primary/20 bg-primary/10 px-3 py-1.5 font-mono text-primary shadow-sm">
                 <Clock className="w-4 h-4" />
                 {formatTime(elapsed)}
               </div>
@@ -73,7 +94,7 @@ export function ScanProgressBar({ isScanning, stageIndex, targetDomain }: ScanPr
             
             {/* Track Fill */}
             <motion.div 
-              className="absolute top-4 left-0 h-[3px] bg-[#FBBC09] rounded-full -z-10"
+              className="absolute top-4 left-0 h-[3px] rounded-full bg-primary -z-10"
               initial={{ width: "0%" }}
               animate={{ width: `${Math.min((stageIndex / (SCAN_STAGES.length - 1)) * 100, 100)}%` }}
               transition={{ duration: 0.6, ease: "easeInOut" }}
@@ -90,9 +111,9 @@ export function ScanProgressBar({ isScanning, stageIndex, targetDomain }: ScanPr
                     initial={false}
                     animate={{ 
                       scale: isActive ? 1.2 : 1,
-                      backgroundColor: isComplete ? "#FBBC09" : isActive ? "hsl(220, 14%, 20%)" : "hsl(220, 14%, 10%)",
-                      borderColor: isComplete || isActive ? "#FBBC09" : "hsl(220, 14%, 30%)",
-                      color: isComplete ? "hsl(220, 14%, 10%)" : isActive ? "#FBBC09" : "hsl(215, 15%, 55%)"
+                      backgroundColor: isComplete ? "#2563eb" : isActive ? "hsl(220, 14%, 20%)" : "hsl(220, 14%, 10%)",
+                      borderColor: isComplete || isActive ? "#2563eb" : "hsl(220, 14%, 30%)",
+                      color: isComplete ? "hsl(210, 40%, 98%)" : isActive ? "#60a5fa" : "hsl(215, 15%, 55%)"
                     }}
                     className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shadow-sm transition-colors duration-300`}
                   >
