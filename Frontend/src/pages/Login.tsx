@@ -18,7 +18,6 @@ const loginSchema = z.object({
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>("Admin");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -42,11 +41,13 @@ export default function Login() {
       sessionStorage.setItem("auth_token", access_token);
 
       // 3. Log in to Context using the returned mocked user object or local state
+      const backendRole = String(user?.role || "").toLowerCase();
+      const mappedRole: UserRole = backendRole.includes("admin") ? "Admin" : "Employee";
       login(
         { 
           id: user?.id || "demo-id", 
           username: username, 
-          role: role, 
+          role: mappedRole, 
           name: user?.full_name || username.split("@")[0]
         },
         access_token
@@ -127,19 +128,8 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="role" className="text-xs text-muted-foreground uppercase tracking-wider">
-                Role
-              </Label>
-              <select
-                id="role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as UserRole)}
-                className="flex h-10 w-full rounded-md border border-input bg-secondary px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border-border"
-              >
-                <option value="Admin">Admin</option>
-                <option value="Employee">Employee</option>
-              </select>
+            <div className="text-xs text-muted-foreground pt-2">
+              Role is determined by credentials (Admin vs Employee demo users).
             </div>
 
             <div className="flex justify-end">
@@ -172,7 +162,7 @@ export default function Login() {
             </Button>
 
             <p className="text-center text-[10px] text-muted-foreground mt-4">
-              Demo: scanner@example.com / pass123
+              Demo: scanner@example.com / pass123 (Admin) &nbsp; | &nbsp; employee@example.com / pass123 (Employee)
             </p>
           </form>
         </div>

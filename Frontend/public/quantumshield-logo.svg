@@ -1,0 +1,71 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>QuantumShield</title>
+  <desc>Minimal shield mark with lattice lines suggesting post-quantum cryptography.</desc>
+
+  <!-- Palette -->
+  <!-- Navy: #0B1220 | Blue: #3B82F6 | Gold: #FBBF24 | Ink: #0F172A -->
+
+  <!-- Background (transparent by default). Uncomment for dark app icon background.
+  <rect width="512" height="512" rx="112" fill="#0B1220"/>
+  -->
+
+  <!-- Outer shield -->
+  <path
+    d="M256 66
+       C300 92 344 104 392 110
+       V244
+       C392 329 336 406 256 446
+       C176 406 120 329 120 244
+       V110
+       C168 104 212 92 256 66Z"
+    fill="#0B1220"
+    stroke="#3B82F6"
+    stroke-width="14"
+    stroke-linejoin="round"
+  />
+
+  <!-- Inner field -->
+  <path
+    d="M256 104
+       C294 126 330 136 366 140
+       V244
+       C366 312 322 373 256 406
+       C190 373 146 312 146 244
+       V140
+       C182 136 218 126 256 104Z"
+    fill="#0F172A"
+    opacity="0.92"
+  />
+
+  <!-- Lattice: hex + connecting edges -->
+  <g stroke="#3B82F6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.98">
+    <!-- Central hex -->
+    <path d="M256 186 L303 212 L303 264 L256 290 L209 264 L209 212 Z" fill="none"/>
+
+    <!-- Vertical spine -->
+    <path d="M256 150 V186"/>
+    <path d="M256 290 V340"/>
+
+    <!-- Side connectors -->
+    <path d="M209 212 L176 196"/>
+    <path d="M303 212 L336 196"/>
+    <path d="M209 264 L176 280"/>
+    <path d="M303 264 L336 280"/>
+  </g>
+
+  <!-- Nodes -->
+  <g fill="#3B82F6">
+    <circle cx="256" cy="150" r="10"/>
+    <circle cx="176" cy="196" r="9"/>
+    <circle cx="336" cy="196" r="9"/>
+    <circle cx="176" cy="280" r="9"/>
+    <circle cx="336" cy="280" r="9"/>
+    <circle cx="256" cy="340" r="10"/>
+  </g>
+
+  <!-- Gold "quantum" sparkle/node -->
+  <g fill="#FBBF24">
+    <circle cx="352" cy="120" r="8"/>
+    <path d="M352 96 L356 112 L372 116 L356 120 L352 136 L348 120 L332 116 L348 112 Z" opacity="0.9"/>
+  </g>
+</svg>

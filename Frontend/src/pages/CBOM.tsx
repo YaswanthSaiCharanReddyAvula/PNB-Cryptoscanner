@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import { cbomService, cryptoService, pqcService, reportingService } from "@/services/api";
 import { PQCBadge, determinePQCStatus, hndlRiskFromCrypto, PQCStatus } from "@/components/ui/PQCBadge";
 import { CheckCircle } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const COLORS = ["hsl(45, 96%, 51%)", "hsl(342, 88%, 35%)", "hsl(152, 60%, 45%)", "hsl(210, 80%, 55%)", "hsl(280, 60%, 55%)"];
 
@@ -237,7 +239,100 @@ export default function CBOM() {
     document.body.appendChild(el); el.click(); el.remove();
   };
 
-  const handleExportPDF = () => window.print();
+  const handleExportPDF = () => {
+    // Data-based PDF export (not "Print to PDF" screenshot).
+    // We generate a CBOM table using jsPDF so the exported PDF is content-first.
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+
+    const domain = summary?.domain || "";
+    const generatedAt = summary?.generated_at ? new Date(summary.generated_at) : new Date();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("PNB × QSCAS", 40, 50);
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.text("Cryptographic Bill of Materials (CBOM)", 40, 70);
+    doc.setFontSize(10);
+    doc.text(`CBOM Report for: ${domain || "—"}`, 40, 86);
+    doc.text(`Generated: ${generatedAt.toLocaleString()}`, 40, 102);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("PQC Readiness Summary", 40, 120);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    // Use the same boolean used for the table HNDL column (`hndlRisk`) so header matches exported content.
+    const exportAssets = filteredAssets;
+    const hndlCount = exportAssets.filter((a: any) => Boolean(a?.hndlRisk)).length;
+
+    doc.text(
+      `Quantum Safe: ${exportAssets.filter((a: any) => a?.pqcStatus === "quantum-safe").length
+      }   |   PQC Ready: ${exportAssets.filter((a: any) => a?.pqcStatus === "pqc-ready").length
+      }   |   Vulnerable: ${exportAssets.filter((a: any) => a?.pqcStatus === "vulnerable").length
+      }   |   HNDL Risk: ${hndlCount}`,
+      40,
+      134
+    );
+
+    const rows = exportAssets.map((a: any) => [
+      a.assetName ?? "—",
+      a.url ?? "—",
+      a.assetType ?? "—",
+      a.tlsVersion ?? "—",
+      a.keyExchange ?? "—",
+      a.cipherSuite ?? "—",
+      a.ca ?? "—",
+      a.keyLength ?? "—",
+      a.certExpiry ?? "—",
+      a.pqcStatus ?? "—",
+      a.hndlRisk ? "Yes" : "No",
+      a.recommendedMigration ?? "—",
+    ]);
+
+    autoTable(doc, {
+      startY: 160,
+      head: [
+        [
+          "Asset Name",
+          "URL / Endpoint",
+          "Asset Type",
+          "TLS Version",
+          "Key Exchange",
+          "Cipher Suite",
+          "Cert Authority",
+          "Key Length",
+          "Cert Expiry",
+          "PQC Status",
+          "HNDL Risk",
+          "Recommended Migration",
+        ],
+      ],
+      body: rows,
+      styles: { fontSize: 7, cellPadding: 3, overflow: "linebreak" },
+      headStyles: { fillColor: [221, 231, 255], textColor: [0, 0, 0], fontStyle: "bold" },
+      theme: "grid",
+      columnStyles: {
+        1: { cellWidth: 120 },
+        10: { cellWidth: 55 },
+        11: { cellWidth: 170 },
+      },
+    });
+
+    // Footnote
+    const pageCount = doc.getNumberOfPages();
+    doc.setFontSize(8);
+    doc.setTextColor(80);
+    doc.text(
+      "Note: Migration recommendations are indicative and based on scan evidence.",
+      40,
+      820
+    );
+
+    doc.save(`cbom_report_${(domain || "latest").replace(/[^\w.-]+/g, "_")}.pdf`);
+  };
 
   const handleExportServerBundle = async () => {
     try {

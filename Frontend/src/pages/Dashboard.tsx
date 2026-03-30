@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   dashboardService,
   assetService,
@@ -148,6 +149,27 @@ function inferAssetTypeFromPorts(ports: number[]) {
   return "API";
 }
 
+function hash32(input: string): number {
+  // Deterministic 32-bit hash (for stable demo geo pins).
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h << 5) - h + input.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+}
+
+const GEO_CITY_PINS: Array<{ city: string; x: string; y: string }> = [
+  { city: "London", x: "32%", y: "44%" },
+  { city: "Mumbai", x: "58%", y: "58%" },
+  { city: "Nairobi", x: "49%", y: "62%" },
+  { city: "Lagos", x: "42%", y: "70%" },
+  { city: "São Paulo", x: "22%", y: "83%" },
+  { city: "New York", x: "20%", y: "48%" },
+  { city: "Singapore", x: "68%", y: "67%" },
+  { city: "Sydney", x: "78%", y: "84%" },
+];
+
 export default function Dashboard() {
   const [domain, setDomain] = useState("");
   const [scannedDomain, setScannedDomain] = useState("");
@@ -180,6 +202,16 @@ export default function Dashboard() {
   const [controllerEnabled, setControllerEnabled] = useState(false);
   const [controllerMaxSubs, setControllerMaxSubs] = useState(String(DEFAULT_CTRL_MAX_SUBS));
   const [controllerExecSec, setControllerExecSec] = useState(String(DEFAULT_CTRL_EXEC_SEC));
+
+  // Manual asset registration (Portfolio inventory)
+  const [addAssetOpen, setAddAssetOpen] = useState(false);
+  const [addHost, setAddHost] = useState("");
+  const [addParentDomain, setAddParentDomain] = useState("");
+  const [addOwner, setAddOwner] = useState("");
+  const [addEnvironment, setAddEnvironment] = useState("");
+  const [addCriticality, setAddCriticality] = useState("");
+  const [addNotes, setAddNotes] = useState("");
+  const [addSaving, setAddSaving] = useState(false);
 
   const [policyAlignment, setPolicyAlignment] = useState<{
     has_scan?: boolean;
@@ -242,7 +274,7 @@ export default function Dashboard() {
 
   const refreshDashboardData = async (v1FallbackPayload: any = null) => {
     try {
-      const [sumRes, assetRes, dnsRes, cryptoRes, distRes, polRes, migRes] = await Promise.all([
+      const [sumRes, assetRes, dnsRes, cryptoRes, distRes, polRes, migRes, recentRes] = await Promise.all([
         dashboardService.getSummary().catch(() => ({ data: null })),
         assetService.getAll({ page_size: 100 }).catch(() => ({ data: { items: [] } })),
         dnsService.getNameServerRecords().catch(() => ({ data: [] })),
@@ -250,6 +282,9 @@ export default function Dashboard() {
         assetService.getDistribution().catch(() => ({ data: [] })),
         dashboardService.getPolicyAlignment().catch(() => ({ data: null })),
         dashboardService.getMigrationSnapshot().catch(() => ({ data: null })),
+        scanService
+          .getRecentScans(8)
+          .catch(() => ({ data: { scans: [] } })),
       ]);
 
       if (sumRes.data) setSummary(sumRes.data);
@@ -341,6 +376,67 @@ export default function Dashboard() {
         setCryptoSecurityData(cryptoRecords.slice(0, 5));
       }
 
+      // ── Activity Feed + Geo Pins (Overview tiles) ────────────────────────
+      const scans = Array.isArray(recentRes?.data?.scans) ? recentRes.data.scans : [];
+      const activity = scans.slice(0, 6).map((s: any) => {
+        const st = String(s?.status || "").toLowerCase();
+        const completedOrStarted = s?.completed_at || s?.started_at;
+        const when = completedOrStarted ? new Date(completedOrStarted).toLocaleString() : "—";
+
+        const statusLabel =
+          st === "completed" ? "Completed" :
+          st === "failed" ? "Failed" :
+          st === "running" ? "Running" :
+          st === "pending" ? "Queued" :
+          (st ? st.charAt(0).toUpperCase() + st.slice(1) : "Unknown");
+
+        const color =
+          st === "completed" ? "#22c55e" :
+          st === "failed" ? "#ef4444" :
+          st === "running" ? "#38bdf8" :
+          st === "pending" ? "#f59e0b" :
+          "#94a3b8";
+
+        const icon =
+          st === "completed" ? "✅" :
+          st === "failed" ? "❌" :
+          st === "running" ? "⏳" :
+          st === "pending" ? "🕒" :
+          "•";
+
+        return {
+          icon,
+          color,
+          msg: `${statusLabel}: ${s?.domain || "—"}`,
+          time: when,
+        };
+      });
+      setActivityFeed(activity);
+
+      // NOTE: We don't yet store real geo-location in scan output.
+      // For the demo UI, we generate stable "world pins" from discovered IP strings.
+      const ipStrings = (assets as any[])
+        .map((a: any) => (a?.ipv4 && String(a.ipv4).trim() ? String(a.ipv4) : (a?.ipv6 ? String(a.ipv6) : "")))
+        .filter((ip: string) => ip.length > 0);
+
+      if (ipStrings.length === 0) {
+        setGeoPins([]);
+      } else {
+        const cityCounts = new Map<string, number>();
+        for (const ip of ipStrings) {
+          const idx = hash32(ip) % GEO_CITY_PINS.length;
+          const city = GEO_CITY_PINS[idx]?.city ?? "—";
+          cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+        }
+        const sortedCities = Array.from(cityCounts.entries()).sort((a, b) => b[1] - a[1]);
+        const top = sortedCities.slice(0, 8);
+        const pins = top.map(([city]) => {
+          const tpl = GEO_CITY_PINS.find((c) => c.city === city) ?? GEO_CITY_PINS[0];
+          return { city, x: tpl.x, y: tpl.y };
+        });
+        setGeoPins(pins);
+      }
+
       if (!assets.length && v1FallbackPayload) {
         applyV1Fallback(v1FallbackPayload);
       }
@@ -349,6 +445,43 @@ export default function Dashboard() {
       toast.error("Could not load dashboard data. Check the API URL and that the backend is running.");
     } finally {
       setInitialLoadDone(true);
+    }
+  };
+
+  const submitAddAsset = async () => {
+    const host = addHost.trim().toLowerCase();
+    if (!host) {
+      toast.error("Host is required (e.g. api.bank.in)");
+      return;
+    }
+    setAddSaving(true);
+    try {
+      await assetService.importRegisteredAssets({
+        source: "manual",
+        parent_domain: addParentDomain.trim().toLowerCase() || undefined,
+        items: [
+          {
+            host,
+            owner: addOwner.trim() || undefined,
+            environment: addEnvironment.trim() || undefined,
+            criticality: addCriticality.trim() || undefined,
+            notes: addNotes.trim() || undefined,
+          },
+        ],
+      });
+      toast.success("Asset added to inventory");
+      setAddAssetOpen(false);
+      setAddHost("");
+      setAddParentDomain("");
+      setAddOwner("");
+      setAddEnvironment("");
+      setAddCriticality("");
+      setAddNotes("");
+      await refreshDashboardData();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to add asset");
+    } finally {
+      setAddSaving(false);
     }
   };
 
@@ -1007,6 +1140,7 @@ export default function Dashboard() {
               <button
                 type="button"
                 className="flex items-center gap-1.5 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+                onClick={() => setAddAssetOpen(true)}
               >
                 + Add Asset ▾
               </button>
@@ -1037,6 +1171,95 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Add Asset (manual registration) */}
+      <Sheet open={addAssetOpen} onOpenChange={setAddAssetOpen}>
+        <SheetContent a11yTitle="Add asset" className="w-full sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle className="text-left">Add asset</SheetTitle>
+          </SheetHeader>
+          <div className="mt-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label>Host *</Label>
+              <Input
+                value={addHost}
+                onChange={(e) => setAddHost(e.target.value)}
+                placeholder="api.bank.in"
+                className="bg-secondary"
+                maxLength={253}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                This registers the host in Portfolio inventory (source: manual). Include it in future scans by enabling “merge registered inventory”.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Parent domain (optional)</Label>
+                <Input
+                  value={addParentDomain}
+                  onChange={(e) => setAddParentDomain(e.target.value)}
+                  placeholder="bank.in"
+                  className="bg-secondary"
+                  maxLength={253}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Owner (optional)</Label>
+                <Input
+                  value={addOwner}
+                  onChange={(e) => setAddOwner(e.target.value)}
+                  placeholder="Payments team"
+                  className="bg-secondary"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Environment (optional)</Label>
+                <Input
+                  value={addEnvironment}
+                  onChange={(e) => setAddEnvironment(e.target.value)}
+                  placeholder="prod / stage"
+                  className="bg-secondary"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Criticality (optional)</Label>
+                <Input
+                  value={addCriticality}
+                  onChange={(e) => setAddCriticality(e.target.value)}
+                  placeholder="critical / high / medium / low"
+                  className="bg-secondary"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Notes (optional)</Label>
+              <Textarea
+                value={addNotes}
+                onChange={(e) => setAddNotes(e.target.value)}
+                placeholder="Why this asset matters, onboarding details, etc."
+                className="bg-secondary"
+                rows={3}
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setAddAssetOpen(false)}
+                disabled={addSaving}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={submitAddAsset} disabled={addSaving}>
+                {addSaving ? "Saving…" : "Save asset"}
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Name Server + Crypto */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 relative">

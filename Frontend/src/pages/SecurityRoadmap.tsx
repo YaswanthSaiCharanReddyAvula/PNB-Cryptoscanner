@@ -5,7 +5,7 @@ import { Loader2, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Check, MapPin 
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { roadmapService } from "@/services/api";
+import { roadmapService, scanService } from "@/services/api";
 import { getLastScannedDomain } from "@/lib/lastScanDomain";
 import {
   inferTierRoadmapStep,
@@ -35,6 +35,14 @@ type RoadmapResponse = {
   quantum_score?: number;
   items?: RoadmapItem[];
   disclaimer?: string;
+};
+
+type RecentScanRow = {
+  scan_id: string;
+  domain: string;
+  status: string;
+  completed_at?: string;
+  started_at?: string;
 };
 
 function priorityBadge(priority: string | undefined) {
@@ -76,6 +84,8 @@ export default function SecurityRoadmap() {
   const [loading, setLoading] = useState(true);
   const [noSession, setNoSession] = useState(false);
   const [tierTableOpen, setTierTableOpen] = useState(true);
+  const [recentCompleted, setRecentCompleted] = useState<RecentScanRow[]>([]);
+  const [selectedScanId, setSelectedScanId] = useState<string>("");
 
   const load = useCallback(async (domain: string) => {
     const d = domain.trim().toLowerCase();
@@ -134,10 +144,52 @@ export default function SecurityRoadmap() {
     }
   }, []);
 
+  const loadByScanId = useCallback(async (scanId: string) => {
+    const sid = (scanId || "").trim();
+    if (!sid) return;
+    setNoSession(false);
+    setLoading(true);
+    setData(null);
+    try {
+      const res = await roadmapService.getSecurityRoadmapByScanId(sid);
+      setData(res.data as RoadmapResponse);
+      setActiveDomain(
+        (res.data as RoadmapResponse)?.domain ? String((res.data as RoadmapResponse).domain) : null,
+      );
+    } catch (err: unknown) {
+      const ax = err as { response?: { status?: number; data?: { detail?: string } } };
+      toast.error(ax.response?.data?.detail || "Failed to load historical roadmap.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const refreshRecentCompleted = useCallback(async () => {
+    try {
+      const res = await scanService.getRecentScans(40, "completed");
+      const rows = Array.isArray(res.data?.scans) ? (res.data.scans as any[]) : [];
+      const mapped = rows
+        .filter((r) => r?.scan_id && r?.domain)
+        .map((r) => ({
+          scan_id: String(r.scan_id),
+          domain: String(r.domain),
+          status: String(r.status || "completed"),
+          completed_at: r.completed_at ? String(r.completed_at) : undefined,
+          started_at: r.started_at ? String(r.started_at) : undefined,
+        })) as RecentScanRow[];
+      setRecentCompleted(mapped);
+    } catch {
+      // non-blocking
+      setRecentCompleted([]);
+    }
+  }, []);
+
   useEffect(() => {
     const d = getLastScannedDomain();
     if (d) load(d);
     else loadLatest();
+    void refreshRecentCompleted();
   }, [location.key, load]);
 
   const items = data?.items ?? [];
@@ -161,20 +213,54 @@ export default function SecurityRoadmap() {
               <p className="mt-1 text-sm text-muted-foreground">None set — run a scan from Overview first.</p>
             )}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0 gap-2 border-primary/40"
-            disabled={loading || !getLastScannedDomain()}
-            onClick={() => {
-              const d = getLastScannedDomain();
-              if (d) load(d);
-            }}
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Refresh roadmap
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Past scans
+              </span>
+              <select
+                value={selectedScanId}
+                onChange={(e) => {
+                  const sid = e.target.value;
+                  setSelectedScanId(sid);
+                  if (sid) void loadByScanId(sid);
+                }}
+                className="h-9 rounded-md border border-border bg-secondary px-2 text-xs"
+                title="Load roadmap from a previous completed scan"
+              >
+                <option value="">Latest (auto)</option>
+                {recentCompleted.map((s) => {
+                  const when = s.completed_at || s.started_at || "";
+                  const label = `${s.domain}${when ? ` · ${new Date(when).toLocaleString()}` : ""}`;
+                  return (
+                    <option key={s.scan_id} value={s.scan_id}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0 gap-2 border-primary/40"
+              disabled={loading}
+              onClick={() => {
+                if (selectedScanId) void loadByScanId(selectedScanId);
+                else {
+                  const d = getLastScannedDomain();
+                  if (d) void load(d);
+                  else void loadLatest();
+                }
+                void refreshRecentCompleted();
+              }}
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh roadmap
+            </Button>
+          </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Start or change the domain on{" "}

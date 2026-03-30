@@ -1,0 +1,6 @@
+Update README and hackathon demo features
+
+- Rewrite root README for judges: problem, gaps, novelty, architecture, impact, scalability, and limitations.
+- Improve demo UX: historical security roadmap viewing, data-based CBOM PDF export, dashboard activity/geo tiles, Add Asset flow.
+- Clean up frontend branding/tooling and accessibility improvements.
+

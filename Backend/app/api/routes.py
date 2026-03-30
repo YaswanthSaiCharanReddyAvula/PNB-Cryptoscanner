@@ -1325,6 +1325,40 @@ async def get_security_roadmap_latest():
     }
 
 
+@router.get(
+    "/security-roadmap/scan/{scan_id}",
+    summary="Security roadmap: by scan_id (historical scans)",
+    tags=["Scanner"],
+)
+async def get_security_roadmap_by_scan_id(scan_id: str):
+    """
+    Load a roadmap for a specific historical scan (completed scans recommended).
+    This enables the UI to browse previous scans without typing a domain.
+    """
+    sid = (scan_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="scan_id is required")
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({"scan_id": sid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    items = build_security_roadmap(doc)
+    q = doc.get("quantum_score") or {}
+    return {
+        "domain": doc.get("domain"),
+        "scan_id": doc.get("scan_id"),
+        "scan_status": doc.get("status"),
+        "completed_at": doc.get("completed_at"),
+        "quantum_risk_level": q.get("risk_level"),
+        "quantum_score": q.get("score"),
+        "items": items,
+        "disclaimer": (
+            "Indicative guidance derived from external scan signals; validate with architecture, "
+            "application, and PKI owners before production or compliance commitments."
+        ),
+    }
+
+
 # ════════════════════════════════════════════════════════════════════
 # Dashboard Summary
 # ════════════════════════════════════════════════════════════════════
@@ -2807,27 +2841,54 @@ async def demo_login(payload: LoginPayload):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    demo_email = "scanner@example.com"
+    demo_admin_email = "scanner@example.com"
+    demo_employee_email = "employee@example.com"
     demo_password = "pass123"
+
     email_norm = (payload.email or "").strip().lower()
     user_norm = (payload.username or "").strip().lower()
     pwd = (payload.password or "").strip()
-    identity_ok = (
-        email_norm == demo_email
-        or user_norm == demo_email
+
+    identity_admin_ok = (
+        email_norm == demo_admin_email
+        or user_norm == demo_admin_email
         or user_norm == "scanner"
+        or user_norm == "admin"
     )
-    if identity_ok and pwd == demo_password:
+    identity_employee_ok = (
+        email_norm == demo_employee_email
+        or user_norm == demo_employee_email
+        or user_norm == "employee"
+    )
+
+    if pwd == demo_password and identity_admin_ok:
+        token_id = uuid.uuid4().hex[:8]
         return {
-            "access_token": f"demo-token-scanner-{uuid.uuid4().hex[:8]}",
+            "access_token": f"demo-token-admin-{token_id}",
             "token_type": "bearer",
             "role": "Admin",
             "user": {
-                "id": uuid.uuid4().hex[:8],
-                "username": "scanner",
-                "email": demo_email,
-                "full_name": "Scanner Operator",
+                "id": token_id,
+                "username": "admin",
+                "email": demo_admin_email,
+                "full_name": "Admin Operator",
                 "role": "Admin",
+                "is_active": True,
+            },
+        }
+
+    if pwd == demo_password and identity_employee_ok:
+        token_id = uuid.uuid4().hex[:8]
+        return {
+            "access_token": f"demo-token-employee-{token_id}",
+            "token_type": "bearer",
+            "role": "Employee",
+            "user": {
+                "id": token_id,
+                "username": "employee",
+                "email": demo_employee_email,
+                "full_name": "Employee Operator",
+                "role": "Employee",
                 "is_active": True,
             },
         }

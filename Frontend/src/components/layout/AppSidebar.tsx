@@ -59,31 +59,24 @@ export function AppSidebar() {
   return (
     <Sidebar
       collapsible="icon"
-      className="border-r border-slate-800/50"
-      style={{ backgroundColor: "#0b1220" }}
+      className="border-r border-border bg-card"
     >
-      <SidebarHeader className="border-b border-white/5 px-4 py-5">
-        <Link to="/" className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-500">
-            The Sentinel
-          </span>
+      <SidebarHeader className="border-b border-border px-4 py-4">
+        <Link to="/" className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-secondary text-foreground">
+            <ShieldCheck className="h-4 w-4" />
+          </div>
           {!collapsed && (
-            <span className="text-xs font-medium leading-snug text-slate-300">
-              Intelligence Dossier
-            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground leading-tight">
+                QuantumShield
+              </p>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                Quantum‑safe migration platform
+              </p>
+            </div>
           )}
         </Link>
-        {!collapsed && (
-          <div className="mt-3 flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600/20 text-blue-400">
-              <ShieldCheck className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-white">QuantumShield</p>
-              <p className="text-[10px] text-slate-500">Crypto resilience</p>
-            </div>
-          </div>
-        )}
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-4">
@@ -101,8 +94,8 @@ export function AppSidebar() {
                         className={[
                           "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors",
                           active
-                            ? "bg-white/[0.08] text-white shadow-[inset_3px_0_0_0_#3b82f6]"
-                            : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200",
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                         ].join(" ")}
                         activeClassName=""
                       >
@@ -118,11 +111,11 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-white/5 p-3">
+      <SidebarFooter className="border-t border-border p-3">
         {!collapsed && (
           <Button
             asChild
-            className="mb-3 w-full rounded-lg bg-white text-slate-900 hover:bg-slate-100"
+            className="mb-3 w-full rounded-lg"
           >
             <Link to="/" className="gap-2 font-semibold">
               <Zap className="h-4 w-4" />
@@ -133,7 +126,7 @@ export function AppSidebar() {
         <div className="flex flex-col gap-1">
           <a
             href="#"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:text-slate-300"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={(e) => e.preventDefault()}
           >
             <LifeBuoy className="h-3.5 w-3.5" />
@@ -141,7 +134,7 @@ export function AppSidebar() {
           </a>
           <a
             href="#"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:text-slate-300"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={(e) => e.preventDefault()}
           >
             <BookOpen className="h-3.5 w-3.5" />
