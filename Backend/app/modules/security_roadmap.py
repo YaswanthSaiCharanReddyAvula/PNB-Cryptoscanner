@@ -48,6 +48,17 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
     weak_cipher_ep: Set[str] = set()
     small_key_ep: Set[str] = set()
     no_fs_ep: Set[str] = set()
+    conf_by_ep: Dict[str, str] = {}
+
+    for t in tls_results:
+        if t.get("error"):
+            continue
+        ep = _host_port(t)
+        conf = t.get("confidence")
+        if conf is None:
+            conf_by_ep[ep] = "low"
+        else:
+            conf_by_ep[ep] = str(conf)
 
     for t in tls_results:
         if t.get("error"):
@@ -74,6 +85,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
         solution: str,
         actions: str,
         priority: str,
+        confidence: str = "medium",
     ) -> None:
         rows.append(
             {
@@ -85,6 +97,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
                 "priority": priority,
                 "solution": solution,
                 "actions": actions,
+                "confidence": confidence,
             }
         )
 
@@ -93,6 +106,15 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
         preview = ", ".join(ep[:15])
         if len(ep) > 15:
             preview += f" … (+{len(ep) - 15} more)"
+
+        confs = [conf_by_ep.get(x, "low") for x in ep]
+        # Worst-case confidence for safety in UI.
+        confidence = "high"
+        if "low" in confs:
+            confidence = "low"
+        elif "medium" in confs:
+            confidence = "medium"
+
         add_row(
             "tls-legacy-protocol",
             "Legacy TLS or SSL protocol enabled",
@@ -100,6 +122,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
             "Disable SSL, TLS 1.0, and TLS 1.1. Prefer TLS 1.3; minimum interim target TLS 1.2 with AEAD only.",
             "Update load balancers, reverse proxies, and origin configs; test clients and middleboxes; re-scan to verify.",
             "critical",
+            confidence=confidence,
         )
 
     if weak_cipher_ep:
@@ -107,6 +130,14 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
         preview = ", ".join(ep[:15])
         if len(ep) > 15:
             preview += f" … (+{len(ep) - 15} more)"
+
+        confs = [conf_by_ep.get(x, "low") for x in ep]
+        confidence = "high"
+        if "low" in confs:
+            confidence = "low"
+        elif "medium" in confs:
+            confidence = "medium"
+
         add_row(
             "tls-weak-cipher",
             "Weak or obsolete cipher suite",
@@ -114,6 +145,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
             "Prefer ECDHE (or DHE) key exchange with AES-GCM or ChaCha20-Poly1305; remove RC4, 3DES, MD5, NULL, EXPORT.",
             "Align cipher suites to an org standard profile (e.g. Mozilla intermediate); enable TLS 1.3 where possible.",
             "high",
+            confidence=confidence,
         )
 
     if small_key_ep:
@@ -121,6 +153,14 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
         preview = ", ".join(ep[:15])
         if len(ep) > 15:
             preview += f" … (+{len(ep) - 15} more)"
+
+        confs = [conf_by_ep.get(x, "low") for x in ep]
+        confidence = "high"
+        if "low" in confs:
+            confidence = "low"
+        elif "medium" in confs:
+            confidence = "medium"
+
         add_row(
             "cert-small-key",
             "Server certificate public key under 2048 bits",
@@ -128,6 +168,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
             "Reissue certificates with at least 2048-bit RSA or ECDSA P-256 (or stronger per policy).",
             "Coordinate with PKI team; plan cutover and revocation of weak certs.",
             "high",
+            confidence=confidence,
         )
 
     if no_fs_ep and not legacy_ep:
@@ -135,6 +176,14 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
         preview = ", ".join(ep[:12])
         if len(ep) > 12:
             preview += f" … (+{len(ep) - 12} more)"
+
+        confs = [conf_by_ep.get(x, "low") for x in ep]
+        confidence = "high"
+        if "low" in confs:
+            confidence = "low"
+        elif "medium" in confs:
+            confidence = "medium"
+
         add_row(
             "tls-forward-secrecy",
             "Forward secrecy not indicated for negotiated configuration",
@@ -142,9 +191,16 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
             "Use ECDHE- or DHE-based cipher suites so session keys are ephemeral.",
             "Prefer TLS 1.3; for TLS 1.2 disable static RSA key transport where possible.",
             "medium",
+            confidence=confidence,
         )
 
-    if no_hybrid_ep and len(tls_results) > 0:
+    usable = [t for t in tls_results if not t.get("error")]
+    no_hybrid = len(usable) > 0 and not any(
+        bool(t.get("pqc_kem_observed") or t.get("hybrid_key_exchange")) for t in usable
+    )
+    if no_hybrid:
+        # For PQC/hybrid absence we don't have endpoint-specific signals in this roadmap row,
+        # but we still label confidence for explainability.
         add_row(
             "pqc-readiness-transport",
             "No hybrid / PQC key exchange observed on scanned endpoints",
@@ -152,6 +208,7 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
             "Plan hybrid TLS key exchange pilots (e.g. ML-KEM with classical ECDH) on supported platforms; track NIST and vendor roadmaps.",
             "Validate client population, FIPS modules, and LB termination paths before broad rollout.",
             "low",
+            confidence="low",
         )
 
     return rows
@@ -176,6 +233,7 @@ def build_security_roadmap(scan: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "priority": str(rec.get("priority", "medium")).lower(),
                 "solution": rec.get("recommended_algorithm") or "",
                 "actions": rec.get("migration_notes") or "",
+                "confidence": "medium",
             }
         )
 

@@ -105,13 +105,29 @@ export function determinePQCStatus(
     return "quantum-safe";
   }
 
+  // TLS 1.3 typically provides forward secrecy (ephemeral keys via ECDHE/DHE),
+  // so “Harvest Now, Decrypt Later” risk should not be inferred just because
+  // the cipher string mentions RSA/ECDSA as an authentication component.
+  const weakIndicators = ["rc4", "des", "3des", "md5", "null", "export", "tls 1.0", "tls 1.1"];
+  const isWeak = weakIndicators.some((p) => cipher.includes(p) || tls.includes(p));
+  if (tls.includes("1.3") && !isWeak) {
+    return "pqc-ready";
+  }
+
   // 4. HNDL Risk if TLS <= 1.2 + RSA/DHE
-  if ((tls.includes("1.0") || tls.includes("1.1") || tls.includes("1.2") || tls.includes("ssl")) && (cipher.includes("rsa") || cipher.includes("dh"))) {
+  if (
+    !tls.includes("1.3") &&
+    (tls.includes("1.0") || tls.includes("1.1") || tls.includes("1.2") || tls.includes("ssl")) &&
+    (cipher.includes("rsa") || cipher.includes("dh"))
+  ) {
     return "hndl-risk";
   }
 
   // 3. Quantum Vulnerable (RSA, ECDSA, ECDH, ECC, DH)
-  if (cipher.includes("rsa") || cipher.includes("ecdsa") || cipher.includes("ecc") || cipher.includes("ecdh") || cipher.includes("dh")) {
+  if (
+    !tls.includes("1.3") &&
+    (cipher.includes("rsa") || cipher.includes("ecdsa") || cipher.includes("ecc") || cipher.includes("ecdh") || cipher.includes("dh"))
+  ) {
     return "vulnerable";
   }
 
@@ -149,9 +165,9 @@ export function hndlRiskFromCrypto(
     cipher.toLowerCase().includes(p.toLowerCase()),
   );
   const pqcStatus = determinePQCStatus(tls, cipher, klStr);
-  return (
-    pqcStatus === "hndl-risk" ||
-    pqcStatus === "vulnerable" ||
-    (!isPQCSafe && isWeak)
-  );
+  // Avoid over-flagging: for TLS 1.3, the captured traffic is typically not decryptable later
+  // due to forward secrecy, even if the cipher name contains RSA.
+  if (tls.toLowerCase().includes("1.3") && !isWeak) return false;
+
+  return pqcStatus === "hndl-risk" || pqcStatus === "vulnerable" || (!isPQCSafe && isWeak);
 }

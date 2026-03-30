@@ -34,6 +34,8 @@ const TIER_REFERENCE = [
 export default function CyberRating() {
   const [score1000,     setScore1000]     = useState<number | null>(null);
   const [urlScores,     setUrlScores]     = useState<any[]>([]);
+  const [explain,        setExplain]       = useState<any | null>(null);
+  const [explainOpen,   setExplainOpen]   = useState(true);
   const [tierOpen,      setTierOpen]      = useState(false);
   const [simTls,         setSimTls]         = useState(false);
   const [simPqc,         setSimPqc]         = useState(false);
@@ -61,12 +63,15 @@ export default function CyberRating() {
       if (d?.tier === "N/A" || d == null) {
         setScore1000(null);
         setUrlScores([]);
+        setExplain(null);
       } else if (typeof d.score === "number") {
         setScore1000(Math.round(Math.max(0, Math.min(1000, d.score))));
         if (Array.isArray(d.per_url_scores) && d.per_url_scores.length) setUrlScores(d.per_url_scores);
+        setExplain(d.explain ?? null);
       }
     } catch {
       setScore1000(null);
+      setExplain(null);
     }
   }, []);
 
@@ -181,6 +186,75 @@ export default function CyberRating() {
           </>
         )}
       </motion.div>
+
+      {/* Explainability panel */}
+      {explain && score1000 !== null && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.06 }}
+          className="rounded-xl border border-border bg-card p-6"
+        >
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-3"
+            onClick={() => setExplainOpen((v) => !v)}
+          >
+            <div>
+              <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">
+                Why this tier
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Heuristic evidence summary from TLS scan rows (not a formal certification).
+              </p>
+            </div>
+            <div className="text-muted-foreground">{explainOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</div>
+          </button>
+
+          <AnimatePresence initial={false}>
+            {explainOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.25 }}
+                className="mt-4"
+              >
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <span className="text-xs px-2 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary font-semibold">
+                    TLS 1.3: {explain.evidence?.tls_1_3 ?? 0}/{explain.evidence?.tls_total ?? 0}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded border border-amber-500/20 bg-amber-500/5 text-amber-700 font-semibold">
+                    Legacy TLS: {explain.evidence?.legacy_tls ?? 0}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
+                    Weak ciphers: {explain.evidence?.weak_cipher_indicators ?? 0}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
+                    HNDL risk: {explain.evidence?.hndl_risk_inferred ?? 0}
+                  </span>
+                </div>
+
+                {Array.isArray(explain.drivers) && explain.drivers.length > 0 ? (
+                  <div className="space-y-1">
+                    {explain.drivers.map((d: string, i: number) => (
+                      <p key={i} className="text-sm text-foreground/90">
+                        • {d}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No evidence drivers found.</p>
+                )}
+
+                {explain.note && (
+                  <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{explain.note}</p>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      )}
 
       <motion.div
         initial={{ opacity: 0, y: 10 }}

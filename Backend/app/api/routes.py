@@ -781,12 +781,22 @@ async def scans_recent(limit: int = 80, status_filter: Optional[str] = None):
         qs = doc.get("quantum_score") or {}
         if not isinstance(qs, dict):
             qs = {}
+        raw = doc.get("status")
+        st = str(raw or "").strip().lower()
+        if "." in st:
+            st = st.split(".")[-1]
+        err = doc.get("error")
+        err_s = (str(err).strip() if err is not None else "")[:400]
+        # Inconsistent writes: pipeline recorded error but status never flipped from running/pending
+        if err_s and st in ("running", "pending"):
+            st = "failed"
         out.append(
             {
                 "scan_id": doc.get("scan_id"),
                 "domain": doc.get("domain"),
                 "batch_id": doc.get("batch_id"),
-                "status": doc.get("status"),
+                "status": st or str(raw or "unknown"),
+                "error": err_s or None,
                 "started_at": doc.get("started_at"),
                 "completed_at": doc.get("completed_at"),
                 "quantum_score": qs.get("score"),
@@ -1575,47 +1585,64 @@ async def get_assets():
         {"status": "completed"}, sort=[("completed_at", -1)]
     ).to_list(length=10)
 
-    assets = []
+    # One row per hostname; newest completed scan wins (scans are newest-first).
+    seen_hosts: set[str] = set()
+    assets: List[dict] = []
     for scan in scans:
         tls_map = {t.get("host"): t for t in scan.get("tls_results", [])}
-        for a in scan.get("assets", []):
-            host = a.get("subdomain", "")
+        for a in scan.get("assets", []) or []:
+            host = (a.get("subdomain") or "").strip()
+            if not host:
+                continue
+            key = host.lower()
+            if key in seen_hosts:
+                continue
+            seen_hosts.add(key)
+
             tls = tls_map.get(host, {})
             cert = tls.get("certificate") or {}
-            
+
             # Infer fields (must match /dashboard/summary and /assets/distribution)
             ports = a.get("open_ports") or []
             a_type = asset_type_label(classify_asset_ports(ports))
-            
-            days = cert.get("days_until_expiry")
-            if days is None: cert_status_slug = "unknown"
-            elif days <= 0: cert_status_slug = "expired"
-            elif days <= 30: cert_status_slug = "expiring_soon"
-            else: cert_status_slug = "valid"
 
-            assets.append({
-                "asset_name": host,
-                "url": f"https://{host}",
-                "ipv4": a.get("ip", ""),
-                "ipv6": "",
-                "type": a_type,
-                "owner": "",
-                "risk": scan.get("quantum_score", {}).get("risk_level", "").capitalize(),
-                "hndlRisk": False,
-                "certificate_status": cert_status_slug,
-                "certStatus": cert_status_slug.replace("_", " ").title() if cert_status_slug != "unknown" else "",
-                "pqcStatus": "Ready" if tls.get("tls_version") == "TLSv1.3" else "",
-                "key_length": str(tls.get("cipher_bits") or ""),
-                "last_scan": str(scan.get("completed_at", ""))[:10],
-                "tls_version": tls.get("tls_version", ""),
-                "cipher_suite": tls.get("cipher_suite", ""),
-            })
+            days = cert.get("days_until_expiry")
+            if days is None:
+                cert_status_slug = "unknown"
+            elif days <= 0:
+                cert_status_slug = "expired"
+            elif days <= 30:
+                cert_status_slug = "expiring_soon"
+            else:
+                cert_status_slug = "valid"
+
+            assets.append(
+                {
+                    "asset_name": host,
+                    "url": f"https://{host}",
+                    "ipv4": a.get("ip", ""),
+                    "ipv6": "",
+                    "type": a_type,
+                    "owner": "",
+                    "risk": scan.get("quantum_score", {}).get("risk_level", "").capitalize(),
+                    "hndlRisk": False,
+                    "certificate_status": cert_status_slug,
+                    "certStatus": cert_status_slug.replace("_", " ").title()
+                    if cert_status_slug != "unknown"
+                    else "",
+                    "pqcStatus": "Ready" if tls.get("tls_version") == "TLSv1.3" else "",
+                    "key_length": str(tls.get("cipher_bits") or ""),
+                    "last_scan": str(scan.get("completed_at", ""))[:10],
+                    "tls_version": tls.get("tls_version", ""),
+                    "cipher_suite": tls.get("cipher_suite", ""),
+                }
+            )
 
     return {
         "items": assets,
         "total": len(assets),
         "page": 1,
-        "page_size": 100
+        "page_size": 100,
     }
 
 
@@ -1626,12 +1653,22 @@ async def get_asset_distribution():
         {"status": "completed"}, sort=[("completed_at", -1)]
     ).to_list(length=10)
 
+    # Unique hosts only; classify using the newest scan row for each (same as GET /assets).
+    seen_hosts: set[str] = set()
     public_web_apps = 0
     apis = 0
     servers = 0
-    
+
     for s in scans:
-        for a in s.get("assets", []):
+        for a in s.get("assets", []) or []:
+            sub = (a.get("subdomain") or "").strip()
+            if not sub:
+                continue
+            key = sub.lower()
+            if key in seen_hosts:
+                continue
+            seen_hosts.add(key)
+
             cat = classify_asset_ports(a.get("open_ports") or [])
             if cat == "web_app":
                 public_web_apps += 1
@@ -1843,6 +1880,70 @@ async def get_cyber_rating():
     score_1000 = int(raw_score * 10)
     
     tier = "Elite-PQC" if score_1000 > 700 else "Standard" if score_1000 >= 400 else "Legacy"
+
+    # Explainability: derive a small evidence summary from tls_results.
+    # This is intentionally heuristic and only intended to justify the tier to users.
+    tls_results = scan.get("tls_results", []) or []
+
+    legacy_ver = {"TLSv1.0", "TLSv1.1", "TLSv1", "SSLv3", "SSLv2"}
+    weak_tokens = ["RC4", "DES", "3DES", "MD5", "NULL", "EXPORT", "TLS 1.0", "TLS 1.1"]
+    pqc_tokens = ["KYBER", "DILITHIUM", "FALCON", "SPHINCS", "ML-KEM", "MLKEM", "ML_KEM", "ML-DSA"]
+
+    def _tls_ver(t: dict) -> str:
+        return str(t.get("tls_version") or "").strip()
+
+    def _cipher(t: dict) -> str:
+        return str(t.get("cipher_suite") or "").upper()
+
+    def _is_weak_indicator(t: dict) -> bool:
+        tls = _tls_ver(t).upper()
+        cipher = _cipher(t)
+        return any(tok in cipher for tok in weak_tokens) or any(tok in tls for tok in weak_tokens)
+
+    def _is_legacy_tls(t: dict) -> bool:
+        tls = _tls_ver(t)
+        return tls in legacy_ver or tls.startswith("SSL")
+
+    def _is_hndl_risk(t: dict) -> bool:
+        tls = _tls_ver(t)
+        cipher = _cipher(t)
+        is_weak = _is_weak_indicator(t)
+        is_pqc_safe = any(tok in cipher for tok in pqc_tokens)
+
+        # Avoid over-flagging TLS 1.3 endpoints for HNDL solely due to RSA mentions.
+        # If TLS 1.3 with no weak indicators is observed, we treat HNDL risk as not inferred.
+        if "1.3" in tls and not is_weak:
+            return False
+
+        tls_low = tls.lower()
+        if is_pqc_safe:
+            return False
+
+        return (
+            ("1.0" in tls_low)
+            or ("1.1" in tls_low)
+            or ("1.2" in tls_low)
+            or ("ssl" in tls_low)
+        ) and ("rsa" in cipher.lower() or "dh" in cipher.lower())
+
+    tls_total = len(tls_results)
+    tls_1_3 = sum(1 for t in tls_results if _tls_ver(t) == "TLSv1.3" or _tls_ver(t).endswith("1.3"))
+    tls_1_2 = sum(1 for t in tls_results if _tls_ver(t) == "TLSv1.2" or _tls_ver(t).endswith("1.2"))
+    legacy_count = sum(1 for t in tls_results if _is_legacy_tls(t))
+    weak_cipher_count = sum(1 for t in tls_results if _is_weak_indicator(t))
+    hndl_risk_count = sum(1 for t in tls_results if _is_hndl_risk(t))
+
+    drivers: List[str] = []
+    if tls_total:
+        drivers.append(f"TLSv1.3 endpoints: {tls_1_3}/{tls_total}")
+        if legacy_count:
+            drivers.append(f"Legacy TLS endpoints: {legacy_count}")
+        if weak_cipher_count:
+            drivers.append(f"Weak/obsolete cipher indicators: {weak_cipher_count}")
+        if hndl_risk_count:
+            drivers.append(f"HNDL risk inferred (heuristic): {hndl_risk_count}")
+    else:
+        drivers.append("No TLS evidence rows found for this scan.")
     
     # Per-URL scores
     per_url = []
@@ -1861,6 +1962,20 @@ async def get_cyber_rating():
         "max_score": 1000,
         "tier": tier,
         "tier_description": f"Overall {tier} security posture",
+        "explain": {
+            "score": score_1000,
+            "tier": tier,
+            "evidence": {
+                "tls_total": tls_total,
+                "tls_1_3": tls_1_3,
+                "tls_1_2": tls_1_2,
+                "legacy_tls": legacy_count,
+                "weak_cipher_indicators": weak_cipher_count,
+                "hndl_risk_inferred": hndl_risk_count,
+            },
+            "drivers": drivers,
+            "note": "Explainability is heuristic and derived from tls_results evidence only; validate with PKI and engineering owners."
+        },
         "tiers": [
             {"status": "Legacy",    "range": "< 400"},
             {"status": "Standard",  "range": "400 till 700"},
@@ -2487,28 +2602,60 @@ async def delete_waiver(
 
 @router.get("/discovery/assets", summary="Get discovered asset inventory", tags=["Discovery"])
 async def get_discovery_assets():
+    """
+    Flat list of discovered hosts for Asset Discovery UI (Domains tab).
+
+    Frontend expects per row: `asset` or `name` (FQDN), `last_seen` (ISO-ish),
+    plus optional display fields. Deduplicates by subdomain keeping the newest scan.
+    """
     db = get_database()
     scans = await db[SCANS_COLLECTION].find(
         {"status": "completed"}, sort=[("completed_at", -1)]
-    ).to_list(length=5)
+    ).to_list(length=25)
 
-    results = []
+    seen_subdomains: set[str] = set()
+    results: List[dict] = []
+
     for scan in scans:
-        for a in scan.get("assets", []):
-            # Derive company name from domain or use a fallback
-            domain_name = scan.get("domain", "")
-            company = domain_name.split('.')[0].capitalize() if domain_name else ""
-            
-            results.append({
-                "detection_date": str(scan.get("completed_at", ""))[:10],
-                "ip_address": a.get("ip", ""),
-                "ports": ", ".join(str(p) for p in a.get("open_ports", [])),
-                "subnets": "",
-                "asn": "",
-                "net_name": "",
-                "location": "",
-                "company": company,
-            })
+        completed = scan.get("completed_at")
+        last_seen = ""
+        if completed is not None:
+            last_seen = completed.isoformat() if hasattr(completed, "isoformat") else str(completed)
+        detection_date = last_seen[:10] if last_seen else ""
+        root_domain = (scan.get("domain") or "").strip().lower()
+
+        for a in scan.get("assets", []) or []:
+            sub = (a.get("subdomain") or "").strip()
+            if not sub:
+                continue
+            key = sub.lower()
+            if key in seen_subdomains:
+                continue
+            seen_subdomains.add(key)
+
+            company_from_root = root_domain.split(".")[0].capitalize() if root_domain else ""
+            company_from_host = sub.split(".")[0].capitalize() if sub else ""
+
+            results.append(
+                {
+                    # Domains table (AssetDiscovery.tsx)
+                    "asset": sub,
+                    "name": sub,
+                    "last_seen": last_seen or detection_date,
+                    "detection_date": detection_date,
+                    "registration_date": "",
+                    "registrar": "",
+                    "company": company_from_root or company_from_host,
+                    # Extra context for other clients / future columns
+                    "ip_address": a.get("ip") or "",
+                    "open_ports": list(a.get("open_ports") or []),
+                    "ports": ", ".join(str(p) for p in (a.get("open_ports") or [])),
+                    "scan_domain": root_domain,
+                    "owner": a.get("owner") or "",
+                    "environment": a.get("environment") or "",
+                    "criticality": a.get("criticality") or "",
+                }
+            )
 
     return results
 

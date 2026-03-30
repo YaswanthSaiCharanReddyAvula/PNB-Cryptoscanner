@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useMemo } from "react";
 import { DataTable } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { assetService } from "@/services/api";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 
@@ -16,12 +23,19 @@ function getExposure(ip: string) {
   return "Public";
 }
 
+type PortfolioRow = {
+  host: string;
+  parentDomain: string;
+  risk: string;
+  owner: string;
+  lastScan: string;
+};
+
 export default function AssetInventory() {
   const [filterExposure, setFilterExposure] = useState("Public Only");
   const [discoveredAssets, setDiscoveredAssets] = useState<any[]>([]);
-  const [portfolioRows, setPortfolioRows] = useState<
-    { host: string; parentDomain: string; risk: string; owner: string; lastScan: string }[]
-  >([]);
+  const [portfolioRows, setPortfolioRows] = useState<PortfolioRow[]>([]);
+  const [portfolioRootFilter, setPortfolioRootFilter] = useState<string>("__all__");
   const [portfolioMeta, setPortfolioMeta] = useState({ host_count: 0, scans_considered: 0 });
   const [stats, setStats] = useState({
     total: 0,
@@ -59,6 +73,27 @@ export default function AssetInventory() {
       })
       .catch(() => setPortfolioRows([]));
   }, []);
+
+  const portfolioRootDomains = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of portfolioRows) {
+      const p = (r.parentDomain || "").trim();
+      if (p && p !== "—") s.add(p);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [portfolioRows]);
+
+  const portfolioFilteredSorted = useMemo(() => {
+    let list = portfolioRows;
+    if (portfolioRootFilter !== "__all__") {
+      list = list.filter((r) => r.parentDomain === portfolioRootFilter);
+    }
+    return [...list].sort((a, b) => {
+      const byParent = a.parentDomain.localeCompare(b.parentDomain, undefined, { sensitivity: "base" });
+      if (byParent !== 0) return byParent;
+      return a.host.localeCompare(b.host, undefined, { sensitivity: "base" });
+    });
+  }, [portfolioRows, portfolioRootFilter]);
 
   useEffect(() => {
     assetService.getInventory()
@@ -132,14 +167,38 @@ export default function AssetInventory() {
         Portfolio view: {portfolioMeta.host_count} unique host(s) from up to{" "}
         {portfolioMeta.scans_considered} recent completed scan(s) (
         <code className="rounded bg-muted px-1 py-0.5 text-[10px]">GET /inventory/summary</code>
-        ).
+        ). Filter by root domain; rows are sorted by root domain, then hostname.
       </p>
+      {portfolioRows.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Scanned root domain</Label>
+            <Select value={portfolioRootFilter} onValueChange={setPortfolioRootFilter}>
+              <SelectTrigger className="h-9 w-full max-w-xs">
+                <SelectValue placeholder="All roots" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All scanned domains</SelectItem>
+                {portfolioRootDomains.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground pb-2">
+            Showing {portfolioFilteredSorted.length} host(s)
+            {portfolioRootFilter !== "__all__" ? ` under ${portfolioRootFilter}` : ""}.
+          </p>
+        </div>
+      )}
       <DataTable
         title="Portfolio hosts (deduplicated)"
         searchable
         searchKeys={["host", "parentDomain", "owner", "risk"]}
         pageSize={10}
-        data={portfolioRows}
+        data={portfolioFilteredSorted}
         columns={[
           { key: "host", header: "Host", render: (r) => <span className="font-mono text-sm text-primary">{r.host as string}</span> },
           { key: "parentDomain", header: "Root domain" },

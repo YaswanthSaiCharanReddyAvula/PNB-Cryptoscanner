@@ -1,9 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, Rocket, ExternalLink } from "lucide-react";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -18,15 +27,42 @@ import { toast } from "sonner";
 type Row = {
   domain: string;
   status?: string;
+  error?: string;
   completed_at?: string;
   started_at?: string;
   scan_id?: string;
   batch_id?: string | null;
 };
 
+function normalizeScanStatus(status: unknown, error: unknown): string {
+  let v = String(status ?? "")
+    .trim()
+    .toLowerCase();
+  if (v.includes(".")) {
+    v = v.split(".").pop() || v;
+  }
+  const err = error != null ? String(error).trim() : "";
+  if (err && (v === "running" || v === "pending")) {
+    return "failed";
+  }
+  return v || "unknown";
+}
+
+type StatusFilter = "all" | "completed" | "running" | "failed";
+type SortMode =
+  | "domain_asc"
+  | "domain_desc"
+  | "started_desc"
+  | "started_asc"
+  | "completed_desc"
+  | "completed_asc";
+
 export default function InventoryRuns() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [domainFilter, setDomainFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sortMode, setSortMode] = useState<SortMode>("domain_asc");
 
   useEffect(() => {
     let cancelled = false;
@@ -36,9 +72,10 @@ export default function InventoryRuns() {
         const res = await scanService.getRecentScans(120);
         const payload = res.data as { scans?: Row[] };
         const scans = Array.isArray(payload?.scans) ? payload.scans : [];
-        const normalized: Row[] = scans.map((s) => ({
+        const normalized: Row[] = scans.map((s: any) => ({
           domain: String(s.domain || ""),
-          status: s.status,
+          status: normalizeScanStatus(s.status, s.error),
+          error: s.error != null ? String(s.error) : undefined,
           completed_at: s.completed_at,
           started_at: s.started_at,
           scan_id: s.scan_id,
@@ -57,8 +94,60 @@ export default function InventoryRuns() {
     };
   }, []);
 
-  const statusBadge = (s?: string) => {
-    const v = (s || "").toLowerCase();
+  const uniqueDomains = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rows) {
+      const d = (r.domain || "").trim().toLowerCase();
+      if (d) s.add(d);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [rows]);
+
+  const filteredSorted = useMemo(() => {
+    const q = domainFilter.trim().toLowerCase();
+    let list = rows.filter((r) => {
+      if (q && !(r.domain || "").toLowerCase().includes(q)) return false;
+      if (statusFilter === "all") return true;
+      const st = (r.status || "").toLowerCase();
+      if (statusFilter === "running") return st === "running" || st === "pending";
+      if (statusFilter === "completed") return st === "completed";
+      if (statusFilter === "failed") return st === "failed";
+      return true;
+    });
+
+    const tStarted = (r: Row) => {
+      const v = r.started_at;
+      return v ? new Date(v).getTime() : 0;
+    };
+    const tCompleted = (r: Row) => {
+      const v = r.completed_at;
+      return v ? new Date(v).getTime() : 0;
+    };
+
+    list = [...list].sort((a, b) => {
+      const cmpDom = (a.domain || "").localeCompare(b.domain || "", undefined, { sensitivity: "base" });
+      switch (sortMode) {
+        case "domain_asc":
+          return cmpDom;
+        case "domain_desc":
+          return -cmpDom;
+        case "started_desc":
+          return tStarted(b) - tStarted(a);
+        case "started_asc":
+          return tStarted(a) - tStarted(b);
+        case "completed_desc":
+          return tCompleted(b) - tCompleted(a);
+        case "completed_asc":
+          return tCompleted(a) - tCompleted(b);
+        default:
+          return 0;
+      }
+    });
+    return list;
+  }, [rows, domainFilter, statusFilter, sortMode]);
+
+  const statusBadge = (r: Row) => {
+    const v = (r.status || "").toLowerCase();
     if (v === "completed")
       return (
         <Badge className="border-0 bg-emerald-50 text-emerald-800 hover:bg-emerald-50">
@@ -67,13 +156,23 @@ export default function InventoryRuns() {
       );
     if (v === "running" || v === "pending")
       return (
-        <Badge className="border-0 bg-blue-50 text-blue-800 hover:bg-blue-50">Running</Badge>
+        <Badge className="border-0 bg-blue-50 text-blue-800 hover:bg-blue-50">
+          {v === "pending" ? "Pending" : "Running"}
+        </Badge>
       );
     if (v === "failed")
-      return <Badge variant="destructive">Failed</Badge>;
+      return (
+        <Badge
+          variant="destructive"
+          title={r.error ? r.error : undefined}
+          className={r.error ? "cursor-help" : undefined}
+        >
+          Failed
+        </Badge>
+      );
     return (
       <Badge variant="secondary" className="text-slate-600">
-        {s || "—"}
+        {r.status || "—"}
       </Badge>
     );
   };
@@ -95,12 +194,75 @@ export default function InventoryRuns() {
       />
 
       <div className="dossier-card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Recent runs
-          </p>
-          <span className="text-xs text-slate-500">{rows.length} jobs</span>
+        <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Recent runs
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Filter by domain and status; sort by domain name or scan times.
+            </p>
+          </div>
+          <span className="text-xs text-slate-500">
+            Showing {filteredSorted.length} of {rows.length} job{rows.length === 1 ? "" : "s"}
+          </span>
         </div>
+
+        {!loading && rows.length > 0 && (
+          <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="inv-domain-filter" className="text-xs text-slate-600">
+                Filter by domain (partial match; browser suggestions list scanned roots)
+              </Label>
+              <Input
+                id="inv-domain-filter"
+                list="inventory-run-domains"
+                placeholder="e.g. bank or example.com"
+                value={domainFilter}
+                onChange={(e) => setDomainFilter(e.target.value)}
+                className="h-9 max-w-xl bg-background"
+              />
+              <datalist id="inventory-run-domains">
+                {uniqueDomains.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 sm:max-w-xl">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-600">Status</Label>
+                <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="running">Running / pending</SelectItem>
+                    <SelectItem value="failed">Failed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-600">Sort by</Label>
+                <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="domain_asc">Domain A → Z</SelectItem>
+                    <SelectItem value="domain_desc">Domain Z → A</SelectItem>
+                    <SelectItem value="started_desc">Started (newest first)</SelectItem>
+                    <SelectItem value="started_asc">Started (oldest first)</SelectItem>
+                    <SelectItem value="completed_desc">Completed (newest first)</SelectItem>
+                    <SelectItem value="completed_asc">Completed (oldest first)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center py-20 text-slate-500">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -109,6 +271,10 @@ export default function InventoryRuns() {
         ) : rows.length === 0 ? (
           <p className="px-4 py-12 text-center text-sm text-slate-500">
             No scans yet. Start a single or batch scan from Overview.
+          </p>
+        ) : filteredSorted.length === 0 ? (
+          <p className="px-4 py-12 text-center text-sm text-slate-500">
+            No runs match your filters. Clear the domain filter or widen status.
           </p>
         ) : (
           <Table>
@@ -138,10 +304,10 @@ export default function InventoryRuns() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
+              {filteredSorted.map((r) => (
                 <TableRow key={`${r.scan_id || r.domain}-${r.started_at}`} className="border-slate-100">
                   <TableCell className="font-medium text-slate-900">{r.domain || "—"}</TableCell>
-                  <TableCell>{statusBadge(r.status)}</TableCell>
+                  <TableCell>{statusBadge(r)}</TableCell>
                   <TableCell className="text-slate-600">
                     {r.started_at ? new Date(r.started_at).toLocaleString() : "—"}
                   </TableCell>

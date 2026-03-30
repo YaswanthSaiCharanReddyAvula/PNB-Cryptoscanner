@@ -23,6 +23,7 @@ type RoadmapItem = {
   priority?: string;
   solution: string;
   actions?: string;
+  confidence?: string;
 };
 
 type RoadmapResponse = {
@@ -53,6 +54,20 @@ function priorityBadge(priority: string | undefined) {
 }
 
 const pathSteps = tierRowsForRoadmapPath();
+
+function confidenceBadge(conf: string | undefined) {
+  const c = (conf || "medium").toLowerCase();
+  const map: Record<string, string> = {
+    high: "bg-emerald-500/12 text-emerald-900 border-emerald-500/25",
+    medium: "bg-sky-500/10 text-sky-800 border-sky-500/25",
+    low: "bg-rose-500/12 text-rose-800 border-rose-500/25",
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] font-semibold uppercase tracking-wide ${map[c] || map.medium}`}>
+      {c}
+    </Badge>
+  );
+}
 
 export default function SecurityRoadmap() {
   const location = useLocation();
@@ -479,7 +494,12 @@ export default function SecurityRoadmap() {
                         key={row.id}
                         className="border-b border-border/80 align-top last:border-0 hover:bg-secondary/20"
                       >
-                        <td className="px-4 py-3 whitespace-nowrap">{priorityBadge(row.priority)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {priorityBadge(row.priority)}
+                            {row.confidence ? confidenceBadge(row.confidence) : null}
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
                           <p className="font-medium text-foreground">{row.risk}</p>
                           {row.risk_detail ? (

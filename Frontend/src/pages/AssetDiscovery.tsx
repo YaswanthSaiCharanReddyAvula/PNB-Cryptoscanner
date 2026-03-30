@@ -271,13 +271,17 @@ export default function AssetDiscovery() {
     assetService.getInventory()
       .then(res => {
         const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
-        setDomainData(items.map((a: any) => ({
-          detectionDate:    a.last_seen?.split("T")[0] || "",
-          domainName:       a.asset || a.name || "",
-          registrationDate: "",
-          registrar:        "",
-          company:          getCompanyFromDomain(a.asset || a.name),
-        })));
+        setDomainData(items.map((a: any) => {
+          const host = a.asset || a.name || a.subdomain || "";
+          const seen = a.last_seen || a.detection_date || "";
+          return {
+            detectionDate:    typeof seen === "string" ? seen.split("T")[0] : "",
+            domainName:       host,
+            registrationDate: a.registration_date || "",
+            registrar:        a.registrar || "",
+            company:          a.company || getCompanyFromDomain(host),
+          };
+        }));
       })
       .catch(() => setDomainData([]));
 
