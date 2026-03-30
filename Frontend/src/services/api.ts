@@ -201,6 +201,8 @@ export const reportingService = {
 export const roadmapService = {
   getSecurityRoadmap: (domain: string) =>
     api.get(`/security-roadmap/${encodeURIComponent(domain.trim().toLowerCase())}`),
+  /** Fallback: roadmap derived from latest completed scan (no domain input). */
+  getSecurityRoadmapLatest: () => api.get("/security-roadmap/latest"),
 };
 
 // ── DNS / Name Server ─────────────────────────────────────────────

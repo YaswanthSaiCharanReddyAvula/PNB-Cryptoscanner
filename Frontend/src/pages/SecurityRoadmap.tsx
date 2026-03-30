@@ -109,16 +109,35 @@ export default function SecurityRoadmap() {
     }
   }, []);
 
+  const loadLatest = useCallback(async () => {
+    setNoSession(false);
+    setLoading(true);
+    setData(null);
+    setActiveDomain(null);
+    try {
+      const res = await roadmapService.getSecurityRoadmapLatest();
+      setData(res.data as RoadmapResponse);
+      setActiveDomain(
+        (res.data as RoadmapResponse)?.domain ? String((res.data as RoadmapResponse).domain) : null,
+      );
+    } catch (err: unknown) {
+      const ax = err as { response?: { status?: number; data?: { detail?: string } } };
+      if (ax.response?.status === 404) {
+        setNoSession(true);
+      } else {
+        toast.error(ax.response?.data?.detail || "Failed to load security roadmap.");
+        setNoSession(true);
+      }
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const d = getLastScannedDomain();
-    if (d) {
-      load(d);
-    } else {
-      setNoSession(true);
-      setLoading(false);
-      setData(null);
-      setActiveDomain(null);
-    }
+    if (d) load(d);
+    else loadLatest();
   }, [location.key, load]);
 
   const items = data?.items ?? [];
@@ -168,7 +187,7 @@ export default function SecurityRoadmap() {
 
       {noSession && !loading && (
         <div className="rounded-xl border border-border bg-card px-6 py-12 text-center text-sm text-muted-foreground">
-          <p className="mb-4">No Overview scan domain is stored in this session yet.</p>
+          <p className="mb-4">No completed scan results found yet.</p>
           <Link to="/" className="font-medium text-primary hover:underline">
             Go to Overview and run Scan
           </Link>

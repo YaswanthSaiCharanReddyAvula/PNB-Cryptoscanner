@@ -1288,6 +1288,43 @@ async def get_security_roadmap(domain: str):
     }
 
 
+@router.get(
+    "/security-roadmap/latest",
+    summary="Security roadmap: latest completed scan (no domain input)",
+    tags=["Scanner"],
+)
+async def get_security_roadmap_latest():
+    """
+    Roadmap fallback when the UI doesn't have a stored domain.
+    Uses the latest completed scan found in MongoDB.
+    """
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one(
+        {"status": ScanStatus.COMPLETED.value},
+        sort=[("completed_at", -1), ("started_at", -1)],
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed scan results found yet.",
+        )
+    items = build_security_roadmap(doc)
+    q = doc.get("quantum_score") or {}
+    return {
+        "domain": doc.get("domain"),
+        "scan_id": doc.get("scan_id"),
+        "scan_status": doc.get("status"),
+        "completed_at": doc.get("completed_at"),
+        "quantum_risk_level": q.get("risk_level"),
+        "quantum_score": q.get("score"),
+        "items": items,
+        "disclaimer": (
+            "Indicative guidance derived from external scan signals; validate with architecture, "
+            "application, and PKI owners before production or compliance commitments."
+        ),
+    }
+
+
 # ════════════════════════════════════════════════════════════════════
 # Dashboard Summary
 # ════════════════════════════════════════════════════════════════════
