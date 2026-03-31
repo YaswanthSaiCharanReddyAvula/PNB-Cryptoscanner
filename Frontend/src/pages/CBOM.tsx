@@ -33,8 +33,10 @@ const tooltipStyle = {
 
 // ── Helpers to classify crypto records ──────────────────────────────────────
 function mapCryptoToCbomAsset(r: any) {
-  const tls    = r.tls_version   || "";
-  const cipher = r.cipher_suite  || "";
+  const tlsRaw    = r.tls_version   || "";
+  const cipherRaw = r.cipher_suite  || "";
+  const tls = String(tlsRaw);
+  const cipher = String(cipherRaw);
   const kl     = r.key_length    || 0;
   const klStr  = kl && kl !== "None" ? String(kl) : undefined;
 
@@ -43,13 +45,34 @@ function mapCryptoToCbomAsset(r: any) {
   const pqcStatus  = determinePQCStatus(tls, cipher, klStr);
   const hndlRisk   = hndlRiskFromCrypto(tls, cipher, klStr);
 
+  const tlsLc = tls.toLowerCase();
+  const cipherLc = cipher.toLowerCase();
+  const isTls13 = tlsLc.includes("1.3");
+  const isLegacyTls = tlsLc.includes("1.0") || tlsLc.includes("1.1") || tlsLc.includes("ssl");
+  const isTls12 = tlsLc.includes("1.2");
+  const hasRsaOrDhSignals =
+    cipherLc.includes(" rsa") ||
+    cipherLc.includes("_rsa") ||
+    cipherLc.includes("rsa_") ||
+    cipherLc.includes(" dh") ||
+    cipherLc.includes("_dh") ||
+    cipherLc.includes("dhe") ||
+    cipherLc.includes("ecdh") ||
+    cipherLc.includes("ecdsa") ||
+    cipherLc.includes("ecc");
+
   let rec = "No action needed";
-  if (cipher.includes("RSA") || cipher.includes("DH"))
-    rec = "Migrate key exchange to CRYSTALS-Kyber";
-  else if (tls === "TLS 1.0" || tls === "TLS 1.1")
-    rec = "Urgent: Upgrade to TLS 1.3";
-  else if (tls === "TLS 1.2")
-    rec = "Plan migration to TLS 1.3 + PQC";
+  if (pqcStatus === "quantum-safe") {
+    rec = "Maintain configuration; periodic monitoring";
+  } else if (isWeak || isLegacyTls) {
+    rec = "Immediate: disable weak protocols/ciphers; upgrade to TLS 1.3";
+  } else if (hndlRisk) {
+    rec = "Prioritize HNDL risk: move to TLS 1.3 everywhere; pilot hybrid PQC (ML‑KEM) where supported";
+  } else if (!isTls13 && (isTls12 || hasRsaOrDhSignals || pqcStatus === "vulnerable")) {
+    rec = "Plan migration: TLS 1.3 baseline + PQC-ready crypto; remove RSA/DH legacy where present";
+  } else if (!isTls13) {
+    rec = "Upgrade to TLS 1.3 baseline; validate forward secrecy and modern cipher suites";
+  }
 
   return {
     assetName:           r.asset || "Unknown",
@@ -109,22 +132,32 @@ export default function CBOM() {
 
           const data = chartsRes.data;
           if (data.key_length_distribution) {
-            setKeyLengthData(data.key_length_distribution.map((k: any) => ({
-              name: `${k.key_length}-bit`,
-              count: k.count
-            })));
+            setKeyLengthData(
+              (Array.isArray(data.key_length_distribution) ? data.key_length_distribution : []).map((k: any) => {
+                const raw = k?.key_length ?? k?.name ?? k?.key_size;
+                const n = raw == null ? "" : String(raw);
+                return {
+                  name: n ? `${n}-bit` : "Unknown",
+                  count: Number(k?.count ?? k?.value ?? 0),
+                };
+              }),
+            );
           }
           if (data.top_certificate_authorities) {
-            setCaData(data.top_certificate_authorities.map((c: any) => ({
-              name: c.certificate_authority,
-              value: c.count
-            })));
+            setCaData(
+              (Array.isArray(data.top_certificate_authorities) ? data.top_certificate_authorities : []).map((c: any) => ({
+                name: String(c?.certificate_authority ?? c?.name ?? "Unknown"),
+                value: Number(c?.count ?? c?.value ?? 0),
+              })),
+            );
           }
           if (data.encryption_protocols) {
-            setProtocolData(data.encryption_protocols.map((p: any) => ({
-              name: p.tls_version,
-              value: p.count
-            })));
+            setProtocolData(
+              (Array.isArray(data.encryption_protocols) ? data.encryption_protocols : []).map((p: any) => ({
+                name: String(p?.tls_version ?? p?.name ?? "Unknown"),
+                value: Number(p?.count ?? p?.value ?? 0),
+              })),
+            );
           }
           const cu = Array.isArray(data.cipher_usage) ? data.cipher_usage : [];
           setCipherUsage(cu);

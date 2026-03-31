@@ -764,6 +764,20 @@ async def scans_history(domain: str, limit: int = 20, status_filter: Optional[st
 )
 async def scans_recent(limit: int = 80, status_filter: Optional[str] = None):
     """Newest scan jobs first — avoids N+1 polling per domain on the Inventory Runs page."""
+    def _parse_dt(v):
+        if v is None:
+            return None
+        if hasattr(v, "isoformat"):
+            return v
+        s = str(v).strip()
+        if not s:
+            return None
+        try:
+            # tolerate ISO strings (optionally with trailing Z)
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
     lim = min(max(limit, 1), 200)
     q: dict = {}
     if status_filter in ("completed", "failed", "running", "pending"):
@@ -790,6 +804,25 @@ async def scans_recent(limit: int = 80, status_filter: Optional[str] = None):
         # Inconsistent writes: pipeline recorded error but status never flipped from running/pending
         if err_s and st in ("running", "pending"):
             st = "failed"
+
+        # Stale jobs: user stopped mid-scan or worker died; flip to failed after timeout window.
+        # Uses scan_options.execution_time_limit_seconds if present; otherwise Settings.SCAN_TIMEOUT.
+        started_at = _parse_dt(doc.get("started_at"))
+        completed_at = _parse_dt(doc.get("completed_at"))
+        if completed_at is None and st in ("running", "pending") and started_at is not None:
+            scan_opts = doc.get("scan_options") if isinstance(doc.get("scan_options"), dict) else {}
+            opt_timeout = scan_opts.get("execution_time_limit_seconds")
+            try:
+                timeout_sec = int(opt_timeout) if opt_timeout is not None else int(settings.SCAN_TIMEOUT)
+            except Exception:
+                timeout_sec = int(settings.SCAN_TIMEOUT)
+            # grace for queueing + tool cleanup
+            grace = 90
+            age = (datetime.utcnow() - started_at.replace(tzinfo=None)).total_seconds()
+            if age > max(30, timeout_sec + grace):
+                st = "failed"
+                if not err_s:
+                    err_s = "Scan stopped mid-run or timed out (stale running job)."
         out.append(
             {
                 "scan_id": doc.get("scan_id"),
@@ -1831,9 +1864,29 @@ async def get_pqc_posture():
             "recommendations": [],
         }
 
-    tls_results = scan.get("tls_results", [])
-    assets = scan.get("assets", [])
-    tls_map = {t.get("host"): t for t in tls_results}
+    tls_results = scan.get("tls_results", []) or []
+    assets = scan.get("assets", []) or []
+    tls_map = {t.get("host"): t for t in tls_results if t.get("host")}
+
+    # Some scan runs may not persist asset_discovery output (assets=[]), but still have tls_results.
+    # Derive a host list from tls_results as fallback, and tolerate different asset key names.
+    hosts: list[str] = []
+    if assets:
+        for a in assets:
+            if not isinstance(a, dict):
+                continue
+            h = (a.get("subdomain") or a.get("host") or a.get("asset") or a.get("name") or "").strip()
+            if h:
+                hosts.append(h)
+    else:
+        for t in tls_results:
+            h = (t.get("host") or "").strip()
+            if h:
+                hosts.append(h)
+
+    # Deduplicate while preserving order
+    _seen = set()
+    hosts = [h for h in hosts if not (h.lower() in _seen or _seen.add(h.lower()))]
     
     asset_pqc_status = []
     elite_pqc_count = 0
@@ -1844,8 +1897,7 @@ async def get_pqc_posture():
     pqc_kem_endpoints = 0
     tls_modern_endpoints = 0
 
-    for a in assets:
-        host = a.get("subdomain")
+    for host in hosts:
         tls = tls_map.get(host, {})
         tv = str(tls.get("tls_version") or "")
         pq_signal = bool(tls.get("pqc_kem_observed") or tls.get("hybrid_key_exchange"))
@@ -1889,7 +1941,7 @@ async def get_pqc_posture():
             "score": 950 if pq_signal else 850 if tls_mod else 450 if grade == "Standard" else 250,
         })
 
-    total = len(assets) or 1
+    total = len(hosts) or 1
     return {
         "elite_count": elite_pqc_count,
         "standard_count": standard_count,

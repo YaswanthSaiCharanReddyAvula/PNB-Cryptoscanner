@@ -71,11 +71,13 @@ QuantumShield is an end‑to‑end platform that:
 
 ```mermaid
 flowchart LR
-  FE[Frontend (React + Vite)] -->|REST + WebSocket| BE[Backend (FastAPI)]
-  BE -->|store| M[(MongoDB: scans, assets, tls_results, cbom)]
-  BE --> Tools[Linux tools: subfinder, nmap, testssl.sh, ...]
-  FE -->|Exports| PDF[Client-side PDF/CSV/JSON]
+  FE[Frontend] --> BE[Backend]
+  BE --> DB[(MongoDB)]
+  BE --> LX[Linux scanners]
+  FE --> EX[Client exports]
 ```
+
+**Legend:** Frontend = React + Vite · Backend = FastAPI · MongoDB stores scans, assets, TLS results, CBOM · Linux tools include subfinder, nmap, testssl.sh · Client exports = PDF, CSV, JSON.
 
 ### Key modules (backend)
 

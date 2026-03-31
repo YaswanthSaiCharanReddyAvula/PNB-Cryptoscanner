@@ -218,69 +218,7 @@ export default function PQCPosture() {
       </motion.div>
 
       {/* Charts row */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {/* Bar chart */}
-        <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100">
-          <h3 className="mb-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">
-            Assets by Classification Grade
-          </h3>
-          {classificationData.every((d) => d.count === 0) ? (
-            <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
-              No classification data yet
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={classificationData} margin={{ top: 24, right: 12, left: -8, bottom: 4 }}>
-                <defs>
-                  <linearGradient id="gradeElite" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#15803d" />
-                    <stop offset="100%" stopColor="#4ade80" />
-                  </linearGradient>
-                  <linearGradient id="gradeStandard" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#1d4ed8" />
-                    <stop offset="100%" stopColor="#60a5fa" />
-                  </linearGradient>
-                  <linearGradient id="gradeCritical" x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor="#991b1b" />
-                    <stop offset="100%" stopColor="#f87171" />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgb(241 245 249)" strokeWidth={1} vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "rgb(100 116 139)", fontSize: 12, fontWeight: 500 }}
-                  dy={6}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "rgb(148 163 184)", fontSize: 11 }}
-                  width={36}
-                  allowDecimals={false}
-                />
-                <Tooltip
-                  {...chartTooltipLight}
-                  formatter={(v: number) => [v, "Assets"]}
-                  labelFormatter={(l) => String(l)}
-                />
-                <Bar
-                  dataKey="count"
-                  maxBarSize={52}
-                  radius={[12, 12, 6, 6]}
-                  animationDuration={900}
-                  animationEasing="ease-out"
-                  label={<BarLabel />}
-                >
-                  {classificationData.map((entry, i) => (
-                    <Cell key={i} fill={barFill[entry.name] ?? entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
 
         {/* Pie chart */}
         <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100">

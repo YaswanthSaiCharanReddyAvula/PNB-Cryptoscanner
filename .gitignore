@@ -28,3 +28,6 @@ Backend/.env
 Backend/.env.local
 Frontend/.env
 Frontend/.env.local
+Clips/*.mp4
+ClipsFrames/*
+Docs/*
