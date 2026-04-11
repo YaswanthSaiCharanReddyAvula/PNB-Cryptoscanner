@@ -141,10 +141,19 @@ from app.modules.lm_studio_client import chat_completion, chat_completion_safe
 from app.modules.roadmap_ai_plan import build_deterministic_roadmap_plan_text
 from app.modules.copilot_context import (
     build_copilot_context,
+    copilot_no_database_records_reply,
     format_copilot_offline_reply,
     is_trivial_greeting,
     postprocess_copilot_dashboard_reply,
+    resolve_copilot_scan_domain,
     sanitize_copilot_llm_reply,
+)
+from app.modules.scan_lifecycle import (
+    find_active_scan_for_domain,
+    find_reusable_terminal_scan_for_domain,
+    normalize_domain_for_scan,
+    reset_scan_document_for_rerun,
+    variants_for_scan_domain,
 )
 from app.modules.webhook_notify import post_json_webhook, post_slack_incoming_webhook
 from app.core.ws_manager import manager as ws_manager
@@ -681,31 +690,63 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 )
 async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
     """Start an asynchronous scan of the given domain."""
-    scan_id = uuid.uuid4().hex
     db = get_database()
+    collection = db[SCANS_COLLECTION]
+    dnorm = normalize_domain_for_scan(request.domain)
+    req = request.model_copy(update={"domain": dnorm})
+    variants = variants_for_scan_domain(req.domain)
 
+    active = await find_active_scan_for_domain(collection, variants)
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "scan_in_progress",
+                "message": "A scan is already running or queued for this domain.",
+                "scan_id": active.get("scan_id"),
+                "domain": active.get("domain"),
+            },
+        )
+
+    cutoff = datetime.utcnow() - timedelta(days=max(1, settings.SCAN_REUSE_WINDOW_DAYS))
+    reusable = await find_reusable_terminal_scan_for_domain(collection, variants, cutoff)
+    if reusable:
+        scan_id = reusable["scan_id"]
+        await reset_scan_document_for_rerun(collection, scan_id, req, clear_batch_id=True)
+        background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
+        logger.info("Scan %s reused (in-place rescan) for domain %s", scan_id, dnorm)
+        return {
+            "scan_id": scan_id,
+            "domain": dnorm,
+            "status": ScanStatus.PENDING.value,
+            "message": "Scan initiated — poll GET /results/{domain} for progress.",
+            "reused": True,
+        }
+
+    scan_id = uuid.uuid4().hex
     initial = ScanResult(
         scan_id=scan_id,
-        domain=request.domain,
+        domain=dnorm,
         status=ScanStatus.PENDING,
     )
     doc = initial.model_dump(mode="json")
     scan_opts: dict = {}
-    if request.max_subdomains is not None:
-        scan_opts["max_subdomains"] = request.max_subdomains
-    if request.execution_time_limit_seconds is not None:
-        scan_opts["execution_time_limit_seconds"] = request.execution_time_limit_seconds
+    if req.max_subdomains is not None:
+        scan_opts["max_subdomains"] = req.max_subdomains
+    if req.execution_time_limit_seconds is not None:
+        scan_opts["execution_time_limit_seconds"] = req.execution_time_limit_seconds
     if scan_opts:
         doc["scan_options"] = scan_opts
-    await db[SCANS_COLLECTION].insert_one(doc)
-    background_tasks.add_task(_run_scan_pipeline_gated, scan_id, request)
+    await collection.insert_one(doc)
+    background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
 
-    logger.info("Scan %s queued for domain %s", scan_id, request.domain)
+    logger.info("Scan %s queued for domain %s", scan_id, dnorm)
     return {
         "scan_id": scan_id,
-        "domain": request.domain,
+        "domain": dnorm,
         "status": ScanStatus.PENDING.value,
         "message": "Scan initiated — poll GET /results/{domain} for progress.",
+        "reused": False,
     }
 
 
@@ -734,21 +775,52 @@ async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundT
 
     batch_id = uuid.uuid4().hex
     db = get_database()
+    collection = db[SCANS_COLLECTION]
     jobs: List[dict] = []
+    conflicts: List[dict] = []
+    cutoff = datetime.utcnow() - timedelta(days=max(1, settings.SCAN_REUSE_WINDOW_DAYS))
+
     for domain in uniq:
-        scan_id = uuid.uuid4().hex
+        dnorm = normalize_domain_for_scan(domain)
         req = ScanRequest(
-            domain=domain,
+            domain=dnorm,
             include_subdomains=body.include_subdomains,
             ports=body.ports,
             merge_registered_inventory=body.merge_registered_inventory,
             max_subdomains=body.max_subdomains,
             execution_time_limit_seconds=body.execution_time_limit_seconds,
         )
+        variants = variants_for_scan_domain(dnorm)
+
+        active = await find_active_scan_for_domain(collection, variants)
+        if active:
+            conflicts.append(
+                {
+                    "domain": dnorm,
+                    "error": "scan_in_progress",
+                    "message": "A scan is already running or queued for this domain.",
+                    "scan_id": active.get("scan_id"),
+                }
+            )
+            continue
+
+        reusable = await find_reusable_terminal_scan_for_domain(collection, variants, cutoff)
+        if reusable:
+            scan_id = reusable["scan_id"]
+            await reset_scan_document_for_rerun(collection, scan_id, req, clear_batch_id=False)
+            await collection.update_one(
+                {"scan_id": scan_id},
+                {"$set": {"batch_id": batch_id}},
+            )
+            background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
+            jobs.append({"scan_id": scan_id, "domain": dnorm, "reused": True})
+            continue
+
+        scan_id = uuid.uuid4().hex
         initial = ScanResult(
             scan_id=scan_id,
             batch_id=batch_id,
-            domain=domain,
+            domain=dnorm,
             status=ScanStatus.PENDING,
         )
         bdoc = initial.model_dump(mode="json")
@@ -759,15 +831,21 @@ async def start_batch_scan(body: BatchScanRequest, background_tasks: BackgroundT
             bopts["execution_time_limit_seconds"] = body.execution_time_limit_seconds
         if bopts:
             bdoc["scan_options"] = bopts
-        await db[SCANS_COLLECTION].insert_one(bdoc)
+        await collection.insert_one(bdoc)
         background_tasks.add_task(_run_scan_pipeline_gated, scan_id, req)
-        jobs.append({"scan_id": scan_id, "domain": domain})
+        jobs.append({"scan_id": scan_id, "domain": dnorm, "reused": False})
 
-    logger.info("Batch %s queued %d scan(s)", batch_id, len(jobs))
+    logger.info(
+        "Batch %s queued %d scan(s), %d conflict(s)",
+        batch_id,
+        len(jobs),
+        len(conflicts),
+    )
     return {
         "batch_id": batch_id,
         "queued": len(jobs),
         "jobs": jobs,
+        "conflicts": conflicts,
         "message": "Scans queued — poll GET /results/{domain} or /scans/history?domain= for each target.",
     }
 
@@ -2866,8 +2944,15 @@ async def ai_roadmap_plan(body: AiRoadmapPlanBody, _user: User = Depends(get_cur
 @router.post("/ai/copilot/chat", summary="QuantumShield-only copilot", tags=["AI"])
 async def ai_copilot_chat(body: AiCopilotChatBody, _user: User = Depends(get_current_user)):
     db = get_database()
-    dom = (body.domain or "").strip().lower() or None
+    dom = resolve_copilot_scan_domain(body.message, body.domain)
     ctx = await build_copilot_context(db, SCANS_COLLECTION, dom)
+    if ctx.get("error") == "no_completed_scan":
+        reply = postprocess_copilot_dashboard_reply(
+            copilot_no_database_records_reply(ctx),
+            ctx,
+        )
+        return {"reply": reply, "context_used": ctx}
+
     compact = is_trivial_greeting(body.message)
     mode_note = (
         "OUTPUT MODE: COMPACT — include sections 1 (Executive Summary) and 2 (Visual Metrics with text bar charts). "

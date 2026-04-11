@@ -84,6 +84,12 @@ async def connect_db() -> None:
         # Verify connectivity
         await _client.admin.command("ping")
         logger.info("MongoDB connection established — database: %s", settings.MONGO_DB_NAME)
+        try:
+            from app.modules.scan_lifecycle import ensure_scan_indexes
+
+            await ensure_scan_indexes(_database)
+        except Exception as idx_exc:
+            logger.warning("ensure_scan_indexes skipped: %s", idx_exc)
     except Exception as exc:
         logger.warning("MongoDB unavailable (%s). App will start but scan storage will fail.", exc)
         _client = None

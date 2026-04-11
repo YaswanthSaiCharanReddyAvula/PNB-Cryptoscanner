@@ -20,6 +20,8 @@ export function CopilotFab() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  /** Read on send so the API always gets the current input value (avoids stale React state). */
+  const domainInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const d = getLastScannedDomain();
@@ -37,7 +39,9 @@ export function CopilotFab() {
     setMsgs((m) => [...m, { role: "user", text }]);
     setLoading(true);
     try {
-      const dom = domain.trim().toLowerCase() || undefined;
+      const raw =
+        (domainInputRef.current?.value ?? domain).trim().toLowerCase() || "";
+      const dom = raw || undefined;
       const res = await aiService.copilotChat({ message: text, domain: dom ?? null });
       const reply = String((res.data as { reply?: string })?.reply ?? "").trim() || "No reply.";
       setMsgs((m) => [...m, { role: "assistant", text: reply }]);
@@ -105,9 +109,10 @@ export function CopilotFab() {
               <div className="space-y-1.5 border-b border-border/60 px-4 py-3">
                 <Label className="text-[11px]">Domain (optional)</Label>
                 <Input
+                  ref={domainInputRef}
                   value={domain}
                   onChange={(e) => setDomain(e.target.value)}
-                  placeholder="Blank = latest on server"
+                  placeholder="Blank = latest completed scan (any domain)"
                   className="h-9 font-mono text-xs bg-secondary"
                 />
               </div>

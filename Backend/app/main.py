@@ -47,6 +47,29 @@ _CORS_DEV_LAN_REGEX = (
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 
+# ── Background: terminal scan retention purge ───────────────────
+
+async def scan_retention_loop(stop: asyncio.Event) -> None:
+    """Periodically delete terminal scans older than SCAN_RETENTION_DAYS."""
+    from app.modules.scan_lifecycle import purge_expired_scans
+
+    while not stop.is_set():
+        try:
+            db = get_database()
+            await purge_expired_scans(db)
+        except DatabaseUnavailableError:
+            pass
+        except Exception as exc:
+            logger.exception("Scan retention purge failed: %s", exc)
+        try:
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=float(max(60, settings.SCAN_PURGE_INTERVAL_SECONDS)),
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 # ── Lifespan: connect / disconnect MongoDB ───────────────────────
 
 @asynccontextmanager
@@ -60,12 +83,21 @@ async def lifespan(app: FastAPI):
     stop_scheduler = asyncio.Event()
     sched_task = asyncio.create_task(scheduler_loop(stop_scheduler))
 
+    stop_retention = asyncio.Event()
+    retention_task = asyncio.create_task(scan_retention_loop(stop_retention))
+
     yield
 
     stop_scheduler.set()
+    stop_retention.set()
     sched_task.cancel()
+    retention_task.cancel()
     try:
         await sched_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await retention_task
     except asyncio.CancelledError:
         pass
 

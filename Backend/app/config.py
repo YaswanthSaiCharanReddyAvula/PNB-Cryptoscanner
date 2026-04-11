@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     MAX_BATCH_DOMAINS: int = 25        # POST /scan/batch list size cap
     MAX_CONCURRENT_SCANS: int = 3      # global scan pipeline concurrency
 
+    # ── Scan retention & in-place rescan (same domain reuses Mongo row + scan_id) ──
+    SCAN_RETENTION_DAYS: int = 30  # purge terminal scans older than this (by completed_at)
+    SCAN_REUSE_WINDOW_DAYS: int = 30  # rescan within window updates same document + scan_id
+    SCAN_PURGE_INTERVAL_SECONDS: int = 3600  # background purge frequency
+
     # ── Asset classification (HTTP probes; capped per scan) ─────────
     CLASSIFICATION_PROBE_TIMEOUT: float = 8.0
     CLASSIFICATION_MAX_HTTP_PROBES: int = 40

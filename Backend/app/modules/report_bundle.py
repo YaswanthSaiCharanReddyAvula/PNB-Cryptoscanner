@@ -5,9 +5,44 @@ Shared JSON export bundle builder (same payload as GET /reports/export-bundle).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.modules.threat_nist_mapping import NIST_PQC_REFERENCES
+
+
+def normalize_host_for_scan_lookup(raw: Optional[str]) -> Optional[str]:
+    """Strip scheme/path/port for consistent Mongo lookup; lowercase host only."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    for p in ("https://", "http://"):
+        if s.startswith(p):
+            s = s[len(p) :]
+    s = s.split("/")[0].split(":")[0].strip()
+    return s or None
+
+
+def domain_match_variants(raw: Optional[str]) -> List[str]:
+    """Completed scans may be stored as `example.com` or `www.example.com` — match both."""
+    base = normalize_host_for_scan_lookup(raw)
+    if not base:
+        return []
+    out: List[str] = [base]
+    if base.startswith("www."):
+        rest = base[4:]
+        if rest:
+            out.append(rest)
+    else:
+        out.append(f"www.{base}")
+    seen: set[str] = set()
+    uniq: List[str] = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
 
 
 async def build_export_bundle_payload(
@@ -20,9 +55,9 @@ async def build_export_bundle_payload(
     """
     query: dict = {"status": "completed"}
     if domain:
-        d = domain.strip().lower()
-        if d:
-            query["domain"] = d
+        variants = domain_match_variants(domain)
+        if variants:
+            query["domain"] = {"$in": variants}
 
     doc = await db[scans_collection].find_one(query, sort=[("completed_at", -1)])
     if not doc:

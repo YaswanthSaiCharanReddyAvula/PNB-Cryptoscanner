@@ -8,7 +8,10 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-from app.modules.report_bundle import build_export_bundle_payload
+from app.modules.report_bundle import (
+    build_export_bundle_payload,
+    normalize_host_for_scan_lookup,
+)
 
 
 def _normalize_negotiated_tls_label(raw: Optional[str]) -> str:
@@ -93,15 +96,43 @@ def _recommendations_preview(doc: Dict[str, Any], limit: int = 8) -> List[Dict[s
     return out
 
 
+def extract_hostname_from_user_message(text: str) -> Optional[str]:
+    """
+    If the user did not fill the optional domain field but named a host in the message,
+    use it for lookup so we do not fall back to 'latest scan for any domain'.
+    """
+    if not text:
+        return None
+    m = re.search(
+        r"\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})\b",
+        text.lower(),
+    )
+    if not m:
+        return None
+    return normalize_host_for_scan_lookup(m.group(1))
+
+
+def resolve_copilot_scan_domain(message: str, explicit_domain: Optional[str]) -> Optional[str]:
+    """Prefer the Domain field; otherwise infer a hostname from the user message."""
+    d = normalize_host_for_scan_lookup(explicit_domain)
+    if d:
+        return d
+    return extract_hostname_from_user_message(message or "")
+
+
 async def build_copilot_context(db, scans_collection: str, domain: Optional[str]) -> Dict[str, Any]:
     """Summarize latest completed scan for LLM grounding; small token footprint."""
     try:
         payload, doc = await build_export_bundle_payload(db, scans_collection, domain)
     except LookupError:
-        return {
+        out: Dict[str, Any] = {
             "error": "no_completed_scan",
             "hint": "Run a scan from Overview and wait until status is completed.",
         }
+        rd = normalize_host_for_scan_lookup(domain) if domain else None
+        if rd:
+            out["requested_domain"] = rd
+        return out
 
     tls = payload.get("tls_results") or []
     cve = payload.get("cve_findings") or []
@@ -425,6 +456,9 @@ def looks_like_echoed_context_json(llm_text: str) -> bool:
 
 def sanitize_copilot_llm_reply(llm_text: str, ctx: Dict[str, Any], user_message: str) -> str:
     """If the model dumped JSON/context, replace with deterministic enterprise dashboard Markdown."""
+    if ctx.get("error") == "no_completed_scan":
+        return copilot_no_database_records_reply(ctx)
+
     if not looks_like_echoed_context_json(llm_text):
         return (llm_text or "").strip()
 
@@ -439,12 +473,30 @@ def sanitize_copilot_llm_reply(llm_text: str, ctx: Dict[str, Any], user_message:
     ).strip()
 
 
+def copilot_no_database_records_reply(ctx: Dict[str, Any]) -> str:
+    """When no completed scan exists for the Copilot scope — do not use the LLM (avoids hallucinations)."""
+    rd = ctx.get("requested_domain")
+    if rd:
+        return (
+            "### [Icon: Warning] No database records\n\n"
+            f"**No records available in the database** for `{rd}`. "
+            "There is no **completed** scan stored for this domain.\n\n"
+            "• Open **Overview**, enter this domain, start a **scan**, and wait until it **completes**. "
+            "Then use the Copilot again for results grounded in your scan data."
+        )
+    return (
+        "### [Icon: Warning] No database records\n\n"
+        "**No records available in the database.** There is no completed scan to analyze yet.\n\n"
+        "• Run a scan from **Overview** and wait until it completes, then try the Copilot again."
+    )
+
+
 def format_copilot_offline_reply(ctx: Dict[str, Any], user_message: str = "") -> str:
     """Deterministic enterprise dashboard when LM Studio is unreachable."""
     if ctx.get("error") == "no_completed_scan":
         return (
-            "QuantumShield Copilot is offline (the local language model did not respond). "
-            + str(ctx.get("hint") or "Run a scan from Overview and wait until it completes.")
+            "QuantumShield Copilot is offline (the local language model did not respond).\n\n"
+            + copilot_no_database_records_reply(ctx)
         )
 
     compact = is_trivial_greeting(user_message)
