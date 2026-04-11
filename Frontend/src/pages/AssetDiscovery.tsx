@@ -36,14 +36,36 @@ type SubFilter = "New" | "False Positive" | "Confirmed" | "All";
 // ── Column definitions ────────────────────────────────────────────────────────
 type ColDef<T> = { key: keyof T; header: string; className?: string };
 
-type DomainRow   = { detectionDate: string; domainName: string; registrationDate: string; registrar: string; company: string };
+type DomainRow   = {
+  detectionDate: string;
+  domainName: string;
+  registrationDate: string;
+  registrar: string;
+  company: string;
+  surface: string;
+  hosting: string;
+  buckets: string;
+};
 type SslRow      = { detectionDate: string; sha: string; validFrom: string; commonName: string; company: string; ca: string };
-type IpRow       = { detectionDate: string; ip: string; ports: string; subnet: string; asn: string; netname: string; location: string; company: string };
+type IpRow       = {
+  detectionDate: string;
+  ip: string;
+  ports: string;
+  surface: string;
+  subnet: string;
+  asn: string;
+  netname: string;
+  location: string;
+  company: string;
+};
 type SoftwareRow = { detectionDate: string; product: string; version: string; type: string; port: string; host: string; company: string };
 
 const DOMAIN_COLS: ColDef<DomainRow>[] = [
   { key: "detectionDate",    header: "Detection Date" },
   { key: "domainName",       header: "Domain Name", className: "font-mono text-xs" },
+  { key: "surface",          header: "Surface" },
+  { key: "hosting",          header: "Hosting hint" },
+  { key: "buckets",          header: "Buckets", className: "max-w-[220px] truncate text-[10px]" },
   { key: "registrationDate", header: "Registration Date" },
   { key: "registrar",        header: "Registrar" },
   { key: "company",          header: "Company Name" },
@@ -60,6 +82,7 @@ const IP_COLS: ColDef<IpRow>[] = [
   { key: "detectionDate", header: "Detection Date" },
   { key: "ip",            header: "IP Address", className: "font-mono" },
   { key: "ports",         header: "Ports" },
+  { key: "surface",       header: "Surface" },
   { key: "subnet",        header: "Subnet", className: "font-mono" },
   { key: "asn",           header: "ASN" },
   { key: "netname",       header: "Netname" },
@@ -250,6 +273,8 @@ export default function AssetDiscovery() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [showGraph, setShowGraph] = useState(false);
+  const [surfaceFilter, setSurfaceFilter] = useState<string>("all");
+  const [hostingFilter, setHostingFilter] = useState<string>("all");
 
   // API-driven state
   const [domainData,   setDomainData]   = useState<any[]>([]);
@@ -274,12 +299,16 @@ export default function AssetDiscovery() {
         setDomainData(items.map((a: any) => {
           const host = a.asset || a.name || a.subdomain || "";
           const seen = a.last_seen || a.detection_date || "";
+          const b = Array.isArray(a.buckets) ? a.buckets : [];
           return {
             detectionDate:    typeof seen === "string" ? seen.split("T")[0] : "",
             domainName:       host,
             registrationDate: a.registration_date || "",
             registrar:        a.registrar || "",
             company:          a.company || getCompanyFromDomain(host),
+            surface:          a.surface || "—",
+            hosting:          a.hosting_hint || "—",
+            buckets:          b.length ? b.slice(0, 8).join(", ") : "—",
           };
         }));
       })
@@ -309,6 +338,7 @@ export default function AssetDiscovery() {
             detectionDate: a.last_scan || a.last_seen?.split("T")[0] || "",
             ip:            a.ipv4 || a.ip_address || "",
             ports:         Array.isArray(a.open_ports) ? a.open_ports.join(", ") : (a.ports || ""),
+            surface:       a.surface || "—",
             subnet:        a.subnet || "",
             asn:           a.asn || "",
             netname:       a.netname || "",
@@ -436,12 +466,29 @@ export default function AssetDiscovery() {
   };
 
   const currentData = useMemo(() => {
-    if (activeTab === "Domains")           return applyDateFilter(domainData);
-    if (activeTab === "SSL")               return applyDateFilter(sslData);
+    if (activeTab === "SSL") return applyDateFilter(sslData);
     if (activeTab === "IP Address/Subnets") return applyDateFilter(ipData);
-    return applyDateFilter(softwareData);
+    if (activeTab === "Software") return applyDateFilter(softwareData);
+    let rows = applyDateFilter(domainData) as DomainRow[];
+    if (surfaceFilter !== "all") {
+      rows = rows.filter((r) => (r.surface || "").toLowerCase() === surfaceFilter);
+    }
+    if (hostingFilter !== "all") {
+      rows = rows.filter((r) => (r.hosting || "").toLowerCase() === hostingFilter);
+    }
+    return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, startDate, endDate, domainData, sslData, ipData, softwareData]);
+  }, [
+    activeTab,
+    startDate,
+    endDate,
+    domainData,
+    sslData,
+    ipData,
+    softwareData,
+    surfaceFilter,
+    hostingFilter,
+  ]);
 
   const totalDiscovered = domainData.length + sslData.length + ipData.length + softwareData.length;
 
@@ -514,6 +561,58 @@ export default function AssetDiscovery() {
           )}
         </div>
 
+        {activeTab === "Domains" && domainData.length > 0 && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Surface
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "web", "api", "mail", "vpn", "rdp", "unknown"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setSurfaceFilter(v)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    surfaceFilter === v
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-secondary"
+                  }`}
+                >
+                  {v === "all" ? "All" : v}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide sm:ml-2">
+              Hosting
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  "all",
+                  "first_party",
+                  "third_party_cdn",
+                  "saas_likely",
+                  "cloud_provider",
+                  "unknown",
+                ] as const
+              ).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setHostingFilter(v)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    hostingFilter === v
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-secondary"
+                  }`}
+                >
+                  {v === "all" ? "All" : v.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-4 flex-wrap">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
             <CalendarIcon size={13} /> Time Period
@@ -567,7 +666,14 @@ export default function AssetDiscovery() {
             return (
               <button
                 key={tab}
-                onClick={() => { setActiveTab(tab); setSubFilter("All"); }}
+                onClick={() => {
+                  setActiveTab(tab);
+                  setSubFilter("All");
+                  if (tab !== "Domains") {
+                    setSurfaceFilter("all");
+                    setHostingFilter("all");
+                  }
+                }}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all border"
                 style={
                   active

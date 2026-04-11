@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { saveScanLogs, loadScanLogs, clearScanLogs } from '@/lib/scanSession';
 
 /** Same host as REST API (Kali VM IP when VITE_API_BASE_URL points there). */
 function getBackendWsOrigin(): string {
@@ -55,6 +56,22 @@ export const useWebSocket = (scanId: string | null) => {
   const [messages, setMessages] = useState<WSMessage[]>([]);
   const [status, setStatus] = useState<'connecting' | 'open' | 'closed'>('closed');
   const socketRef = useRef<WebSocket | null>(null);
+  const scanIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    scanIdRef.current = scanId;
+    if (!scanId) {
+      setMessages([]);
+      return;
+    }
+    const raw = loadScanLogs(scanId);
+    setMessages((raw as WSMessage[]).filter(Boolean));
+  }, [scanId]);
+
+  useEffect(() => {
+    if (!scanId || messages.length === 0) return;
+    saveScanLogs(scanId, messages);
+  }, [messages, scanId]);
 
   const connect = useCallback(() => {
     if (!scanId) return;
@@ -105,7 +122,9 @@ export const useWebSocket = (scanId: string | null) => {
   }, [scanId, connect]);
 
   const clearMessages = useCallback(() => {
+    const id = scanIdRef.current;
     setMessages([]);
+    if (id) clearScanLogs(id);
   }, []);
 
   return { messages, status, clearMessages };

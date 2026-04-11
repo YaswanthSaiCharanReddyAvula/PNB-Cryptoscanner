@@ -40,7 +40,8 @@
 
     /* Sidebar (shadcn tokens; AppSidebar also uses inline navy) */
     --sidebar-background: 222 47% 11%;
-    --sidebar-foreground: 214 20% 85%;
+    /* High-contrast nav labels/icons on navy rail (avoid page `muted-foreground` here) */
+    --sidebar-foreground: 210 40% 96%;
     --sidebar-primary: 217 91% 60%;
     --sidebar-primary-foreground: 222 47% 11%;
     --sidebar-accent: 217 91% 60%;

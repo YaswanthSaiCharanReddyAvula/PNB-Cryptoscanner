@@ -64,16 +64,18 @@ Endpoints:
 """
 
 import asyncio
+import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from pymongo import ReturnDocument
 
 from app.config import settings
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, require_employee_only
 from app.db.connection import get_database
 from app.db.models import (
     AssetMetadataUpdate,
@@ -81,6 +83,12 @@ from app.db.models import (
     InventorySourceImport,
     IntegrationSettingsUpdate,
     ExportAuditLogCreate,
+    ReportScheduleCreate,
+    ReportSchedulePatch,
+    AiRoadmapPlanBody,
+    AiCopilotChatBody,
+    NotificationCreate,
+    NotificationMarkRead,
     MigrationTaskCreate,
     MigrationTaskUpdate,
     OrgCryptoPolicyUpdate,
@@ -110,6 +118,8 @@ from app.modules import (
 )
 from app.modules.headers_scanner import scan_headers
 from app.modules.cve_mapper import map_cves
+from app.modules.asset_classification import enrich_discovered_assets
+from app.modules.vuln_scanner import run_nuclei_scan
 from app.modules.threat_nist_mapping import (
     NIST_PQC_REFERENCES,
     build_prioritized_backlog,
@@ -117,9 +127,32 @@ from app.modules.threat_nist_mapping import (
     simulate_quantum_score,
 )
 from app.modules.security_roadmap import build_security_roadmap
+from app.modules.report_bundle import build_export_bundle_payload
+from app.modules.report_scheduler import (
+    REPORT_SCHEDULES_COLLECTION,
+    MAIL_LOG_COLLECTION,
+    REPORT_ARTIFACTS_COLLECTION,
+    execute_schedule_run,
+    scheduler_loop,
+    compute_next_fire,
+    artifact_file_path,
+)
+from app.modules.lm_studio_client import chat_completion, chat_completion_safe
+from app.modules.roadmap_ai_plan import build_deterministic_roadmap_plan_text
+from app.modules.copilot_context import (
+    build_copilot_context,
+    format_copilot_offline_reply,
+    is_trivial_greeting,
+    postprocess_copilot_dashboard_reply,
+    sanitize_copilot_llm_reply,
+)
 from app.modules.webhook_notify import post_json_webhook, post_slack_incoming_webhook
 from app.core.ws_manager import manager as ws_manager
 from app.utils.asset_type import asset_type_label, classify_asset_ports
+from app.utils.ca_display_name import (
+    extract_issuer_raw_from_tls_row,
+    normalize_ca_display_name,
+)
 from app.utils.logger import get_logger
 from app.utils.policy_alignment import summarize_tls_vs_policy
 
@@ -165,6 +198,7 @@ MIGRATION_TASKS_COLLECTION = "migration_tasks"
 WAIVERS_COLLECTION = "waivers"
 REGISTERED_ASSETS_COLLECTION = "registered_assets"
 SBOM_ARTIFACTS_COLLECTION = "sbom_artifacts"
+NOTIFICATIONS_COLLECTION = "notifications"
 
 _DEFAULT_ORG_POLICY: Dict[str, Any] = {
     "min_tls_version": "1.2",
@@ -265,7 +299,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
       4. Quantum risk scoring
       5. CBOM generation
       6. PQC recommendations
-      7. HTTP security headers
+      7. HTTP security headers, asset bucketing (classification probes), optional Nuclei
       8. CVE / known-attack mapping
 
     WebSocket frames from this pipeline include type, scan_id, ts (see enrich_ws_payload).
@@ -553,16 +587,31 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             }},
         )
 
-        # ── Stage 7: HTTP Security Headers ───────────────────────
+        # ── Stage 7: HTTP Security Headers + asset bucketing + optional Nuclei ──
         logger.info("[%s] Stage 7/8: HTTP Security Headers", scan_id)
         headers_tasks = [scan_headers(asset.subdomain) for asset in assets]
         headers_results = await asyncio.gather(*headers_tasks, return_exceptions=True)
         headers_results = [r for r in headers_results if not isinstance(r, Exception)]
 
+        logger.info("[%s] Asset classification (bucketing)", scan_id)
+        try:
+            assets = await enrich_discovered_assets(
+                assets,
+                tls_results,
+                headers_results,
+                request.domain,
+            )
+        except Exception as cls_exc:
+            logger.warning("[%s] Asset classification failed (continuing): %s", scan_id, cls_exc)
+
+        vuln_findings = await run_nuclei_scan(assets, request.execution_time_limit_seconds)
+
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
-                "headers_results": [h.model_dump() for h in headers_results],
+                "headers_results": [h.model_dump(mode="json") for h in headers_results],
+                "assets": [a.model_dump(mode="json") for a in assets],
+                "vuln_findings": [v.model_dump(mode="json") for v in vuln_findings],
                 "current_stage": "HTTP Headers",
                 "progress": 95,
             }},
@@ -575,7 +624,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
-                "cve_findings": [c.model_dump() for c in cve_findings],
+                "cve_findings": [c.model_dump(mode="json") for c in cve_findings],
                 "current_stage": "CVE Mapping",
                 "progress": 100,
                 "status": ScanStatus.COMPLETED.value,
@@ -929,6 +978,9 @@ async def inventory_summary(limit_scans: int = 100):
                     "owner": asset.get("owner"),
                     "environment": asset.get("environment"),
                     "criticality": asset.get("criticality"),
+                    "buckets": list(asset.get("buckets") or []),
+                    "hosting_hint": asset.get("hosting_hint"),
+                    "surface": asset.get("surface"),
                 }
             elif completed and (
                 prev.get("last_completed_at") is None or completed > prev["last_completed_at"]
@@ -945,6 +997,9 @@ async def inventory_summary(limit_scans: int = 100):
                         "owner": asset.get("owner") or prev.get("owner"),
                         "environment": asset.get("environment") or prev.get("environment"),
                         "criticality": asset.get("criticality") or prev.get("criticality"),
+                        "buckets": list(asset.get("buckets") or []),
+                        "hosting_hint": asset.get("hosting_hint"),
+                        "surface": asset.get("surface"),
                     }
                 )
 
@@ -1188,6 +1243,38 @@ async def get_cbom_per_app(domain: str = None):
     components = cbom_report.get("components", []) or []
     return [enrich_cbom_component_dict(dict(c)) for c in components]
 
+def _normalize_negotiated_tls_label(raw: str | None) -> str:
+    """Bucket negotiated tls_version for distribution (one count per TLS endpoint row)."""
+    if not raw:
+        return "Unknown"
+    s = str(raw).strip()
+    low = s.lower()
+    if "1.3" in low:
+        return "TLSv1.3"
+    if "1.2" in low:
+        return "TLSv1.2"
+    if "1.1" in low:
+        return "TLSv1.1"
+    if "1.0" in low:
+        return "TLSv1.0"
+    if low in ("tlsv1", "tls1", "tls v1"):
+        return "TLSv1.0"
+    if "ssl" in low or "sslv2" in low or "sslv3" in low:
+        return s[:16] if len(s) > 16 else s
+    return s[:20] if len(s) > 20 else s
+
+
+def _encryption_protocol_sort_key(name: str) -> tuple:
+    order = {
+        "TLSv1.3": 0,
+        "TLSv1.2": 1,
+        "TLSv1.1": 2,
+        "TLSv1.0": 3,
+        "Unknown": 99,
+    }
+    return (order.get(name, 50), name)
+
+
 @router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
 async def get_cbom_charts(domain: str = None):
     db = get_database()
@@ -1201,6 +1288,7 @@ async def get_cbom_charts(domain: str = None):
 
     key_lengths: dict = {}
     tls_versions: dict = {}
+    negotiated_tls: dict = {}
     cas: dict = {}
     cipher_usage: dict = {}
 
@@ -1230,15 +1318,36 @@ async def get_cbom_charts(domain: str = None):
                 ks = str(c.get("key_size") or "2048")
                 key_lengths[ks] = key_lengths.get(ks, 0) + 1
         
-        # CAs still come from tls_results (cert chain)
+        # CAs from tls_results — normalize issuer DN to real-world CA names for charts
         for t in scan.get("tls_results", []):
-            ca = (t.get("certificate") or {}).get("issuer", "Unknown") or "Unknown"
+            raw_iss = extract_issuer_raw_from_tls_row(t)
+            ca = normalize_ca_display_name(raw_iss)
             cas[ca] = cas.get(ca, 0) + 1
+            # Negotiated protocol per endpoint — avoids "one count per supported proto" flat bars
+            if not t.get("error"):
+                bucket = _normalize_negotiated_tls_label(t.get("tls_version"))
+                negotiated_tls[bucket] = negotiated_tls.get(bucket, 0) + 1
+
+    if negotiated_tls:
+        enc_rows = sorted(
+            [{"name": k, "value": v} for k, v in negotiated_tls.items()],
+            key=lambda row: _encryption_protocol_sort_key(row["name"]),
+        )
+    else:
+        enc_rows = sorted(
+            [{"name": k, "value": v} for k, v in tls_versions.items()],
+            key=lambda row: _encryption_protocol_sort_key(row["name"]),
+        )
+
+    ca_chart = sorted(
+        [{"name": k, "value": v} for k, v in cas.items()],
+        key=lambda r: (-int(r["value"]), str(r["name"]).lower()),
+    )
 
     return {
         "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
-        "top_certificate_authorities": [{"name": k, "value": v} for k, v in cas.items()],
-        "encryption_protocols": [{"name": k, "value": v} for k, v in tls_versions.items()],
+        "top_certificate_authorities": ca_chart,
+        "encryption_protocols": enc_rows,
         "cipher_usage": [
             {
                 "name": k,
@@ -1739,6 +1848,10 @@ async def get_assets():
                     "last_scan": str(scan.get("completed_at", ""))[:10],
                     "tls_version": tls.get("tls_version", ""),
                     "cipher_suite": tls.get("cipher_suite", ""),
+                    "open_ports": list(a.get("open_ports") or []),
+                    "buckets": list(a.get("buckets") or []),
+                    "hosting_hint": a.get("hosting_hint") or "",
+                    "surface": a.get("surface") or "",
                 }
             )
 
@@ -1825,18 +1938,45 @@ async def get_crypto_security():
     results = []
     for scan in scans:
         for t in scan.get("tls_results", []):
-            cert = t.get("certificate") or {}
+            raw_iss = extract_issuer_raw_from_tls_row(t)
             results.append({
                 "asset": t.get("host", scan.get("domain", "")),
                 "key_length": str(t.get('cipher_bits') or ""),
                 "cipher_suite": t.get("cipher_suite", ""),
                 "tls_version": t.get("tls_version", ""),
-                "certificate_authority": cert.get("issuer", ""),
+                "certificate_authority": normalize_ca_display_name(raw_iss),
                 "pqcStatus": "",
             })
 
     return results
 
+
+@router.get(
+    "/crypto/scan-findings",
+    summary="TLS/CVE mapping vs optional active-scan findings (latest completed scan)",
+    tags=["Crypto"],
+)
+async def get_crypto_scan_findings(domain: Optional[str] = None):
+    """CVE findings from crypto pipeline vs Nuclei-style `vuln_findings` when enabled."""
+    db = get_database()
+    query: dict = {"status": "completed"}
+    if domain:
+        d = domain.strip()
+        query["domain"] = {"$regex": f"^{re.escape(d)}$", "$options": "i"}
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        return {
+            "domain": None,
+            "scan_id": None,
+            "cve_findings": [],
+            "vuln_findings": [],
+        }
+    return {
+        "domain": doc.get("domain"),
+        "scan_id": doc.get("scan_id"),
+        "cve_findings": doc.get("cve_findings") or [],
+        "vuln_findings": doc.get("vuln_findings") or [],
+    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1989,19 +2129,12 @@ async def get_pqc_compliance():
 # Cyber Rating endpoints
 # ════════════════════════════════════════════════════════════════════
 
-@router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
-async def get_cyber_rating():
-    db = get_database()
-    scan = await db[SCANS_COLLECTION].find_one(
-        {"status": "completed"}, sort=[("completed_at", -1)]
-    )
-    if not scan:
-        return {"score": 0, "max_score": 1000, "tier": "N/A", "per_url_scores": []}
-    
+def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
+    """Build 0-1000 cyber rating payload from a completed scan document."""
     # Scale 0-100 to 0-1000
-    raw_score = scan.get("quantum_score", {}).get("score", 75)
+    raw_score = (scan.get("quantum_score") or {}).get("score", 75)
     score_1000 = int(raw_score * 10)
-    
+    score_1000 = max(0, min(1000, score_1000))
     tier = "Elite-PQC" if score_1000 > 700 else "Standard" if score_1000 >= 400 else "Legacy"
 
     # Explainability: derive a small evidence summary from tls_results.
@@ -2012,14 +2145,29 @@ async def get_cyber_rating():
     weak_tokens = ["RC4", "DES", "3DES", "MD5", "NULL", "EXPORT", "TLS 1.0", "TLS 1.1"]
     pqc_tokens = ["KYBER", "DILITHIUM", "FALCON", "SPHINCS", "ML-KEM", "MLKEM", "ML_KEM", "ML-DSA"]
 
-    def _tls_ver(t: dict) -> str:
+    def _tls_ver_raw(t: dict) -> str:
         return str(t.get("tls_version") or "").strip()
+
+    def _tls_ver(t: dict) -> str:
+        """Normalize scanner variants (e.g. 'TLS 1.1', 'TLSv1.1', 'TLS11') for explainability counts."""
+        raw = _tls_ver_raw(t).upper().replace(" ", "")
+        if raw.startswith("SSL") or "SSLV2" in raw or "SSLV3" in raw:
+            return _tls_ver_raw(t).strip() or "SSLv3"
+        if "1.3" in raw or "TLSV1.3" in raw or raw.endswith("TLS13"):
+            return "TLSv1.3"
+        if "TLSV1.2" in raw or ("1.2" in raw and "1.3" not in raw):
+            return "TLSv1.2"
+        if "TLSV1.1" in raw or "TLS11" in raw or ("1.1" in raw and "1.2" not in raw and "1.3" not in raw):
+            return "TLSv1.1"
+        if "TLSV1.0" in raw or raw == "TLSV1" or ("1.0" in raw and "1.1" not in raw and "1.2" not in raw):
+            return "TLSv1.0"
+        return _tls_ver_raw(t)
 
     def _cipher(t: dict) -> str:
         return str(t.get("cipher_suite") or "").upper()
 
     def _is_weak_indicator(t: dict) -> bool:
-        tls = _tls_ver(t).upper()
+        tls = _tls_ver_raw(t).upper()
         cipher = _cipher(t)
         return any(tok in cipher for tok in weak_tokens) or any(tok in tls for tok in weak_tokens)
 
@@ -2073,14 +2221,21 @@ async def get_cyber_rating():
     tls_results = scan.get("tls_results", [])
     for t in tls_results[:8]:
         url_score = int(raw_score * 10)
-        if t.get("tls_version") == "TLSv1.3": url_score += 50
-        elif t.get("tls_version") in ["TLSv1.0", "TLSv1.1"]: url_score -= 200
+        tv = _tls_ver(t)
+        if tv == "TLSv1.3":
+            url_score += 50
+        elif tv in ("TLSv1.0", "TLSv1.1"):
+            url_score -= 200
         per_url.append({
-            "url": t.get("host", "unknown"),
+            "url": t.get("host") or t.get("subdomain") or "unknown",
             "score": max(0, min(1000, url_score))
         })
 
     return {
+        "scan_id": scan.get("scan_id"),
+        "domain": scan.get("domain"),
+        "started_at": scan.get("started_at"),
+        "completed_at": scan.get("completed_at"),
         "score": score_1000,
         "max_score": 1000,
         "tier": tier,
@@ -2105,6 +2260,43 @@ async def get_cyber_rating():
             {"status": "Elite-PQC", "range": "> 700"},
         ],
         "per_url_scores": per_url,
+    }
+
+
+@router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
+async def get_cyber_rating():
+    db = get_database()
+    scan = await db[SCANS_COLLECTION].find_one(
+        {"status": "completed"}, sort=[("completed_at", -1)]
+    )
+    if not scan:
+        return {"score": 0, "max_score": 1000, "tier": "N/A", "per_url_scores": []}
+    return _build_cyber_rating_payload(scan)
+
+
+@router.get("/cyber-rating/history", summary="Get cyber rating history across domains", tags=["Cyber Rating"])
+async def get_cyber_rating_history(limit: int = 200, domain: Optional[str] = None):
+    db = get_database()
+    lim = min(max(limit, 1), 1000)
+    q: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        q["domain"] = domain.strip().lower()
+
+    cursor = (
+        db[SCANS_COLLECTION]
+        .find(q)
+        .sort([("completed_at", -1), ("started_at", -1)])
+        .limit(lim)
+    )
+
+    history: List[Dict[str, Any]] = []
+    async for doc in cursor:
+        history.append(_build_cyber_rating_payload(doc))
+
+    return {
+        "count": len(history),
+        "domain_filter": q.get("domain"),
+        "history": history,
     }
 
 
@@ -2173,49 +2365,10 @@ async def generate_report(payload: dict):
 async def export_scan_bundle(domain: Optional[str] = None):
     """Single JSON for audits: latest completed scan, optional domain filter."""
     db = get_database()
-    query: dict = {"status": "completed"}
-    if domain:
-        query["domain"] = domain
-    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
-    if not doc:
+    try:
+        payload, doc = await build_export_bundle_payload(db, SCANS_COLLECTION, domain)
+    except LookupError:
         raise HTTPException(status_code=404, detail="No completed scan found")
-
-    exported_at = datetime.utcnow().isoformat() + "Z"
-    payload: Dict[str, Any] = {
-        "schema_version": "1.0.0",
-        "exported_at": exported_at,
-        "domain": doc.get("domain"),
-        "completed_at": doc.get("completed_at"),
-        "threat_nist_context": {
-            "nist_pqc_publications": NIST_PQC_REFERENCES,
-            "note": "Per-component threat vectors and NIST mapping are included in GET /cbom/per-app responses.",
-        },
-        "audit_metadata": {
-            "cbom_schema": (doc.get("cbom_report") or {}).get("schema_version", "1.0.0"),
-            "quantum_scoring": {
-                "formula": "weighted_mean_of_category_minimums",
-                "weights": {
-                    "key_exchange": 0.4,
-                    "signature": 0.3,
-                    "cipher": 0.2,
-                    "protocol": 0.1,
-                },
-                "reference": "app/modules/quantum_risk_engine.py",
-            },
-            "tls_pqc_signals": {
-                "note": (
-                    "Cipher/KEX name substrings only (e.g. Kyber); not proof of PQC libraries in use."
-                ),
-                "reference": "app/modules/tls_pqc_signals.py",
-            },
-        },
-        "cbom_report": doc.get("cbom_report"),
-        "cbom_legacy": doc.get("cbom", []),
-        "quantum_score": doc.get("quantum_score"),
-        "recommendations": doc.get("recommendations", []),
-        "tls_results": doc.get("tls_results", []),
-        "assets": doc.get("assets", []),
-    }
     try:
         await db[EXPORT_AUDIT_COLLECTION].insert_one(
             {
@@ -2478,6 +2631,412 @@ async def post_export_audit_log(
     await db[EXPORT_AUDIT_COLLECTION].insert_one(doc)
     out = {k: v for k, v in doc.items() if k != "_id"}
     return out
+
+
+# ════════════════════════════════════════════════════════════════════
+# Scheduled reports + mail log (Admin)
+# ════════════════════════════════════════════════════════════════════
+
+
+@router.get("/admin/report-schedules", summary="List scheduled report jobs", tags=["Admin"])
+async def list_report_schedules(_admin: User = Depends(require_admin)):
+    db = get_database()
+    cursor = db[REPORT_SCHEDULES_COLLECTION].find().sort("created_at", -1).limit(100)
+    items: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        items.append(row)
+    return {"count": len(items), "schedules": items}
+
+
+@router.post("/admin/report-schedules", summary="Create scheduled report", tags=["Admin"])
+async def create_report_schedule(body: ReportScheduleCreate, admin: User = Depends(require_admin)):
+    db = get_database()
+    if not body.delivery.email_enabled and not body.delivery.download_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Enable at least one delivery option: email and/or download.",
+        )
+    schedule_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    dom = (body.domain or "").strip().lower() or None
+    next_run = compute_next_fire(body.cadence, body.hour_utc, body.minute_utc, now)
+    doc = {
+        "schedule_id": schedule_id,
+        "domain": dom,
+        "cadence": body.cadence,
+        "hour_utc": body.hour_utc,
+        "minute_utc": body.minute_utc,
+        "enabled": body.enabled,
+        "delivery": body.delivery.model_dump(),
+        "created_at": now,
+        "created_by": admin.email,
+        "next_run_at": next_run,
+        "last_run_at": None,
+        "last_error": None,
+    }
+    await db[REPORT_SCHEDULES_COLLECTION].insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/admin/report-schedules/{schedule_id}", summary="Update scheduled report", tags=["Admin"])
+async def patch_report_schedule(
+    schedule_id: str,
+    body: ReportSchedulePatch,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    cur = await db[REPORT_SCHEDULES_COLLECTION].find_one({"schedule_id": schedule_id})
+    if not cur:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    patch: Dict[str, Any] = {}
+    if body.domain is not None:
+        patch["domain"] = (body.domain or "").strip().lower() or None
+    if body.cadence is not None:
+        patch["cadence"] = body.cadence
+    if body.hour_utc is not None:
+        patch["hour_utc"] = body.hour_utc
+    if body.minute_utc is not None:
+        patch["minute_utc"] = body.minute_utc
+    if body.enabled is not None:
+        patch["enabled"] = body.enabled
+    if body.delivery is not None:
+        d = body.delivery.model_dump()
+        if not d.get("email_enabled") and not d.get("download_enabled"):
+            raise HTTPException(
+                status_code=400,
+                detail="Enable at least one delivery option: email and/or download.",
+            )
+        patch["delivery"] = d
+    if patch:
+        now = datetime.utcnow()
+        cadence = str(patch.get("cadence", cur.get("cadence") or "daily"))
+        hour_utc = int(patch.get("hour_utc", cur.get("hour_utc") or 6))
+        minute_utc = int(patch.get("minute_utc", cur.get("minute_utc") or 0))
+        patch["next_run_at"] = compute_next_fire(cadence, hour_utc, minute_utc, now)
+        await db[REPORT_SCHEDULES_COLLECTION].update_one({"schedule_id": schedule_id}, {"$set": patch})
+    out = await db[REPORT_SCHEDULES_COLLECTION].find_one({"schedule_id": schedule_id})
+    if out:
+        out.pop("_id", None)
+    return out
+
+
+@router.delete("/admin/report-schedules/{schedule_id}", summary="Delete scheduled report", tags=["Admin"])
+async def delete_report_schedule(schedule_id: str, _admin: User = Depends(require_admin)):
+    db = get_database()
+    r = await db[REPORT_SCHEDULES_COLLECTION].delete_one({"schedule_id": schedule_id})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"ok": True}
+
+
+@router.post(
+    "/admin/report-schedules/{schedule_id}/run-now",
+    summary="Run scheduled report immediately",
+    tags=["Admin"],
+)
+async def run_report_schedule_now(schedule_id: str, _admin: User = Depends(require_admin)):
+    db = get_database()
+    sched = await db[REPORT_SCHEDULES_COLLECTION].find_one({"schedule_id": schedule_id})
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    await execute_schedule_run(sched, manual=True)
+    return {"ok": True}
+
+
+@router.get("/admin/mail-log", summary="Outbound mail log (SMTP)", tags=["Admin"])
+async def get_mail_log(limit: int = 50, _admin: User = Depends(require_admin)):
+    lim = min(max(limit, 1), 200)
+    db = get_database()
+    cursor = db[MAIL_LOG_COLLECTION].find().sort("created_at", -1).limit(lim)
+    rows: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        rows.append(row)
+    return {"count": len(rows), "events": rows}
+
+
+@router.get("/admin/report-artifacts", summary="Generated report files (download)", tags=["Admin"])
+async def list_report_artifacts(limit: int = 50, _user: User = Depends(get_current_user)):
+    lim = min(max(limit, 1), 200)
+    db = get_database()
+    cursor = db[REPORT_ARTIFACTS_COLLECTION].find().sort("created_at", -1).limit(lim)
+    rows: List[dict] = []
+    async for row in cursor:
+        row.pop("_id", None)
+        rows.append(row)
+    return {"count": len(rows), "artifacts": rows}
+
+
+@router.get(
+    "/admin/report-artifacts/{artifact_id}/download",
+    summary="Download generated report JSON",
+    tags=["Admin"],
+)
+async def download_report_artifact(artifact_id: str, _user: User = Depends(get_current_user)):
+    db = get_database()
+    doc = await db[REPORT_ARTIFACTS_COLLECTION].find_one({"artifact_id": artifact_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    fn = doc.get("filename")
+    if not fn:
+        raise HTTPException(status_code=404, detail="Invalid artifact")
+    path = artifact_file_path(str(fn))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File missing on server")
+    return FileResponse(path, filename=fn, media_type="application/json")
+
+
+# ════════════════════════════════════════════════════════════════════
+# AI — Roadmap planner + Copilot (LM Studio compatible)
+# ════════════════════════════════════════════════════════════════════
+
+
+@router.post("/ai/roadmap/plan", summary="AI-assisted migration plan (grounded)", tags=["AI"])
+async def ai_roadmap_plan(body: AiRoadmapPlanBody, _user: User = Depends(get_current_user)):
+    db = get_database()
+    d = body.domain.strip().lower()
+    doc = await db[SCANS_COLLECTION].find_one(
+        {"domain": d, "status": ScanStatus.COMPLETED.value},
+        sort=[("completed_at", -1), ("started_at", -1)],
+    )
+    if not doc:
+        doc = await db[SCANS_COLLECTION].find_one({"domain": d}, sort=[("started_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"No scan results found for domain: {body.domain}")
+
+    items = build_security_roadmap(doc)[:80]
+    q = doc.get("quantum_score") or {}
+    det: Dict[str, Any] = {
+        "domain": doc.get("domain"),
+        "scan_id": doc.get("scan_id"),
+        "scan_status": doc.get("status"),
+        "completed_at": str(doc.get("completed_at") or ""),
+        "quantum_risk_level": q.get("risk_level"),
+        "quantum_score": q.get("score"),
+        "items": items,
+    }
+    horizon = None
+    notes = ""
+    if body.constraints and isinstance(body.constraints, dict):
+        horizon = body.constraints.get("horizon_days")
+        notes = str(body.constraints.get("notes") or "")[:500]
+
+    deterministic_plan = build_deterministic_roadmap_plan_text(det, horizon, notes)
+    system = (
+        "You are QuantumShield roadmap planner. Use ONLY the JSON context. "
+        "Write a concrete migration plan as bullet lines starting with '- ' (Markdown). "
+        "Group into three time phases (e.g. days 1–30, 31–60, 61–90) or similar; reference real "
+        "risks and solutions from context.items by paraphrasing them — do not invent hosts, CVEs, or findings "
+        "not in context. Keep each bullet scannable; no JSON echo."
+    )
+    user_msg = (
+        f"Context JSON:\n{json.dumps(det, default=str)[:14000]}\n\n"
+        f"Horizon_days hint: {horizon}\nNotes: {notes}\n"
+    )
+
+    plan_source = "llm"
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user_msg}]
+    try:
+        ai_text = await chat_completion(messages, temperature=0.25, max_tokens=3072)
+        if not (ai_text or "").strip():
+            raise RuntimeError("empty LLM content")
+    except Exception:
+        ai_text = deterministic_plan
+        plan_source = "deterministic"
+
+    bullets = [ln.strip() for ln in ai_text.splitlines() if ln.strip().startswith("-")]
+    if not bullets:
+        bullets = [ln.strip() for ln in ai_text.splitlines() if ln.strip()][:25]
+
+    disclaimer = (
+        "Indicative guidance derived from external scan signals; validate with architecture, "
+        "application, and PKI owners before production or compliance commitments."
+    )
+    return {
+        "deterministic_items": items,
+        "ai_plan_text": ai_text,
+        "ai_bullets": bullets[:40],
+        "disclaimer": disclaimer,
+        "plan_source": plan_source,
+    }
+
+
+@router.post("/ai/copilot/chat", summary="QuantumShield-only copilot", tags=["AI"])
+async def ai_copilot_chat(body: AiCopilotChatBody, _user: User = Depends(get_current_user)):
+    db = get_database()
+    dom = (body.domain or "").strip().lower() or None
+    ctx = await build_copilot_context(db, SCANS_COLLECTION, dom)
+    compact = is_trivial_greeting(body.message)
+    mode_note = (
+        "OUTPUT MODE: COMPACT — include sections 1 (Executive Summary) and 2 (Visual Metrics with text bar charts). "
+        "Omit sections 3–6.\n\n"
+        if compact
+        else "OUTPUT MODE: FULL — include ALL numbered sections 1 through 6 below.\n\n"
+    )
+    system = (
+        "You are a senior cybersecurity analyst and UI-focused technical communicator for QuantumShield. "
+        "You receive CONTEXT_JSON with scan facts. Answer ONLY using CONTEXT_JSON; do not invent hosts, CVEs, or numbers.\n\n"
+        "Formatting rules (mandatory):\n"
+        "• Use structured Markdown with ### headings. Each section starts with a label like "
+        "### [Icon: Dashboard] 1. Executive Summary — use these icon tags as plain text: "
+        "[Icon: Dashboard], [Icon: BarChart], [Icon: PieChart], [Icon: Search], [Icon: Warning], [Icon: Build], "
+        "[Icon: Security], [Icon: AccountTree], [Icon: PriorityHigh], [Icon: Report], [Icon: CheckCircle].\n"
+        "• Use bullet lines starting with • (middle dot) or Markdown list syntax. No emojis.\n"
+        "• Avoid long paragraphs; prefer scannable bullets.\n"
+        "• Section 2 must include text-based bar charts for Security score and Risk level using block characters "
+        "(e.g. █ and ░), scaled from CONTEXT_JSON key_metrics / quantum_score_0_100 and quantum_risk_level.\n"
+        "• When tls_protocol_distribution or cve_by_severity in CONTEXT_JSON support it, add compact text 'pie' rows "
+        "(percent + small bar). If distributions are empty, say insufficient data.\n"
+        "• Section 3: TLS configuration, vulnerabilities (CVE), endpoint/active findings — beginner-friendly plus a one-line expert cue.\n"
+        "• Section 4: Risk assessment with Low/Medium/High framing and real-world impact (MITM, downgrade, exposure) only as grounded commentary.\n"
+        "• Section 5: Prioritize recommendations using [Icon: PriorityHigh], [Icon: Report], [Icon: CheckCircle] from "
+        "recommendations_preview when present.\n"
+        "• Section 6: Best practices (TLS 1.3, cert hygiene, PQC planning). End the report after section 6; "
+        "do not add a scan pipeline diagram, flowchart, or Mermaid.\n"
+        "• Do NOT echo CONTEXT_JSON. Do NOT use ```json fences. Do not use ```mermaid or any diagram blocks.\n"
+        "• If the user asks about anything not in CONTEXT_JSON, reply with a single short paragraph or bullet: "
+        "I can only discuss QuantumShield scan results available in your workspace context.\n"
+    )
+    user_msg = (
+        f"{mode_note}"
+        f"CONTEXT_JSON:\n{json.dumps(ctx, default=str)[:12000]}\n\nUSER:\n{body.message}"
+    )
+    reply = await chat_completion_safe(
+        [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
+        fallback=format_copilot_offline_reply(ctx, body.message),
+    )
+    reply = postprocess_copilot_dashboard_reply(sanitize_copilot_llm_reply(reply, ctx, body.message), ctx)
+    return {"reply": reply, "context_used": ctx}
+
+
+# ════════════════════════════════════════════════════════════════════
+# In-app notifications (employee → admin)
+# ════════════════════════════════════════════════════════════════════
+
+
+def _notification_public(doc: Dict[str, Any]) -> Dict[str, Any]:
+    out = {k: doc[k] for k in doc if k != "_id"}
+    return out
+
+
+@router.post(
+    "/notifications",
+    summary="Send a message to administrators (employees only)",
+    tags=["Notifications"],
+)
+async def create_employee_notification(
+    body: NotificationCreate,
+    sender: User = Depends(require_employee_only),
+):
+    db = get_database()
+    notification_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    doc = {
+        "notification_id": notification_id,
+        "from_user_id": sender.id,
+        "from_email": (sender.email or "").strip().lower(),
+        "from_name": (sender.full_name or "").strip() or None,
+        "to_role": "admin",
+        "subject": body.subject.strip(),
+        "body": body.body.strip(),
+        "category": body.category,
+        "created_at": now,
+        "read_at": None,
+        "read_by": None,
+    }
+    await db[NOTIFICATIONS_COLLECTION].insert_one(doc)
+    return _notification_public(doc)
+
+
+@router.get(
+    "/notifications/me",
+    summary="List notifications you have sent",
+    tags=["Notifications"],
+)
+async def list_my_notifications(
+    limit: int = 40,
+    skip: int = 0,
+    _user: User = Depends(get_current_user),
+):
+    db = get_database()
+    lim = min(max(limit, 1), 200)
+    sk = max(skip, 0)
+    email = (_user.email or "").strip().lower()
+    q = {"from_email": email}
+    cursor = (
+        db[NOTIFICATIONS_COLLECTION]
+        .find(q)
+        .sort([("created_at", -1)])
+        .skip(sk)
+        .limit(lim)
+    )
+    items: List[Dict[str, Any]] = []
+    async for row in cursor:
+        items.append(_notification_public(row))
+    total = await db[NOTIFICATIONS_COLLECTION].count_documents(q)
+    return {"count": len(items), "total": total, "notifications": items}
+
+
+@router.get(
+    "/admin/notifications",
+    summary="List inbound employee notifications (admin)",
+    tags=["Admin"],
+)
+async def list_admin_notifications(
+    limit: int = 40,
+    skip: int = 0,
+    unread_only: bool = False,
+    _admin: User = Depends(require_admin),
+):
+    db = get_database()
+    lim = min(max(limit, 1), 200)
+    sk = max(skip, 0)
+    q: Dict[str, Any] = {}
+    if unread_only:
+        q["read_at"] = None
+    cursor = (
+        db[NOTIFICATIONS_COLLECTION]
+        .find(q)
+        .sort([("created_at", -1)])
+        .skip(sk)
+        .limit(lim)
+    )
+    items: List[Dict[str, Any]] = []
+    async for row in cursor:
+        items.append(_notification_public(row))
+    total = await db[NOTIFICATIONS_COLLECTION].count_documents(q)
+    return {"count": len(items), "total": total, "notifications": items}
+
+
+@router.patch(
+    "/admin/notifications/{notification_id}",
+    summary="Mark a notification as read",
+    tags=["Admin"],
+)
+async def mark_notification_read(
+    notification_id: str,
+    body: NotificationMarkRead,
+    admin: User = Depends(require_admin),
+):
+    if not body.read:
+        raise HTTPException(status_code=400, detail="Only read=true is supported")
+    db = get_database()
+    now = datetime.now(timezone.utc)
+    res = await db[NOTIFICATIONS_COLLECTION].find_one_and_update(
+        {"notification_id": notification_id},
+        {
+            "$set": {
+                "read_at": now,
+                "read_by": (admin.email or "").strip().lower(),
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return _notification_public(res)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2777,6 +3336,9 @@ async def get_discovery_assets():
                     "owner": a.get("owner") or "",
                     "environment": a.get("environment") or "",
                     "criticality": a.get("criticality") or "",
+                    "buckets": list(a.get("buckets") or []),
+                    "hosting_hint": a.get("hosting_hint") or "",
+                    "surface": a.get("surface") or "",
                 }
             )
 

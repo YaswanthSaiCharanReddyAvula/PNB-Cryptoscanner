@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -56,6 +56,11 @@ class DiscoveredAsset(BaseModel):
     owner: Optional[str] = None
     environment: Optional[str] = None  # e.g. prod, staging, dev
     criticality: Optional[str] = None  # e.g. low, medium, high, critical
+    # Phase: asset bucketing (hosting / surface / mobile gateways) — filled after TLS + HTTP probes
+    buckets: List[str] = Field(default_factory=list)
+    hosting_hint: Optional[str] = None  # first_party | third_party_cdn | saas_likely | cloud_provider | unknown
+    surface: Optional[str] = None  # web | api | mail | vpn | rdp | unknown
+    classification_attributes: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CertificateInfo(BaseModel):
@@ -134,6 +139,18 @@ class CVEFinding(BaseModel):
     affected_component: str
     description: str
     mitigation: str
+
+
+class ActiveVulnFinding(BaseModel):
+    """Finding from optional active scanner (e.g. Nuclei), distinct from crypto/TLS CVE mapping."""
+
+    source: str = "nuclei"
+    template_id: Optional[str] = None
+    name: str = ""
+    severity: str = "info"  # info, low, medium, high, critical
+    host: str = ""
+    url: Optional[str] = None
+    matcher_name: Optional[str] = None
 
 
 class CryptoComponent(BaseModel):
@@ -320,6 +337,69 @@ class ExportAuditLogCreate(BaseModel):
     domain: Optional[str] = None
 
 
+class ReportScheduleDelivery(BaseModel):
+    email_enabled: bool = False
+    download_enabled: bool = True
+    email_to: List[str] = Field(default_factory=list)
+
+
+class ReportScheduleCreate(BaseModel):
+    domain: Optional[str] = None
+    cadence: Literal["daily", "weekly", "monthly"] = "daily"
+    hour_utc: int = Field(6, ge=0, le=23)
+    minute_utc: int = Field(0, ge=0, le=59)
+    enabled: bool = True
+    delivery: ReportScheduleDelivery
+
+
+class ReportSchedulePatch(BaseModel):
+    domain: Optional[str] = None
+    cadence: Optional[Literal["daily", "weekly", "monthly"]] = None
+    hour_utc: Optional[int] = Field(None, ge=0, le=23)
+    minute_utc: Optional[int] = Field(None, ge=0, le=59)
+    enabled: Optional[bool] = None
+    delivery: Optional[ReportScheduleDelivery] = None
+
+
+class AiRoadmapPlanBody(BaseModel):
+    domain: str = Field(..., min_length=1, max_length=500)
+    constraints: Optional[Dict[str, Any]] = None
+
+
+class AiCopilotChatBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    domain: Optional[str] = None
+
+
+# ── In-app notifications (employee → admin) ──────────────────────
+
+NotificationCategory = Literal["general", "access", "scan", "other"]
+
+
+class NotificationCreate(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    body: str = Field(..., min_length=1, max_length=8000)
+    category: NotificationCategory = "general"
+
+
+class NotificationMarkRead(BaseModel):
+    read: bool = True
+
+
+class NotificationOut(BaseModel):
+    notification_id: str
+    from_user_id: str
+    from_email: str
+    from_name: Optional[str] = None
+    to_role: str = "admin"
+    subject: str
+    body: str
+    category: str
+    created_at: datetime
+    read_at: Optional[datetime] = None
+    read_by: Optional[str] = None
+
+
 # ── Phase 5: Migration tasks & waivers ─────────────────────────────
 
 
@@ -391,6 +471,7 @@ class ScanResult(BaseModel):
     # ── Enhanced fields ──
     headers_results: List[HeadersResult] = Field(default_factory=list)
     cve_findings: List[CVEFinding] = Field(default_factory=list)
+    vuln_findings: List[ActiveVulnFinding] = Field(default_factory=list)
     dns_records: List[NameServerInfo] = Field(default_factory=list)
     error: Optional[str] = None
 

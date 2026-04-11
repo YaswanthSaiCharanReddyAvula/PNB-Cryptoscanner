@@ -29,13 +29,18 @@ type PortfolioRow = {
   risk: string;
   owner: string;
   lastScan: string;
+  surface: string;
+  hosting: string;
+  buckets: string;
 };
 
 export default function AssetInventory() {
   const [filterExposure, setFilterExposure] = useState("Public Only");
   const [discoveredAssets, setDiscoveredAssets] = useState<any[]>([]);
   const [portfolioRows, setPortfolioRows] = useState<PortfolioRow[]>([]);
-  const [portfolioRootFilter, setPortfolioRootFilter] = useState<string>("__all__");
+  const [portfolioRootFilter, setPortfolioRootFilter] = useState<string>("");
+  const [portfolioHostFilter, setPortfolioHostFilter] = useState<string>("__all_subdomains__");
+  const [portfolioSurfaceFilter, setPortfolioSurfaceFilter] = useState<string>("__all__");
   const [portfolioMeta, setPortfolioMeta] = useState({ host_count: 0, scans_considered: 0 });
   const [stats, setStats] = useState({
     total: 0,
@@ -68,6 +73,9 @@ export default function AssetInventory() {
             lastScan: h.last_completed_at
               ? new Date(String(h.last_completed_at)).toLocaleString()
               : "—",
+            surface: String(h.surface ?? "—"),
+            hosting: String(h.hosting_hint ?? "—"),
+            buckets: Array.isArray(h.buckets) ? h.buckets.slice(0, 8).join(", ") : "—",
           })),
         );
       })
@@ -83,16 +91,44 @@ export default function AssetInventory() {
     return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [portfolioRows]);
 
+  useEffect(() => {
+    if (portfolioRootDomains.length === 0) {
+      setPortfolioRootFilter("");
+      return;
+    }
+    if (!portfolioRootFilter || !portfolioRootDomains.includes(portfolioRootFilter)) {
+      setPortfolioRootFilter(portfolioRootDomains[0]);
+      setPortfolioHostFilter("__all_subdomains__");
+    }
+  }, [portfolioRootDomains, portfolioRootFilter]);
+
   const portfolioFilteredSorted = useMemo(() => {
     let list = portfolioRows;
-    if (portfolioRootFilter !== "__all__") {
+    if (portfolioRootFilter) {
       list = list.filter((r) => r.parentDomain === portfolioRootFilter);
+    }
+    if (portfolioHostFilter !== "__all_subdomains__") {
+      list = list.filter((r) => r.host === portfolioHostFilter);
+    }
+    if (portfolioSurfaceFilter !== "__all__") {
+      list = list.filter(
+        (r) => (r.surface || "").toLowerCase() === portfolioSurfaceFilter.toLowerCase(),
+      );
     }
     return [...list].sort((a, b) => {
       const byParent = a.parentDomain.localeCompare(b.parentDomain, undefined, { sensitivity: "base" });
       if (byParent !== 0) return byParent;
       return a.host.localeCompare(b.host, undefined, { sensitivity: "base" });
     });
+  }, [portfolioRows, portfolioRootFilter, portfolioHostFilter, portfolioSurfaceFilter]);
+
+  const subdomainsForSelectedRoot = useMemo(() => {
+    if (!portfolioRootFilter) return [];
+    return portfolioRows
+      .filter((r) => r.parentDomain === portfolioRootFilter)
+      .map((r) => r.host)
+      .filter((h) => h && h !== "—")
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [portfolioRows, portfolioRootFilter]);
 
   useEffect(() => {
@@ -103,14 +139,17 @@ export default function AssetInventory() {
           const ip = a.ip_address || "N/A";
           return {
             detectionDate: a.detection_date ? new Date(a.detection_date).toLocaleDateString() : "N/A",
+            hostLabel: a.asset || a.name || "—",
             ipAddress: ip,
             ports: a.ports || "N/A",
+            surface: a.surface || "—",
+            hosting: a.hosting_hint || "—",
             subnets: a.subnets || "N/A",
             asn: a.asn || "N/A",
             netName: a.net_name || "N/A",
             location: a.location || "N/A",
             company: a.company || "N/A",
-            exposure: getExposure(ip)
+            exposure: getExposure(ip),
           };
         });
         
@@ -167,18 +206,23 @@ export default function AssetInventory() {
         Portfolio view: {portfolioMeta.host_count} unique host(s) from up to{" "}
         {portfolioMeta.scans_considered} recent completed scan(s) (
         <code className="rounded bg-muted px-1 py-0.5 text-[10px]">GET /inventory/summary</code>
-        ). Filter by root domain; rows are sorted by root domain, then hostname.
+        ). Pick a scanned domain, then narrow by discovered subdomain.
       </p>
       {portfolioRows.length > 0 && (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-4">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Scanned root domain</Label>
-            <Select value={portfolioRootFilter} onValueChange={setPortfolioRootFilter}>
+            <Select
+              value={portfolioRootFilter}
+              onValueChange={(v) => {
+                setPortfolioRootFilter(v);
+                setPortfolioHostFilter("__all_subdomains__");
+              }}
+            >
               <SelectTrigger className="h-9 w-full max-w-xs">
-                <SelectValue placeholder="All roots" />
+                <SelectValue placeholder="Select domain" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">All scanned domains</SelectItem>
                 {portfolioRootDomains.map((d) => (
                   <SelectItem key={d} value={d}>
                     {d}
@@ -187,21 +231,67 @@ export default function AssetInventory() {
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Found subdomain</Label>
+            <Select value={portfolioHostFilter} onValueChange={setPortfolioHostFilter}>
+              <SelectTrigger className="h-9 w-full max-w-xs">
+                <SelectValue placeholder="All discovered subdomains" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all_subdomains__">All discovered subdomains</SelectItem>
+                {subdomainsForSelectedRoot.map((h) => (
+                  <SelectItem key={h} value={h}>
+                    {h}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Surface (classified)</Label>
+            <Select value={portfolioSurfaceFilter} onValueChange={setPortfolioSurfaceFilter}>
+              <SelectTrigger className="h-9 w-full max-w-xs">
+                <SelectValue placeholder="All surfaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All surfaces</SelectItem>
+                {["web", "api", "mail", "vpn", "rdp", "unknown"].map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <p className="text-xs text-muted-foreground pb-2">
             Showing {portfolioFilteredSorted.length} host(s)
-            {portfolioRootFilter !== "__all__" ? ` under ${portfolioRootFilter}` : ""}.
+            {portfolioRootFilter ? ` under ${portfolioRootFilter}` : ""}.
           </p>
         </div>
       )}
       <DataTable
-        title="Portfolio hosts (deduplicated)"
+        title={
+          portfolioRootFilter
+            ? `Scanned domain: ${portfolioRootFilter}`
+            : "Portfolio hosts (deduplicated)"
+        }
         searchable
-        searchKeys={["host", "parentDomain", "owner", "risk"]}
+        searchKeys={["host", "parentDomain", "owner", "risk", "surface", "hosting", "buckets"]}
         pageSize={10}
         data={portfolioFilteredSorted}
         columns={[
           { key: "host", header: "Host", render: (r) => <span className="font-mono text-sm text-primary">{r.host as string}</span> },
-          { key: "parentDomain", header: "Root domain" },
+          { key: "surface", header: "Surface" },
+          { key: "hosting", header: "Hosting" },
+          {
+            key: "buckets",
+            header: "Buckets",
+            render: (r) => (
+              <span className="max-w-[240px] truncate text-xs text-muted-foreground" title={r.buckets as string}>
+                {r.buckets as string}
+              </span>
+            ),
+          },
           { key: "risk", header: "Quantum risk" },
           { key: "owner", header: "Owner" },
           { key: "lastScan", header: "Last completed" },
@@ -226,7 +316,7 @@ export default function AssetInventory() {
       <DataTable
         title="Discovered Assets"
         searchable
-        searchKeys={["ipAddress", "netName", "location", "asn"]}
+        searchKeys={["hostLabel", "ipAddress", "netName", "location", "asn", "surface", "hosting"]}
         pageSize={12}
         data={discoveredAssets.filter(a => {
           if (filterExposure === "Public Only") return a.exposure === "Public";
@@ -235,7 +325,14 @@ export default function AssetInventory() {
         })}
         columns={[
           { key: "detectionDate", header: "Detection Date" },
+          {
+            key: "hostLabel",
+            header: "Host",
+            render: (r) => <span className="font-mono text-xs text-primary">{r.hostLabel as string}</span>,
+          },
           { key: "ipAddress", header: "IP Address", render: (r) => <span className="font-mono text-primary">{r.ipAddress as string}</span> },
+          { key: "surface", header: "Surface" },
+          { key: "hosting", header: "Hosting" },
           { 
             key: "exposure", 
             header: "Exposure", 

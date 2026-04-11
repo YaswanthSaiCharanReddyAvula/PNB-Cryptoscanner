@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,29 @@ function getTier(score: number): { label: string; color: string; bg: string } {
   return { label: "Legacy", color: RED, bg: "rgba(220,38,38,0.12)" };
 }
 
+/** When backend omits `explain`, still show the panel with score-based context. */
+function fallbackExplain(score1000: number): {
+  evidence: Record<string, number>;
+  drivers: string[];
+  note: string;
+} {
+  const t = getTier(score1000);
+  return {
+    evidence: {
+      tls_total: 0,
+      tls_1_3: 0,
+      legacy_tls: 0,
+      weak_cipher_indicators: 0,
+      hndl_risk_inferred: 0,
+    },
+    drivers: [
+      `Score ${score1000}/1000 maps to tier "${t.label}" (Standard is 400–700; Elite-PQC is above 700).`,
+      "TLS evidence chips could not be loaded (older API or network). Use Refresh from latest scan after updating the backend.",
+    ],
+    note: "When GET /cyber-rating includes an explain object, this section shows TLS row counts from your last completed scan.",
+  };
+}
+
 // Reference tables — NOT scan data, kept as-is
 const TIER_REFERENCE = [
   { status: "Elite-PQC",                          icon: <CheckCircle2 size={16} color={GREEN} />, rating: "> 700",       color: GREEN },
@@ -31,10 +54,28 @@ const TIER_REFERENCE = [
   { status: "Maximum Score after normalisation*", icon: null,                                     rating: "1000",         color: "#94a3b8" },
 ];
 
+type RatingHistoryRow = {
+  scan_id?: string;
+  domain?: string;
+  score?: number;
+  tier?: string;
+  completed_at?: string;
+  started_at?: string;
+};
+
+function formatDateTime(value?: string): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
+
 export default function CyberRating() {
   const [score1000,     setScore1000]     = useState<number | null>(null);
   const [urlScores,     setUrlScores]     = useState<any[]>([]);
   const [explain,        setExplain]       = useState<any | null>(null);
+  const [latestDomain, setLatestDomain] = useState<string | null>(null);
+  const [history, setHistory] = useState<RatingHistoryRow[]>([]);
   const [explainOpen,   setExplainOpen]   = useState(true);
   const [tierOpen,      setTierOpen]      = useState(false);
   const [simTls,         setSimTls]         = useState(false);
@@ -50,10 +91,17 @@ export default function CyberRating() {
   } | null>(null);
 
   const [ratingBusy, setRatingBusy] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const tier      = score1000 !== null ? getTier(score1000) : getTier(0);
   const CIRC      = 534;
   const dashArray = score1000 !== null ? (score1000 / 1000) * CIRC : 0;
+
+  /** Merge API explain with client fallback so the panel always appears when a score exists. */
+  const explainData = useMemo(
+    () => (score1000 !== null ? explain ?? fallbackExplain(score1000) : null),
+    [score1000, explain]
+  );
 
   const fetchScore = useCallback(async () => {
     try {
@@ -64,27 +112,43 @@ export default function CyberRating() {
         setScore1000(null);
         setUrlScores([]);
         setExplain(null);
+        setLatestDomain(null);
       } else if (typeof d.score === "number") {
         setScore1000(Math.round(Math.max(0, Math.min(1000, d.score))));
         if (Array.isArray(d.per_url_scores) && d.per_url_scores.length) setUrlScores(d.per_url_scores);
         setExplain(d.explain ?? null);
+        setLatestDomain(typeof d.domain === "string" ? d.domain : null);
       }
     } catch {
       setScore1000(null);
       setExplain(null);
+      setLatestDomain(null);
+    }
+  }, []);
+
+  const fetchRatingHistory = useCallback(async () => {
+    try {
+      const res = await cyberRatingService.getRatingHistory({ limit: 200 });
+      const rows = Array.isArray(res.data?.history) ? (res.data.history as RatingHistoryRow[]) : [];
+      setHistory(rows);
+    } catch {
+      setHistory([]);
     }
   }, []);
 
   useEffect(() => {
     fetchScore();
-  }, [fetchScore]);
+    fetchRatingHistory();
+  }, [fetchScore, fetchRatingHistory]);
 
   const refreshRating = async () => {
     setRatingBusy(true);
+    setHistoryBusy(true);
     try {
-      await fetchScore();
+      await Promise.all([fetchScore(), fetchRatingHistory()]);
     } finally {
       setRatingBusy(false);
+      setHistoryBusy(false);
     }
   };
 
@@ -125,10 +189,15 @@ export default function CyberRating() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Cyber Rating</h1>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Enterprise-style score (0–1000) from the latest completed scan. Start or refresh scans from{" "}
+            Enterprise-style score (0–1000) from the latest completed scan, plus historical scores for every scanned domain. Start or refresh scans from{" "}
             <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
             . This is a composite rating, not proof of deployed NIST PQC algorithms.
           </p>
+          {latestDomain && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Latest score source: <span className="font-mono text-foreground">{latestDomain}</span>
+            </p>
+          )}
         </div>
         <Button
           type="button"
@@ -138,8 +207,8 @@ export default function CyberRating() {
           onClick={refreshRating}
           disabled={ratingBusy}
         >
-          {ratingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Refresh from latest scan
+          {ratingBusy || historyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Refresh latest + history
         </Button>
       </motion.div>
 
@@ -187,8 +256,8 @@ export default function CyberRating() {
         )}
       </motion.div>
 
-      {/* Explainability panel */}
-      {explain && score1000 !== null && (
+      {/* Explainability panel — tier badge uses composite score; chips summarize TLS rows from the same scan */}
+      {score1000 !== null && explainData && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -197,18 +266,19 @@ export default function CyberRating() {
         >
           <button
             type="button"
-            className="w-full flex items-center justify-between gap-3"
+            className="w-full flex items-center justify-between gap-3 text-left"
             onClick={() => setExplainOpen((v) => !v)}
+            aria-expanded={explainOpen}
           >
             <div>
               <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">
                 Why this tier
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Heuristic evidence summary from TLS scan rows (not a formal certification).
+                Tier follows the 0–1000 score; bullets summarize TLS evidence from the latest completed scan (heuristic, not certification).
               </p>
             </div>
-            <div className="text-muted-foreground">{explainOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</div>
+            <div className="text-muted-foreground shrink-0">{explainOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</div>
           </button>
 
           <AnimatePresence initial={false}>
@@ -218,26 +288,26 @@ export default function CyberRating() {
                 animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: 0.25 }}
-                className="mt-4"
+                className="mt-4 overflow-hidden"
               >
                 <div className="flex flex-wrap gap-2 mb-3">
                   <span className="text-xs px-2 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary font-semibold">
-                    TLS 1.3: {explain.evidence?.tls_1_3 ?? 0}/{explain.evidence?.tls_total ?? 0}
+                    TLS 1.3: {explainData.evidence?.tls_1_3 ?? 0}/{explainData.evidence?.tls_total ?? 0}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-amber-500/20 bg-amber-500/5 text-amber-700 font-semibold">
-                    Legacy TLS: {explain.evidence?.legacy_tls ?? 0}
+                    Legacy TLS: {explainData.evidence?.legacy_tls ?? 0}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
-                    Weak ciphers: {explain.evidence?.weak_cipher_indicators ?? 0}
+                    Weak ciphers: {explainData.evidence?.weak_cipher_indicators ?? 0}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
-                    HNDL risk: {explain.evidence?.hndl_risk_inferred ?? 0}
+                    HNDL risk: {explainData.evidence?.hndl_risk_inferred ?? 0}
                   </span>
                 </div>
 
-                {Array.isArray(explain.drivers) && explain.drivers.length > 0 ? (
+                {Array.isArray(explainData.drivers) && explainData.drivers.length > 0 ? (
                   <div className="space-y-1">
-                    {explain.drivers.map((d: string, i: number) => (
+                    {explainData.drivers.map((d: string, i: number) => (
                       <p key={i} className="text-sm text-foreground/90">
                         • {d}
                       </p>
@@ -247,8 +317,8 @@ export default function CyberRating() {
                   <p className="text-sm text-muted-foreground">No evidence drivers found.</p>
                 )}
 
-                {explain.note && (
-                  <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{explain.note}</p>
+                {explainData.note && (
+                  <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{explainData.note}</p>
                 )}
               </motion.div>
             )}
@@ -421,6 +491,49 @@ export default function CyberRating() {
         )}
       </motion.div>
 
+      {/* Rating History Table */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground">Cyber Rating History (All Domains)</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Every completed scan score grouped in one historical feed.</p>
+        </div>
+        {history.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6 px-4">
+            No historical ratings yet — complete at least one scan from{" "}
+            <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-secondary/50">
+                  {["Completed","Domain","Score","Tier","Scan ID"].map(h => <th key={h} className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((row, i) => {
+                  const s = Math.max(0, Math.min(1000, Number(row.score ?? 0)));
+                  const t = getTier(s);
+                  return (
+                    <tr key={`${row.scan_id ?? "scan"}-${i}`} className="border-b border-border/50 hover:bg-secondary/30 transition-colors">
+                      <td className="px-6 py-3 text-xs text-muted-foreground">{formatDateTime(row.completed_at ?? row.started_at)}</td>
+                      <td className="px-6 py-3 font-mono text-xs text-foreground">{row.domain ?? "unknown"}</td>
+                      <td className="px-6 py-3 font-semibold" style={{ color: t.color }}>{s}</td>
+                      <td className="px-6 py-3">
+                        <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color: t.color, backgroundColor: t.bg, border: `1px solid ${t.color}40` }}>
+                          {row.tier || t.label}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 font-mono text-[11px] text-muted-foreground">{row.scan_id ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </motion.div>
+
       {/* Tier Criteria Accordion */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <button className="w-full flex items-center justify-between px-6 py-4 border-b border-border hover:bg-secondary/30 transition-colors" onClick={() => setTierOpen(o => !o)}>
@@ -432,7 +545,7 @@ export default function CyberRating() {
         </button>
         <AnimatePresence initial={false}>
           {tierOpen && (
-            <motion.div key="criteria" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden">
+            <motion.div key="criteria" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden border-t border-border/60">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>

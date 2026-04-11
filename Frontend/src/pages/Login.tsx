@@ -44,11 +44,12 @@ export default function Login() {
       const backendRole = String(user?.role || "").toLowerCase();
       const mappedRole: UserRole = backendRole.includes("admin") ? "Admin" : "Employee";
       login(
-        { 
-          id: user?.id || "demo-id", 
-          username: username, 
-          role: mappedRole, 
-          name: user?.full_name || username.split("@")[0]
+        {
+          id: user?.id || "demo-id",
+          username: username,
+          role: mappedRole,
+          name: user?.full_name || username.split("@")[0],
+          email: user?.email || (username.includes("@") ? username : undefined),
         },
         access_token
       );

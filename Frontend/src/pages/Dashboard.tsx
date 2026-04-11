@@ -13,6 +13,12 @@ import {
   Layers,
   ScrollText,
   ListTodo,
+  Activity,
+  Inbox,
+  Check,
+  X,
+  Clock,
+  CircleDot,
 } from "lucide-react";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { DataTable } from "@/components/dashboard/DataTable";
@@ -42,6 +48,7 @@ import { useScan } from "@/hooks/useScan";
 import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { setLastScannedDomain } from "@/lib/lastScanDomain";
+import { cn } from "@/lib/utils";
 import {
   PieChart,
   Pie,
@@ -80,6 +87,55 @@ const CHART_TOOLTIP = {
 
 const CHART_AXIS_TICK = { fill: "rgb(100 116 139)", fontSize: 11, fontWeight: 500 };
 const CHART_GRID = { stroke: "rgb(226 232 240)", strokeDasharray: "4 6" };
+
+/** Recent activity — full-width rows, strong left border + readable tint */
+const ACTIVITY_STATUS_ROW: Record<string, string> = {
+  completed:
+    "border-l-emerald-600 bg-emerald-50/95 hover:bg-emerald-50 dark:border-l-emerald-500 dark:bg-emerald-950/35 dark:hover:bg-emerald-950/45",
+  failed:
+    "border-l-rose-600 bg-rose-50/95 hover:bg-rose-50 dark:border-l-rose-500 dark:bg-rose-950/35 dark:hover:bg-rose-950/45",
+  running:
+    "border-l-sky-600 bg-sky-50/95 hover:bg-sky-50 dark:border-l-sky-500 dark:bg-sky-950/35 dark:hover:bg-sky-950/45",
+  pending:
+    "border-l-amber-600 bg-amber-50/95 hover:bg-amber-50 dark:border-l-amber-500 dark:bg-amber-950/35 dark:hover:bg-amber-950/45",
+};
+
+function ActivityStatusGlyph({ status }: { status: string }) {
+  const box =
+    "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm ring-2 ring-black/[0.04] dark:ring-white/10";
+  switch (status) {
+    case "completed":
+      return (
+        <div className={cn(box, "bg-emerald-600 text-white dark:bg-emerald-500")}>
+          <Check className="h-5 w-5" strokeWidth={2.75} aria-hidden />
+        </div>
+      );
+    case "failed":
+      return (
+        <div className={cn(box, "bg-rose-600 text-white dark:bg-rose-500")}>
+          <X className="h-5 w-5" strokeWidth={2.75} aria-hidden />
+        </div>
+      );
+    case "running":
+      return (
+        <div className={cn(box, "bg-sky-600 text-white dark:bg-sky-500")}>
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+        </div>
+      );
+    case "pending":
+      return (
+        <div className={cn(box, "bg-amber-600 text-white dark:bg-amber-500")}>
+          <Clock className="h-5 w-5" strokeWidth={2.25} aria-hidden />
+        </div>
+      );
+    default:
+      return (
+        <div className={cn(box, "bg-slate-500 text-white")}>
+          <CircleDot className="h-5 w-5" strokeWidth={2} aria-hidden />
+        </div>
+      );
+  }
+}
 
 /** Aligned with backend `Settings.MAX_BATCH_DOMAINS` */
 const MAX_BATCH_DOMAINS = 25;
@@ -149,27 +205,6 @@ function inferAssetTypeFromPorts(ports: number[]) {
   return "API";
 }
 
-function hash32(input: string): number {
-  // Deterministic 32-bit hash (for stable demo geo pins).
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h << 5) - h + input.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h);
-}
-
-const GEO_CITY_PINS: Array<{ city: string; x: string; y: string }> = [
-  { city: "London", x: "32%", y: "44%" },
-  { city: "Mumbai", x: "58%", y: "58%" },
-  { city: "Nairobi", x: "49%", y: "62%" },
-  { city: "Lagos", x: "42%", y: "70%" },
-  { city: "São Paulo", x: "22%", y: "83%" },
-  { city: "New York", x: "20%", y: "48%" },
-  { city: "Singapore", x: "68%", y: "67%" },
-  { city: "Sydney", x: "78%", y: "84%" },
-];
-
 export default function Dashboard() {
   const [domain, setDomain] = useState("");
   const [scannedDomain, setScannedDomain] = useState("");
@@ -188,9 +223,18 @@ export default function Dashboard() {
   const [ipVersionData, setIpVersionData] = useState<any[]>([]);
   const [assetRiskData, setAssetRiskData] = useState<any[]>([]);
   const [activityFeed, setActivityFeed] = useState<any[]>([]);
-  const [geoPins, setGeoPins] = useState<any[]>([]);
 
-  const { isScanning, stageIndex, results, error, startScan, scanId } = useScan();
+  const {
+    isScanning,
+    stageIndex,
+    results,
+    error,
+    startScan,
+    scanId,
+    targetDomain: activeScanDomain,
+  } = useScan();
+
+  const displayScanDomain = scannedDomain || activeScanDomain || "";
 
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -265,12 +309,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (results && results.status === "completed" && !isScanning) {
-      toast.success(`Scan completed successfully for ${scannedDomain}!`);
+      toast.success(`Scan completed successfully for ${displayScanDomain}!`);
       refreshDashboardData(results);
     } else if (error) {
       toast.error(error);
     }
-  }, [results, isScanning, error]);
+  }, [results, isScanning, error, displayScanDomain]);
 
   const refreshDashboardData = async (v1FallbackPayload: any = null) => {
     try {
@@ -376,7 +420,7 @@ export default function Dashboard() {
         setCryptoSecurityData(cryptoRecords.slice(0, 5));
       }
 
-      // ── Activity Feed + Geo Pins (Overview tiles) ────────────────────────
+      // ── Recent scans activity (overview) ─────────────────────────────────
       const scans = Array.isArray(recentRes?.data?.scans) ? recentRes.data.scans : [];
       const activity = scans.slice(0, 6).map((s: any) => {
         const st = String(s?.status || "").toLowerCase();
@@ -390,52 +434,13 @@ export default function Dashboard() {
           st === "pending" ? "Queued" :
           (st ? st.charAt(0).toUpperCase() + st.slice(1) : "Unknown");
 
-        const color =
-          st === "completed" ? "#22c55e" :
-          st === "failed" ? "#ef4444" :
-          st === "running" ? "#38bdf8" :
-          st === "pending" ? "#f59e0b" :
-          "#94a3b8";
-
-        const icon =
-          st === "completed" ? "✅" :
-          st === "failed" ? "❌" :
-          st === "running" ? "⏳" :
-          st === "pending" ? "🕒" :
-          "•";
-
         return {
-          icon,
-          color,
+          status: st || "unknown",
           msg: `${statusLabel}: ${s?.domain || "—"}`,
           time: when,
         };
       });
       setActivityFeed(activity);
-
-      // NOTE: We don't yet store real geo-location in scan output.
-      // For the demo UI, we generate stable "world pins" from discovered IP strings.
-      const ipStrings = (assets as any[])
-        .map((a: any) => (a?.ipv4 && String(a.ipv4).trim() ? String(a.ipv4) : (a?.ipv6 ? String(a.ipv6) : "")))
-        .filter((ip: string) => ip.length > 0);
-
-      if (ipStrings.length === 0) {
-        setGeoPins([]);
-      } else {
-        const cityCounts = new Map<string, number>();
-        for (const ip of ipStrings) {
-          const idx = hash32(ip) % GEO_CITY_PINS.length;
-          const city = GEO_CITY_PINS[idx]?.city ?? "—";
-          cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
-        }
-        const sortedCities = Array.from(cityCounts.entries()).sort((a, b) => b[1] - a[1]);
-        const top = sortedCities.slice(0, 8);
-        const pins = top.map(([city]) => {
-          const tpl = GEO_CITY_PINS.find((c) => c.city === city) ?? GEO_CITY_PINS[0];
-          return { city, x: tpl.x, y: tpl.y };
-        });
-        setGeoPins(pins);
-      }
 
       if (!assets.length && v1FallbackPayload) {
         applyV1Fallback(v1FallbackPayload);
@@ -736,9 +741,9 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-        {!isScanning && scannedDomain && stageIndex >= 5 && (
+        {!isScanning && displayScanDomain && stageIndex >= 5 && (
           <p className="text-xs text-muted-foreground mt-2">
-            Scan results available for: <span className="text-primary font-medium">{scannedDomain}</span>.{" "}
+            Scan results available for: <span className="text-primary font-medium">{displayScanDomain}</span>.{" "}
             <Link to="/security-roadmap" className="font-medium text-primary hover:underline">
               View security roadmap
             </Link>
@@ -794,7 +799,7 @@ export default function Dashboard() {
       <ScanProgressBar
         isScanning={isScanning}
         stageIndex={stageIndex}
-        targetDomain={scannedDomain}
+        targetDomain={displayScanDomain}
         pipelineStageLabel={
           isScanning && results && typeof (results as { current_stage?: string }).current_stage === "string"
             ? (results as { current_stage: string }).current_stage
@@ -1294,70 +1299,66 @@ export default function Dashboard() {
 
       <ThreatModelPanel />
 
-      {/* Activity Feed + Geo Map */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        <div className="xl:col-span-1 rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Recent Scans &amp; Activity</h3>
-          {activityFeed.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-center">
-              <p className="text-xs text-muted-foreground">No recent activity found.<br/>Activity will appear here after your first scan.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {activityFeed.map((item, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-3 p-3 rounded-lg"
-                  style={{ backgroundColor: `${item.color}10`, border: `1px solid ${item.color}25` }}
-                >
-                  <span className="text-lg leading-none flex-shrink-0" style={{ color: item.color }}>{item.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-foreground font-medium truncate">{item.msg}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{item.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Recent scans activity — full width, strong status tint */}
+      <div className="w-full overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border bg-muted/30 px-4 py-4 sm:px-6">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+            <Activity className="h-5 w-5" strokeWidth={2.25} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base font-semibold tracking-tight text-foreground">Recent scans &amp; activity</h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">Latest jobs from your scan queue</p>
+          </div>
         </div>
 
-        <div className="xl:col-span-2 rounded-xl border border-border bg-card p-5 overflow-hidden">
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Geographic Asset Distribution</h3>
-          <div className="relative w-full rounded-lg overflow-hidden" style={{ height: 200, backgroundColor: "hsl(220,22%,10%)" }}>
-            {/* Simple SVG world outline */}
-            <svg viewBox="0 0 800 400" className="absolute inset-0 w-full h-full opacity-20">
-              <polygon points="80,80 200,70 220,160 160,200 80,180" fill="hsl(220,14%,40%)" />
-              <polygon points="160,210 210,200 230,300 180,340 130,300" fill="hsl(220,14%,40%)" />
-              <polygon points="340,70 430,65 440,140 370,150 330,120" fill="hsl(220,14%,40%)" />
-              <polygon points="350,155 430,145 450,280 390,320 330,280 330,200" fill="hsl(220,14%,40%)" />
-              <polygon points="440,60 680,55 700,200 600,230 460,200 430,130" fill="hsl(220,14%,40%)" />
-              <polygon points="600,250 700,245 710,310 640,330 590,300" fill="hsl(220,14%,40%)" />
-            </svg>
-
-            {/* City pins */}
-            {geoPins.length === 0 ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-xs text-muted-foreground">Scan assets to see geographic distribution</p>
+        <div className="px-4 py-4 sm:px-6 sm:py-5">
+          {activityFeed.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-muted/20 py-12 text-center sm:py-14">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <Inbox className="h-5 w-5" strokeWidth={1.75} />
               </div>
-            ) : (
-              geoPins.map((pin) => (
-                <div
-                  key={pin.city}
-                  className="absolute flex flex-col items-center"
-                  style={{ left: pin.x, top: pin.y, transform: "translate(-50%,-100%)" }}
-                >
-                  <div
-                    className="h-3 w-3 rounded-full border-2 border-white bg-primary shadow-lg"
-                  />
-                  <div
-                    className="mt-1 whitespace-nowrap rounded bg-primary px-1.5 py-0.5 text-[9px] font-bold text-primary-foreground"
+              <div className="max-w-md space-y-1 px-2">
+                <p className="text-sm font-medium text-foreground">No activity yet</p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Completed and in-progress scans will show here after you run a scan from this overview.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <ul className="flex w-full flex-col gap-3">
+              {activityFeed.map((item: { status?: string; msg: string; time: string }, i: number) => {
+                const st = item.status && ACTIVITY_STATUS_ROW[item.status] ? item.status : "unknown";
+                const rowClass =
+                  st === "unknown"
+                    ? "border-l-slate-500 bg-muted/50 hover:bg-muted/70 dark:border-l-slate-400"
+                    : ACTIVITY_STATUS_ROW[st];
+
+                return (
+                  <motion.li
+                    key={i}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15, delay: Math.min(i * 0.03, 0.18) }}
+                    className={cn(
+                      "flex w-full min-w-0 items-center gap-4 rounded-xl border border-border/80 border-l-4 py-4 pl-4 pr-4 shadow-sm transition-colors sm:gap-5 sm:py-4 sm:pl-5 sm:pr-5",
+                      rowClass,
+                    )}
                   >
-                    {pin.city}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+                    <ActivityStatusGlyph status={st} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold leading-snug text-foreground sm:text-[15px]">{item.msg}</p>
+                      <time
+                        className="mt-1 block text-xs tabular-nums text-muted-foreground sm:text-sm"
+                        dateTime={item.time}
+                      >
+                        {item.time}
+                      </time>
+                    </div>
+                  </motion.li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </div>
 

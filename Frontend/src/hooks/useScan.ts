@@ -1,6 +1,13 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { scanService, type ScanControllerPayload } from "@/services/api";
+import {
+  saveActiveScan,
+  loadActiveScan,
+  clearActiveScan,
+  clearAllScanLogStorage,
+  clearScanLogs,
+} from "@/lib/scanSession";
 
 const STAGES = [
   { label: "Discovering assets", progress: 15 },
@@ -25,15 +32,69 @@ export function backendStageToStep(currentStage: string | undefined): number {
 }
 
 export function useScan() {
-  const [isScanning, setIsScanning] = useState(false);
-  const [targetDomain, setTargetDomain] = useState<string | null>(null);
-  const [scanId, setScanId] = useState<string | null>(null);
+  const hydrated = typeof window !== "undefined" ? loadActiveScan() : null;
+  const [isScanning, setIsScanning] = useState(() => !!hydrated);
+  const [targetDomain, setTargetDomain] = useState<string | null>(
+    () => hydrated?.domain ?? null,
+  );
+  const [scanId, setScanId] = useState<string | null>(() => hydrated?.scanId ?? null);
 
   const [stageIndex, setStageIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  /** Reconcile sessionStorage with backend after navigation remount. */
+  useEffect(() => {
+    const saved = loadActiveScan();
+    if (!saved) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await scanService.getResults(saved.domain);
+        const doc = res.data as {
+          status?: string;
+          current_stage?: string;
+          scan_id?: string;
+        };
+        if (cancelled) return;
+        if (doc.scan_id !== saved.scanId) {
+          clearActiveScan();
+          setIsScanning(false);
+          setTargetDomain(null);
+          setScanId(null);
+          return;
+        }
+        if (doc.status === "completed" || doc.status === "failed") {
+          clearActiveScan();
+          setIsScanning(false);
+          setTargetDomain(null);
+          setScanId(null);
+          return;
+        }
+        if (doc.status === "running" || doc.status === "pending") {
+          setTargetDomain(saved.domain);
+          setScanId(saved.scanId);
+          setIsScanning(true);
+          setStageIndex(backendStageToStep(doc.current_stage));
+        }
+      } catch {
+        if (!cancelled) {
+          clearActiveScan();
+          setIsScanning(false);
+          setTargetDomain(null);
+          setScanId(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const startScan = useCallback(async (domain: string, controller?: ScanControllerPayload) => {
     try {
+      clearActiveScan();
+      clearAllScanLogStorage();
+
       setTargetDomain(domain);
       setStageIndex(0);
       setErrorMsg(null);
@@ -42,14 +103,19 @@ export function useScan() {
 
       const res = await scanService.startScan(domain, controller);
       const id = (res.data as { scan_id?: string })?.scan_id ?? null;
-      if (id) setScanId(id);
-      else console.warn("startScan: API did not return scan_id — live console WebSocket will not connect.");
+      if (id) {
+        setScanId(id);
+        saveActiveScan(id, domain);
+      } else {
+        console.warn("startScan: API did not return scan_id — live console WebSocket will not connect.");
+      }
     } catch (err: unknown) {
       console.error(err);
       const ax = err as { response?: { data?: { detail?: string } } };
       setErrorMsg(ax.response?.data?.detail || "Failed to start scan");
       setIsScanning(false);
       setScanId(null);
+      clearActiveScan();
     }
   }, []);
 
@@ -91,11 +157,15 @@ export function useScan() {
     if (r.status === "completed") {
       setStageIndex(5);
       setIsScanning(false);
+      if (r.scan_id) clearScanLogs(r.scan_id);
+      clearActiveScan();
       return;
     }
     if (r.status === "failed") {
       setIsScanning(false);
       setErrorMsg("Scan failed on backend.");
+      if (r.scan_id) clearScanLogs(r.scan_id);
+      clearActiveScan();
       return;
     }
 
@@ -108,12 +178,14 @@ export function useScan() {
     if (isError && error) {
       setIsScanning(false);
       setErrorMsg(error.message || "An unexpected error occurred during polling.");
+      clearActiveScan();
     }
   }, [isError, error]);
 
   return {
     isScanning,
     scanId,
+    targetDomain,
     progress: STAGES[Math.min(stageIndex, 5)]?.progress ?? 0,
     currentStage: STAGES[Math.min(stageIndex, 5)]?.label ?? "",
     stageIndex,

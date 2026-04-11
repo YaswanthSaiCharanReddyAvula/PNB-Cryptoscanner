@@ -146,6 +146,15 @@ All REST paths below are relative to **`/api/v1`** unless noted.
 |--------|------|-----|
 | POST | `/auth/login` | FR-AUTH-1 |
 
+### 3.11a Notifications (employee → admin)
+
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/notifications` | `require_employee_only` |
+| GET | `/notifications/me` | `get_current_user` |
+| GET | `/admin/notifications` | `require_admin` |
+| PATCH | `/admin/notifications/{notification_id}` | `require_admin` |
+
 ### 3.12 Dangerous / dev (not PRD “product” surface)
 
 | Method | Path | Notes |

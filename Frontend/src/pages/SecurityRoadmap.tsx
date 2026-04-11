@@ -1,11 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Check, MapPin } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  MapPin,
+  Sparkles,
+  Copy,
+} from "lucide-react";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { roadmapService, scanService } from "@/services/api";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { aiService, roadmapService, scanService } from "@/services/api";
 import { getLastScannedDomain } from "@/lib/lastScanDomain";
 import {
   inferTierRoadmapStep,
@@ -86,6 +99,15 @@ export default function SecurityRoadmap() {
   const [tierTableOpen, setTierTableOpen] = useState(true);
   const [recentCompleted, setRecentCompleted] = useState<RecentScanRow[]>([]);
   const [selectedScanId, setSelectedScanId] = useState<string>("");
+
+  const [aiHorizon, setAiHorizon] = useState<string>("");
+  const [aiNotes, setAiNotes] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPlanText, setAiPlanText] = useState<string | null>(null);
+  const [aiBullets, setAiBullets] = useState<string[]>([]);
+  const [aiDisclaimer, setAiDisclaimer] = useState<string | null>(null);
+  /** `"llm"` when LM Studio returned text; `"deterministic"` when the backend used scan-grounded phases instead. */
+  const [aiPlanSource, setAiPlanSource] = useState<"llm" | "deterministic" | null>(null);
 
   const load = useCallback(async (domain: string) => {
     const d = domain.trim().toLowerCase();
@@ -194,6 +216,7 @@ export default function SecurityRoadmap() {
 
   const items = data?.items ?? [];
   const currentStep = data ? inferTierRoadmapStep(data) : null;
+  const planDomain = (activeDomain || data?.domain || "").trim().toLowerCase();
 
   return (
     <div className="space-y-8">
@@ -270,6 +293,143 @@ export default function SecurityRoadmap() {
           (Scan). Each scan updates the domain used here.
         </p>
       </div>
+
+      {!noSession && planDomain && (
+        <div className="dossier-card p-5 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-foreground flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                AI-assisted plan
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground max-w-2xl">
+                Uses LM Studio (server-side) on the same deterministic roadmap context as this page. Optional horizon
+                and notes steer the narrative; answers should reference only your scan-derived items.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Horizon (days, optional)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={3650}
+                placeholder="e.g. 90"
+                value={aiHorizon}
+                onChange={(e) => setAiHorizon(e.target.value)}
+                className="bg-secondary font-mono text-sm"
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs">Notes (optional)</Label>
+              <Textarea
+                value={aiNotes}
+                onChange={(e) => setAiNotes(e.target.value)}
+                placeholder="Constraints, blackout windows, or team capacity…"
+                rows={2}
+                className="bg-secondary text-sm resize-y min-h-[60px]"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2 bg-primary text-primary-foreground"
+              disabled={aiLoading || !planDomain}
+              onClick={async () => {
+                const h = aiHorizon.trim() ? Number(aiHorizon) : undefined;
+                if (h !== undefined && (Number.isNaN(h) || h < 1)) {
+                  toast.error("Horizon must be a positive number.");
+                  return;
+                }
+                setAiLoading(true);
+                setAiPlanText(null);
+                setAiBullets([]);
+                setAiDisclaimer(null);
+                setAiPlanSource(null);
+                try {
+                  const res = await aiService.roadmapPlan({
+                    domain: planDomain,
+                    constraints: {
+                      ...(h != null ? { horizon_days: h } : {}),
+                      ...(aiNotes.trim() ? { notes: aiNotes.trim() } : {}),
+                    },
+                  });
+                  const d = res.data as {
+                    ai_plan_text?: string;
+                    ai_bullets?: string[];
+                    disclaimer?: string;
+                    plan_source?: "llm" | "deterministic";
+                  };
+                  setAiPlanText(d.ai_plan_text ?? null);
+                  setAiBullets(Array.isArray(d.ai_bullets) ? d.ai_bullets : []);
+                  setAiDisclaimer(d.disclaimer ?? null);
+                  setAiPlanSource(d.plan_source === "deterministic" ? "deterministic" : d.plan_source === "llm" ? "llm" : null);
+                } catch (err: unknown) {
+                  const ax = err as { response?: { data?: { detail?: string } } };
+                  toast.error(ax.response?.data?.detail || "Could not generate AI plan.");
+                } finally {
+                  setAiLoading(false);
+                }
+              }}
+            >
+              {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Generate plan
+            </Button>
+            <span className="text-xs font-mono text-muted-foreground">Domain: {planDomain}</span>
+            {(aiPlanText || aiBullets.length) && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => {
+                  const text =
+                    aiBullets.length > 0
+                      ? aiBullets.join("\n")
+                      : (aiPlanText || "").trim();
+                  void navigator.clipboard.writeText(text);
+                  toast.success("Copied to clipboard");
+                }}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </Button>
+            )}
+          </div>
+          {(aiBullets.length > 0 || aiPlanText) && (
+            <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+              {aiPlanSource === "llm" && (
+                <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-200/90">
+                  Generated by your local model (LM Studio / OpenAI-compatible).
+                </p>
+              )}
+              {aiPlanSource === "deterministic" && (
+                <p className="text-[11px] font-medium text-amber-900 dark:text-amber-100/90">
+                  Local model did not respond — showing a phased plan built directly from this scan&apos;s roadmap
+                  items (same data as the table below).
+                </p>
+              )}
+              {aiBullets.length > 0 ? (
+                <ul className="list-disc pl-5 space-y-1.5 text-sm text-foreground">
+                  {aiBullets.map((b, i) => (
+                    <li key={i} className="leading-relaxed">
+                      {b.replace(/^\-\s*/, "")}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <pre className="whitespace-pre-wrap text-sm text-foreground font-sans">{aiPlanText}</pre>
+              )}
+              {aiDisclaimer && (
+                <p className="text-[11px] text-muted-foreground border-t border-border/60 pt-3">{aiDisclaimer}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {noSession && !loading && (
         <div className="rounded-xl border border-border bg-card px-6 py-12 text-center text-sm text-muted-foreground">

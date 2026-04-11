@@ -35,12 +35,14 @@ async def get_current_user(
         uname = parts[2] if len(parts) > 2 else "user"
         if uname == "scanner":
             return User(
+                id="demo-user-scanner",
                 email="scanner@example.com",
                 full_name="Scanner Operator",
                 hashed_password="",
                 role="admin",
             )
         return User(
+            id=f"demo-user-{uname}",
             email=f"{uname}@pnb.bank.in",
             full_name=uname.capitalize(),
             hashed_password="",
@@ -77,5 +79,17 @@ async def require_employee(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employee or Admin access required.",
+        )
+    return current_user
+
+
+async def require_employee_only(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Only the employee role may send in-app messages to administrators."""
+    if current_user.role.lower() != "employee":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only employee accounts can send notifications to administrators.",
         )
     return current_user

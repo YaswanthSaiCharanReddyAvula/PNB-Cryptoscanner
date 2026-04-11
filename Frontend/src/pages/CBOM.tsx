@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { DataTable } from "@/components/dashboard/DataTable";
@@ -9,9 +9,11 @@ import { Globe, Search, ShieldCheck, AlertTriangle, ShieldAlert, Download, Refre
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
+  LabelList,
 } from "recharts";
 import { Link } from "react-router-dom";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { cbomService, cryptoService, pqcService, reportingService } from "@/services/api";
 import { PQCBadge, determinePQCStatus, hndlRiskFromCrypto, PQCStatus } from "@/components/ui/PQCBadge";
@@ -19,8 +21,53 @@ import { CheckCircle } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const COLORS = ["hsl(45, 96%, 51%)", "hsl(342, 88%, 35%)", "hsl(152, 60%, 45%)", "hsl(210, 80%, 55%)", "hsl(280, 60%, 55%)"];
+const COLORS = ["hsl(221, 83%, 53%)", "hsl(199, 89%, 48%)", "hsl(262, 83%, 58%)", "hsl(330, 81%, 56%)", "hsl(43, 96%, 52%)"];
 
+/** Pie / multi-series palette — enterprise blue–violet range */
+const PIE_SLICE_COLORS = [
+  "hsl(221, 83%, 53%)",
+  "hsl(199, 89%, 48%)",
+  "hsl(262, 72%, 58%)",
+  "hsl(291, 64%, 52%)",
+  "hsl(330, 75%, 58%)",
+  "hsl(43, 96%, 52%)",
+];
+
+/** Distinct fills per negotiated TLS bucket (horizontal bar chart) */
+const PROTOCOL_BAR_FILL: Record<string, string> = {
+  "TLSv1.3": "hsl(152, 55%, 38%)",
+  "TLSv1.2": "hsl(210, 78%, 48%)",
+  "TLSv1.1": "hsl(38, 92%, 50%)",
+  "TLSv1.0": "hsl(25, 90%, 45%)",
+  Unknown: "hsl(215, 15%, 45%)",
+};
+
+function protocolBarColor(name: string, index: number): string {
+  return PROTOCOL_BAR_FILL[name] ?? COLORS[index % COLORS.length];
+}
+
+/** Light-card friendly tooltips (charts sit on pale panels) */
+const chartTooltipContent = {
+  contentStyle: {
+    background: "rgba(255, 255, 255, 0.96)",
+    border: "1px solid rgb(226 232 240)",
+    borderRadius: "12px",
+    fontSize: "12px",
+    color: "rgb(15 23 42)",
+    boxShadow: "0 10px 40px -12px rgb(15 23 42 / 0.18)",
+  },
+  labelStyle: { color: "rgb(71 85 105)", fontWeight: 600 },
+  cursor: { fill: "rgb(59 130 246 / 0.06)" },
+};
+
+const CHART_GRID = {
+  stroke: "hsl(214, 32%, 91%)",
+  strokeDasharray: "4 6" as const,
+};
+
+const CHART_AXIS_TICK = { fill: "hsl(215, 16%, 42%)", fontSize: 11, fontWeight: 500 };
+
+/** Legacy dark tooltip — kept for any non-chart use */
 const tooltipStyle = {
   contentStyle: {
     background: "hsl(220, 18%, 13%)",
@@ -30,6 +77,40 @@ const tooltipStyle = {
     color: "hsl(210, 20%, 92%)",
   },
 };
+
+function CbomChartCard({
+  title,
+  subtitle,
+  children,
+  className,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50/50 to-white p-5 shadow-sm ring-1 ring-slate-200/40",
+        "dark:border-border dark:from-card dark:via-card dark:to-muted/15 dark:ring-border/40",
+        className,
+      )}
+    >
+      <div className="mb-4 flex flex-col gap-1">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 dark:text-muted-foreground">
+          {title}
+        </h3>
+        {subtitle ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">{subtitle}</p>
+        ) : null}
+      </div>
+      <div className="rounded-xl border border-slate-100/90 bg-slate-50/70 p-3 shadow-inner dark:border-border/60 dark:bg-muted/20">
+        {children}
+      </div>
+    </div>
+  );
+}
 
 // ── Helpers to classify crypto records ──────────────────────────────────────
 function mapCryptoToCbomAsset(r: any) {
@@ -472,47 +553,126 @@ export default function CBOM() {
             </div>
 
             {/* Key Length */}
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Key Length Distribution</h3>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={keyLengthData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 14%, 20%)" />
-                  <XAxis dataKey="name" tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 10 }} />
-                  <Tooltip {...tooltipStyle} />
-                  <Bar dataKey="count" fill="hsl(45, 96%, 51%)" radius={[4, 4, 0, 0]} />
+            <CbomChartCard title="Key Length Distribution">
+              <ResponsiveContainer width="100%" height={268}>
+                <BarChart
+                  data={keyLengthData}
+                  margin={{ top: 16, right: 12, left: 4, bottom: 8 }}
+                  barCategoryGap="20%"
+                >
+                  <defs>
+                    <linearGradient id="cbomKeyLen" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#38bdf8" />
+                      <stop offset="55%" stopColor="#3b82f6" />
+                      <stop offset="100%" stopColor="#1d4ed8" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke={CHART_GRID.stroke} strokeDasharray={CHART_GRID.strokeDasharray} />
+                  <XAxis
+                    dataKey="name"
+                    tick={CHART_AXIS_TICK}
+                    tickLine={false}
+                    axisLine={{ stroke: "hsl(214, 32%, 88%)" }}
+                  />
+                  <YAxis tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} width={36} />
+                  <Tooltip {...chartTooltipContent} />
+                  <Bar dataKey="count" fill="url(#cbomKeyLen)" radius={[10, 10, 0, 0]} maxBarSize={52} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </CbomChartCard>
 
             {/* Top CAs */}
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Top Certificate Authorities</h3>
-              <ResponsiveContainer width="100%" height={280}>
+            <CbomChartCard title="Top Certificate Authorities">
+              <ResponsiveContainer width="100%" height={268}>
                 <PieChart>
-                  <Pie data={caData} cx="50%" cy="50%" outerRadius={90} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                  <Pie
+                    data={caData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={56}
+                    outerRadius={94}
+                    paddingAngle={caData.length > 1 ? 2 : 0}
+                    dataKey="value"
+                    stroke="hsl(210, 40%, 99%)"
+                    strokeWidth={2}
+                    label={({ name, percent }) => {
+                      const s = String(name);
+                      const short = s.length > 18 ? `${s.slice(0, 16)}…` : s;
+                      return `${short} ${(percent * 100).toFixed(0)}%`;
+                    }}
+                    labelLine={{ stroke: "hsl(215, 16%, 72%)", strokeWidth: 1 }}
+                  >
                     {caData.map((_, i) => (
-                      <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />
+                      <Cell key={`cell-${i}`} fill={PIE_SLICE_COLORS[i % PIE_SLICE_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip {...tooltipStyle} />
+                  <Tooltip {...chartTooltipContent} />
                 </PieChart>
               </ResponsiveContainer>
-            </div>
+            </CbomChartCard>
 
-            {/* Protocols */}
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">Encryption Protocol Distribution</h3>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={protocolData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 14%, 20%)" />
-                  <XAxis type="number" tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 10 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: "hsl(215, 15%, 55%)", fontSize: 10 }} width={60} />
-                  <Tooltip {...tooltipStyle} />
-                  <Bar dataKey="value" fill="hsl(342, 88%, 35%)" radius={[0, 4, 4, 0]} />
+            {/* Protocols — negotiated TLS per endpoint */}
+            <CbomChartCard
+              title="Encryption Protocol Distribution"
+              subtitle='Endpoints counted by negotiated TLS version (not every supported protocol on each host).'
+            >
+              <ResponsiveContainer width="100%" height={268}>
+                <BarChart
+                  data={protocolData}
+                  layout="vertical"
+                  margin={{ top: 8, right: 28, left: 8, bottom: 8 }}
+                  barCategoryGap="16%"
+                >
+                  <CartesianGrid
+                    horizontal={false}
+                    stroke={CHART_GRID.stroke}
+                    strokeDasharray={CHART_GRID.strokeDasharray}
+                  />
+                  <XAxis
+                    type="number"
+                    allowDecimals={false}
+                    tick={CHART_AXIS_TICK}
+                    tickLine={false}
+                    domain={[0, "dataMax"]}
+                    tickFormatter={(v) => (Number.isInteger(v) ? String(v) : "")}
+                    axisLine={{ stroke: "hsl(214, 32%, 88%)" }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={CHART_AXIS_TICK}
+                    tickLine={false}
+                    axisLine={false}
+                    width={76}
+                  />
+                  <Tooltip
+                    {...chartTooltipContent}
+                    formatter={(value: number) => {
+                      const n = Number(value);
+                      const total = protocolData.reduce(
+                        (sum, row) => sum + Number(row.value ?? row.count ?? 0),
+                        0,
+                      );
+                      const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+                      return [`${n} endpoint${n === 1 ? "" : "s"} (${pct}%)`, "Endpoints"];
+                    }}
+                  />
+                  <Bar dataKey="value" radius={[0, 10, 10, 0]} barSize={22} maxBarSize={28}>
+                    {protocolData.map((entry, index) => (
+                      <Cell key={`cell-${entry.name}-${index}`} fill={protocolBarColor(String(entry.name), index)} />
+                    ))}
+                    <LabelList
+                      dataKey="value"
+                      position="right"
+                      fill="hsl(215, 16%, 38%)"
+                      fontSize={12}
+                      fontWeight={600}
+                      formatter={(v: number) => (v > 0 ? v : "")}
+                    />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </CbomChartCard>
           </div>
 
           {/* Cipher Usage */}

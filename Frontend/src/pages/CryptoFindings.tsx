@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -18,10 +18,19 @@ import {
 } from "@/components/ui/table";
 import { Link } from "react-router-dom";
 import { cryptoService, pqcService, reportingService } from "@/services/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Loader2, ListPlus, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 type NistRef = { label: string; url: string };
+
+type FindingSource = "tls" | "cbom" | "crypto_tls" | "active_scan";
 
 type Finding = {
   id: string;
@@ -34,8 +43,10 @@ type Finding = {
   detail?: string;
   nistSummary?: string;
   nistRefs?: NistRef[];
-  source: "tls" | "cbom";
+  source: FindingSource;
 };
+
+type FindingsView = "all" | "vulnerabilities";
 
 function riskBadge(level: string) {
   const u = level.toUpperCase();
@@ -48,6 +59,31 @@ function riskBadge(level: string) {
   if (u.includes("SAFE") || u.includes("LOW"))
     return <Badge className="border-0 bg-emerald-50 text-emerald-900">{level}</Badge>;
   return <Badge variant="secondary">{level}</Badge>;
+}
+
+function normalizeCveRisk(sev: string): string {
+  const u = (sev || "").toLowerCase();
+  if (u === "critical") return "CRITICAL";
+  if (u === "high") return "HIGH";
+  if (u === "medium") return "MEDIUM";
+  if (u === "low" || u === "safe") return "LOW";
+  return "MEDIUM";
+}
+
+function normalizeNucleiRisk(sev: string): string {
+  const u = (sev || "").toLowerCase();
+  if (u === "critical") return "CRITICAL";
+  if (u === "high") return "HIGH";
+  if (u === "medium") return "MEDIUM";
+  if (u === "low") return "LOW";
+  return "LOW";
+}
+
+function sourceLabel(s: FindingSource): string {
+  if (s === "crypto_tls") return "Crypto / TLS map";
+  if (s === "active_scan") return "Active scan";
+  if (s === "cbom") return "CBOM";
+  return "TLS inventory";
 }
 
 function threatBadge(id: string) {
@@ -81,6 +117,8 @@ function tlsNistHint(lens: string, weakTls: boolean): string {
 export default function CryptoFindings() {
   const [rows, setRows] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<FindingsView>("all");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [pick, setPick] = useState<Finding | null>(null);
   const [threatCtx, setThreatCtx] = useState<{
     vectors: { id: string; name: string; affects: string }[];
@@ -93,14 +131,26 @@ export default function CryptoFindings() {
   } | null>(null);
   const [nistCatalog, setNistCatalog] = useState<Record<string, NistRef>>({});
 
+  const allRows = useMemo(() => rows, [rows]);
+  const vulnerabilityRows = useMemo(
+    () => rows.filter((r) => r.source === "active_scan" || r.source === "crypto_tls"),
+    [rows],
+  );
+  const activeRows = view === "vulnerabilities" ? vulnerabilityRows : allRows;
+  const filteredRows = useMemo(
+    () => activeRows.filter((r) => sourceFilter === "all" || r.source === sourceFilter),
+    [activeRows, sourceFilter],
+  );
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [cryptoRes, cbomRes, tmRes, catRes] = await Promise.all([
+        const [cryptoRes, cbomRes, scanFindingsRes, tmRes, catRes] = await Promise.all([
           cryptoService.getCryptoSecurityData(),
           pqcService.getPerAppCbom(),
+          cryptoService.getScanFindings().catch(() => ({ data: null })),
           reportingService.getThreatModelSummary().catch(() => ({ data: null })),
           reportingService.getNistCatalog().catch(() => ({ data: null })),
         ]);
@@ -116,6 +166,10 @@ export default function CryptoFindings() {
 
         const cryptoRows: unknown[] = Array.isArray(cryptoRes.data) ? cryptoRes.data : [];
         const perApp: Record<string, unknown>[] = Array.isArray(cbomRes.data) ? cbomRes.data : [];
+        const sf = scanFindingsRes.data as {
+          cve_findings?: Record<string, unknown>[];
+          vuln_findings?: Record<string, unknown>[];
+        } | null;
 
         const out: Finding[] = [];
 
@@ -143,6 +197,39 @@ export default function CryptoFindings() {
                 ? ([catalog.SP_800_208, catalog.FIPS_203].filter(Boolean) as NistRef[])
                 : undefined,
             source: "tls",
+          });
+        });
+
+        (sf?.cve_findings || []).forEach((c, i) => {
+          const sev = normalizeCveRisk(String(c.severity || "medium"));
+          out.push({
+            id: `cve-${i}-${String(c.cve_id || i)}`,
+            title: String(c.name || c.cve_id || "TLS / protocol finding"),
+            asset: String(c.affected_component || "—"),
+            algorithm: String(c.cve_id || "—"),
+            threat: "hndl",
+            nist: "Review SP 800-52r2 / TLS deployment guides; map to org crypto policy.",
+            risk: sev,
+            detail: JSON.stringify(c, null, 2),
+            nistSummary: String(c.description || c.mitigation || "").slice(0, 800),
+            source: "crypto_tls",
+          });
+        });
+
+        (sf?.vuln_findings || []).forEach((v, i) => {
+          const sev = normalizeNucleiRisk(String(v.severity || "info"));
+          out.push({
+            id: `active-${i}-${String(v.template_id || i)}`,
+            title: String(v.name || v.template_id || "Active scan finding"),
+            asset: String(v.host || "—"),
+            algorithm: String(v.template_id || "—"),
+            threat: "hndl",
+            nist:
+              "Indicative HTTP/TLS misconfiguration signal from templates — verify out-of-band; not a full pentest.",
+            risk: sev,
+            detail: JSON.stringify(v, null, 2),
+            nistSummary: String(v.matcher_name || v.url || "").slice(0, 400),
+            source: "active_scan",
           });
         });
 
@@ -197,10 +284,54 @@ export default function CryptoFindings() {
         title="Crypto Findings"
         description="TLS signals plus CBOM components enriched with quantum threat vectors and indicative NIST PQC guidance — not a compliance determination."
         actions={
-          <Button variant="outline" className="rounded-lg border-slate-300" disabled>
-            <ListPlus className="mr-2 h-4 w-4" />
-            Bulk create tasks
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white p-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "all" ? "default" : "ghost"}
+                className="h-7 rounded-md text-xs"
+                onClick={() => {
+                  setView("all");
+                  setSourceFilter("all");
+                }}
+              >
+                All Findings
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "vulnerabilities" ? "default" : "ghost"}
+                className="h-7 rounded-md text-xs"
+                onClick={() => {
+                  setView("vulnerabilities");
+                  setSourceFilter("all");
+                }}
+              >
+                Vulnerabilities
+              </Button>
+            </div>
+            <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <SelectTrigger className="h-9 w-[200px] rounded-lg border-slate-300 bg-white text-xs">
+                <SelectValue placeholder="Source" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                <SelectItem value="crypto_tls">Crypto / TLS CVE map</SelectItem>
+                <SelectItem value="active_scan">Active scan (Nuclei)</SelectItem>
+                {view === "all" && (
+                  <>
+                    <SelectItem value="tls">TLS inventory</SelectItem>
+                    <SelectItem value="cbom">CBOM</SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" className="rounded-lg border-slate-300" disabled>
+              <ListPlus className="mr-2 h-4 w-4" />
+              Bulk create tasks
+            </Button>
+          </div>
         }
       />
 
@@ -262,29 +393,38 @@ export default function CryptoFindings() {
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             Loading findings…
           </div>
+        ) : filteredRows.length === 0 ? (
+          <div className="flex items-center justify-center py-20 text-slate-500">
+            {view === "vulnerabilities"
+              ? "No vulnerability findings yet (Nuclei or CVE/TLS map)."
+              : "No findings match the selected filters."}
+          </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                 <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Finding
+                  {view === "vulnerabilities" ? "Vulnerability" : "Finding"}
                 </TableHead>
                 <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Asset
+                  Source
+                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">
+                  {view === "vulnerabilities" ? "Host / Asset" : "Asset"}
                 </TableHead>
                 <TableHead className="text-xs font-semibold uppercase text-slate-600">
                   Threat
                 </TableHead>
                 <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  NIST focus
+                  {view === "vulnerabilities" ? "Triage note" : "NIST focus"}
                 </TableHead>
                 <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Risk
+                  Severity
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
+              {filteredRows.map((r) => (
                 <TableRow
                   key={r.id}
                   className="cursor-pointer border-slate-100 hover:bg-slate-50/50"
@@ -293,6 +433,11 @@ export default function CryptoFindings() {
                   <TableCell className="max-w-[200px]">
                     <p className="font-medium text-slate-900">{r.title}</p>
                     <p className="truncate text-[10px] text-slate-500">{r.algorithm}</p>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px] font-normal">
+                      {sourceLabel(r.source)}
+                    </Badge>
                   </TableCell>
                   <TableCell className="text-slate-700">{r.asset}</TableCell>
                   <TableCell>{threatBadge(r.threat)}</TableCell>
@@ -346,7 +491,7 @@ export default function CryptoFindings() {
                 {riskBadge(pick.risk)}
                 {threatBadge(pick.threat)}
                 <Badge variant="secondary" className="bg-white/10 text-slate-200">
-                  {pick.source === "cbom" ? "CBOM (enriched)" : "TLS inventory"}
+                  {sourceLabel(pick.source)}
                 </Badge>
               </div>
               {pick.nistSummary ? (

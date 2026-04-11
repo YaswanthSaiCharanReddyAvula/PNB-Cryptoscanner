@@ -8,6 +8,7 @@ Run with:
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -27,6 +28,7 @@ from app.db.connection import (
 from app.api.routes import router as scanner_router          # v1 scanner & all dashboard endpoints
 from app.api.v1.ws import router as ws_router               # real-time scan updates
 from app.utils.logger import get_logger
+from app.modules.report_scheduler import scheduler_loop
 
 logger = get_logger(__name__)
 
@@ -55,7 +57,17 @@ async def lifespan(app: FastAPI):
     # MongoDB (existing scanner pipeline)
     await connect_db()
 
+    stop_scheduler = asyncio.Event()
+    sched_task = asyncio.create_task(scheduler_loop(stop_scheduler))
+
     yield
+
+    stop_scheduler.set()
+    sched_task.cancel()
+    try:
+        await sched_task
+    except asyncio.CancelledError:
+        pass
 
     await disconnect_db()
     logger.info("%s shut down.", settings.APP_NAME)

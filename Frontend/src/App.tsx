@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,6 +20,8 @@ import CryptoFindings from "./pages/CryptoFindings";
 import PolicyStandards from "./pages/PolicyStandards";
 import SecurityRoadmap from "./pages/SecurityRoadmap";
 import NotFound from "./pages/NotFound";
+import Settings from "./pages/Settings";
+import About from "./pages/About";
 
 const queryClient = new QueryClient();
 
@@ -49,13 +51,25 @@ function AppRoutes() {
       <Route path="/pqc-posture" element={<ProtectedRoute><PQCPosture /></ProtectedRoute>} />
       <Route path="/cyber-rating" element={<ProtectedRoute><CyberRating /></ProtectedRoute>} />
       <Route path="/security-roadmap" element={<ProtectedRoute><SecurityRoadmap /></ProtectedRoute>} />
+      <Route path="/copilot" element={<Navigate to="/" replace />} />
       <Route path="/reporting" element={<Navigate to="/admin" replace />} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/migration" element={<ProtectedRoute><Migration /></ProtectedRoute>} />
       <Route path="/executive-brief" element={<ProtectedRoute><ExecutiveBrief /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/about" element={<ProtectedRoute><About /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
+}
+
+/** Hash routes in Electron (file:// or dev server) so navigation works; browser keeps history API. */
+function AppRouterShell({ children }: { children: React.ReactNode }) {
+  const isElectron =
+    typeof window !== "undefined" &&
+    !!(window as Window & { electronAPI?: { platform?: string } }).electronAPI;
+  const Router = isElectron ? HashRouter : BrowserRouter;
+  return <Router>{children}</Router>;
 }
 
 const App = () => (
@@ -64,9 +78,9 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <AppRouterShell>
           <AppRoutes />
-        </BrowserRouter>
+        </AppRouterShell>
       </TooltipProvider>
     </AuthProvider>
   </QueryClientProvider>

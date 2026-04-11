@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Settings,
@@ -9,6 +10,8 @@ import {
   Lock,
   RefreshCw,
   Activity,
+  CalendarClock,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,9 +22,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { adminService, reportingService } from "@/services/api";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
+import { AdminNotificationInbox } from "@/components/notifications/AdminNotificationInbox";
 
 
 export default function Admin() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const isAdmin = user?.role === "Admin";
   const isEmployee = user?.role === "Employee";
@@ -49,6 +54,18 @@ export default function Admin() {
     { event_id?: string; export_type?: string; domain?: string; actor?: string; created_at?: string }[]
   >([]);
 
+  const [schedules, setSchedules] = useState<Record<string, unknown>[]>([]);
+  const [mailLog, setMailLog] = useState<Record<string, unknown>[]>([]);
+  const [artifacts, setArtifacts] = useState<Record<string, unknown>[]>([]);
+  const [reportsBusy, setReportsBusy] = useState(false);
+  const [newDomain, setNewDomain] = useState("");
+  const [newCadence, setNewCadence] = useState("daily");
+  const [newHour, setNewHour] = useState(6);
+  const [newMinute, setNewMinute] = useState(0);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [downloadEnabled, setDownloadEnabled] = useState(true);
+  const [emailTo, setEmailTo] = useState("");
+
   type OpsSnapshot = {
     generated_at?: string;
     app?: { name?: string; version?: string };
@@ -69,6 +86,12 @@ export default function Admin() {
   };
   const [opsSnapshot, setOpsSnapshot] = useState<OpsSnapshot | null>(null);
   const [opsLoading, setOpsLoading] = useState(false);
+
+  const adminTabs = useMemo(() => ["policy", "exports", "scheduled", "integrations", "operations", "inbox"], []);
+  const employeeTabs = useMemo(() => ["policy", "exports", "integrations"], []);
+  const allowedTabs = isAdmin ? adminTabs : employeeTabs;
+  const tabParam = searchParams.get("tab") || "policy";
+  const activeTab = allowedTabs.includes(tabParam) ? tabParam : "policy";
 
   const loadAll = async () => {
     setLoading(true);
@@ -105,6 +128,25 @@ export default function Admin() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  const loadReports = async () => {
+    if (!isAdmin) return;
+    setReportsBusy(true);
+    try {
+      const [s, m, a] = await Promise.all([
+        adminService.listReportSchedules(),
+        adminService.getMailLog(80),
+        adminService.listReportArtifacts(40),
+      ]);
+      setSchedules(Array.isArray(s.data?.schedules) ? s.data.schedules : []);
+      setMailLog(Array.isArray(m.data?.events) ? m.data.events : []);
+      setArtifacts(Array.isArray(a.data?.artifacts) ? a.data.artifacts : []);
+    } catch {
+      toast.error("Could not load scheduled reports");
+    } finally {
+      setReportsBusy(false);
+    }
+  };
 
   const loadOps = async () => {
     if (!isAdmin) return;
@@ -281,16 +323,18 @@ export default function Admin() {
         </div>
       ) : (
         <Tabs
-          defaultValue="policy"
+          value={activeTab}
           className="w-full"
           onValueChange={(v) => {
+            setSearchParams({ tab: v }, { replace: true });
             if (v === "operations" && isAdmin) void loadOps();
+            if (v === "scheduled" && isAdmin) void loadReports();
           }}
         >
           <TabsList
             className={
               isAdmin
-                ? "grid h-auto w-full max-w-4xl grid-cols-2 gap-1 sm:grid-cols-4"
+                ? "grid h-auto w-full max-w-6xl grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-6"
                 : "grid w-full max-w-lg grid-cols-3"
             }
           >
@@ -302,6 +346,12 @@ export default function Admin() {
               <FileDown className="h-3.5 w-3.5" />
               Exports
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="scheduled" className="gap-1.5">
+                <CalendarClock className="h-3.5 w-3.5" />
+                Scheduled
+              </TabsTrigger>
+            )}
             <TabsTrigger value="integrations" className="gap-1.5">
               <Link2 className="h-3.5 w-3.5" />
               Integrations
@@ -310,6 +360,12 @@ export default function Admin() {
               <TabsTrigger value="operations" className="gap-1.5">
                 <Activity className="h-3.5 w-3.5" />
                 Operations
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="inbox" className="gap-1.5">
+                <Mail className="h-3.5 w-3.5" />
+                Inbox
               </TabsTrigger>
             )}
           </TabsList>
@@ -441,6 +497,324 @@ export default function Admin() {
               )}
             </div>
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="scheduled" className="mt-6 space-y-5">
+              <div className="rounded-xl border border-border bg-card p-6 space-y-4 max-w-3xl">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Scheduled scan bundle reports
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  JSON export bundles (same as /reports/export-bundle). Configure SMTP in backend .env for email delivery.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Domain (optional)</Label>
+                    <Input
+                      value={newDomain}
+                      onChange={(e) => setNewDomain(e.target.value)}
+                      placeholder="example.com — empty = latest completed scan"
+                      className="font-mono text-xs bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Cadence</Label>
+                    <select
+                      value={newCadence}
+                      onChange={(e) => setNewCadence(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-border bg-secondary text-sm"
+                    >
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Hour (UTC)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={newHour}
+                      onChange={(e) => setNewHour(Number(e.target.value))}
+                      className="bg-secondary"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Minute (UTC)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={newMinute}
+                      onChange={(e) => setNewMinute(Number(e.target.value))}
+                      className="bg-secondary"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="dl"
+                      checked={downloadEnabled}
+                      onCheckedChange={(v) => setDownloadEnabled(v === true)}
+                    />
+                    <Label htmlFor="dl" className="font-normal cursor-pointer text-sm">
+                      Save generated JSON for download
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="em"
+                      checked={emailEnabled}
+                      onCheckedChange={(v) => setEmailEnabled(v === true)}
+                    />
+                    <Label htmlFor="em" className="font-normal cursor-pointer text-sm">
+                      Email JSON attachment
+                    </Label>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Email recipients (comma-separated)</Label>
+                  <Input
+                    value={emailTo}
+                    onChange={(e) => setEmailTo(e.target.value)}
+                    placeholder="a@bank.com, b@bank.com"
+                    disabled={!emailEnabled}
+                    className="font-mono text-xs bg-secondary"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  className="bg-primary text-primary-foreground"
+                  disabled={reportsBusy || (!emailEnabled && !downloadEnabled)}
+                  onClick={async () => {
+                    const to = emailTo
+                      .split(/[,;\s]+/)
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                    if (emailEnabled && to.length === 0) {
+                      toast.error("Add at least one email or disable email delivery.");
+                      return;
+                    }
+                    try {
+                      await adminService.createReportSchedule({
+                        domain: newDomain.trim() || null,
+                        cadence: newCadence,
+                        hour_utc: newHour,
+                        minute_utc: newMinute,
+                        enabled: true,
+                        delivery: {
+                          email_enabled: emailEnabled,
+                          download_enabled: downloadEnabled,
+                          email_to: to,
+                        },
+                      });
+                      toast.success("Schedule created");
+                      setNewDomain("");
+                      setEmailTo("");
+                      await loadReports();
+                    } catch {
+                      toast.error("Could not create schedule");
+                    }
+                  }}
+                >
+                  Add schedule
+                </Button>
+              </div>
+
+              <div className="rounded-xl border border-border bg-card overflow-hidden max-w-4xl">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Active schedules
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1 text-muted-foreground"
+                    onClick={() => void loadReports()}
+                    disabled={reportsBusy}
+                  >
+                    {reportsBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    Refresh
+                  </Button>
+                </div>
+                {schedules.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-6">No schedules yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-secondary/40">
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Domain</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Cadence</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Next run (UTC)</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schedules.map((s) => {
+                          const sid = String(s.schedule_id ?? "");
+                          return (
+                            <tr key={sid} className="border-b border-border/50">
+                              <td className="px-4 py-2 font-mono text-xs">{String(s.domain ?? "—")}</td>
+                              <td className="px-4 py-2 text-xs">
+                                {String(s.cadence)} @ {String(s.hour_utc ?? 0)}:
+                                {String(Number(s.minute_utc ?? 0)).padStart(2, "0")}
+                              </td>
+                              <td className="px-4 py-2 text-xs text-muted-foreground">
+                                {s.next_run_at ? new Date(String(s.next_run_at)).toISOString().slice(0, 19).replace("T", " ") : "—"}
+                              </td>
+                              <td className="px-4 py-2 flex flex-wrap gap-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  onClick={async () => {
+                                    try {
+                                      await adminService.runReportScheduleNow(sid);
+                                      toast.success("Run queued");
+                                      await loadReports();
+                                    } catch {
+                                      toast.error("Run failed");
+                                    }
+                                  }}
+                                >
+                                  Run now
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs text-destructive"
+                                  onClick={async () => {
+                                    try {
+                                      await adminService.deleteReportSchedule(sid);
+                                      toast.success("Deleted");
+                                      await loadReports();
+                                    } catch {
+                                      toast.error("Delete failed");
+                                    }
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-border bg-card overflow-hidden max-w-4xl">
+                <div className="border-b border-border px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Mail log (SMTP)
+                </div>
+                {mailLog.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-6">No mail events yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-secondary/40">
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Status</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">To</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Subject</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Time (UTC)</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mailLog.map((m, i) => (
+                          <tr key={String(m.log_id ?? i)} className="border-b border-border/50 align-top">
+                            <td className="px-4 py-2 text-xs">{String(m.status ?? "—")}</td>
+                            <td className="px-4 py-2 text-xs font-mono max-w-[200px] break-all">
+                              {Array.isArray(m.to) ? (m.to as string[]).join(", ") : "—"}
+                            </td>
+                            <td className="px-4 py-2 text-xs">{String(m.subject ?? "—")}</td>
+                            <td className="px-4 py-2 text-xs text-muted-foreground">
+                              {m.created_at ? new Date(String(m.created_at)).toISOString().slice(0, 19).replace("T", " ") : "—"}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-destructive max-w-xs break-words">
+                              {String(m.error || "")}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-border bg-card overflow-hidden max-w-4xl">
+                <div className="border-b border-border px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Generated files (download)
+                </div>
+                {artifacts.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-6">No generated files yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-secondary/40">
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Domain</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">File</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Created</th>
+                          <th className="text-left px-4 py-2 font-medium text-muted-foreground">Download</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {artifacts.map((a) => {
+                          const aid = String(a.artifact_id ?? "");
+                          return (
+                            <tr key={aid} className="border-b border-border/50">
+                              <td className="px-4 py-2 font-mono text-xs">{String(a.domain ?? "—")}</td>
+                              <td className="px-4 py-2 font-mono text-xs">{String(a.filename ?? "—")}</td>
+                              <td className="px-4 py-2 text-xs text-muted-foreground">
+                                {a.created_at ? new Date(String(a.created_at)).toISOString().slice(0, 19).replace("T", " ") : "—"}
+                              </td>
+                              <td className="px-4 py-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  onClick={async () => {
+                                    try {
+                                      const res = await adminService.downloadReportArtifactBlob(aid);
+                                      const blob = res.data as Blob;
+                                      const url = URL.createObjectURL(blob);
+                                      const el = document.createElement("a");
+                                      el.href = url;
+                                      el.download = String(a.filename || "report.json");
+                                      document.body.appendChild(el);
+                                      el.click();
+                                      el.remove();
+                                      URL.revokeObjectURL(url);
+                                      toast.success("Download started");
+                                    } catch {
+                                      toast.error("Download failed");
+                                    }
+                                  }}
+                                >
+                                  Download
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          )}
 
           {isAdmin && (
             <TabsContent value="operations" className="mt-6 space-y-5">
@@ -648,6 +1022,20 @@ export default function Admin() {
               </Button>
             </div>
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="inbox" className="mt-6 space-y-5">
+              <div className="rounded-xl border border-border bg-card p-6 space-y-4 max-w-4xl">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Employee messages
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  In-app notifications sent by employee accounts. Mark as read after triage.
+                </p>
+                <AdminNotificationInbox />
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
       )}
     </div>

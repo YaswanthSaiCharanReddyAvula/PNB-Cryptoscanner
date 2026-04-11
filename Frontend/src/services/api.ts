@@ -138,6 +138,8 @@ export const pqcService = {
 
 export const cyberRatingService = {
   getRating:     () => api.get("/cyber-rating"),
+  getRatingHistory: (params?: { limit?: number; domain?: string }) =>
+    api.get("/cyber-rating/history", { params }),
   getRiskFactors:() => api.get("/cyber-rating/risk-factors"),
   /** Phase 3: heuristic what-if on 0–100 engine score (latest completed scan) */
   simulateQuantumScore: (body: {
@@ -181,6 +183,48 @@ export const adminService = {
     api.post("/admin/exports/log", body),
   /** Phase 7: Mongo ping, scan queue, limits, recent failures (admin-only) */
   getOpsSnapshot: () => api.get("/dashboard/ops-snapshot"),
+  listReportSchedules: () => api.get("/admin/report-schedules"),
+  createReportSchedule: (body: Record<string, unknown>) =>
+    api.post("/admin/report-schedules", body),
+  patchReportSchedule: (scheduleId: string, body: Record<string, unknown>) =>
+    api.patch(`/admin/report-schedules/${encodeURIComponent(scheduleId)}`, body),
+  deleteReportSchedule: (scheduleId: string) =>
+    api.delete(`/admin/report-schedules/${encodeURIComponent(scheduleId)}`),
+  runReportScheduleNow: (scheduleId: string) =>
+    api.post(`/admin/report-schedules/${encodeURIComponent(scheduleId)}/run-now`),
+  getMailLog: (limit?: number) =>
+    api.get("/admin/mail-log", { params: limit != null ? { limit } : {} }),
+  listReportArtifacts: (limit?: number) =>
+    api.get("/admin/report-artifacts", { params: limit != null ? { limit } : {} }),
+  downloadReportArtifactBlob: (artifactId: string) =>
+    api.get(`/admin/report-artifacts/${encodeURIComponent(artifactId)}/download`, {
+      responseType: "blob",
+    }),
+  /** Inbound messages from employees */
+  listNotifications: (params?: { limit?: number; skip?: number; unread_only?: boolean }) =>
+    api.get("/admin/notifications", { params }),
+  markNotificationRead: (notificationId: string) =>
+    api.patch(`/admin/notifications/${encodeURIComponent(notificationId)}`, { read: true }),
+};
+
+// ── Notifications (employee → admin) ─────────────────────────────
+
+export const notificationService = {
+  send: (body: { subject: string; body: string; category?: "general" | "access" | "scan" | "other" }) =>
+    api.post("/notifications", body),
+  listMine: (params?: { limit?: number; skip?: number }) =>
+    api.get("/notifications/me", { params }),
+};
+
+// ── AI (LM Studio compatible) ─────────────────────────────────────
+
+export const aiService = {
+  roadmapPlan: (body: {
+    domain: string;
+    constraints?: { horizon_days?: number; notes?: string };
+  }) => api.post("/ai/roadmap/plan", body),
+  copilotChat: (body: { message: string; domain?: string | null }) =>
+    api.post("/ai/copilot/chat", body),
 };
 
 // ── Reports & threat-model (exports, bundles, roadmap) ──────────
@@ -218,6 +262,9 @@ export const dnsService = {
 
 export const cryptoService = {
   getCryptoSecurityData: () => api.get("/crypto/security"),
+  /** CVE / TLS mapping vs optional Nuclei findings from latest completed scan */
+  getScanFindings: (domain?: string) =>
+    api.get("/crypto/scan-findings", { params: domain ? { domain } : {} }),
 };
 
 // ── Scanner ───────────────────────────────────────────────────────
