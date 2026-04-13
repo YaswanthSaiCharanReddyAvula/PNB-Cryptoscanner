@@ -154,32 +154,105 @@ def build_prioritized_backlog(
     return items[:80]
 
 
+def _tls_confidence_levels(scan: Dict[str, Any]) -> Optional[List[float]]:
+    tls = scan.get("tls_results") or []
+    out: List[float] = []
+    for t in tls:
+        if not isinstance(t, dict):
+            continue
+        c = t.get("confidence")
+        if c is None:
+            continue
+        s = str(c).strip().lower()
+        out.append({"high": 0.9, "medium": 0.7, "low": 0.5}.get(s, 0.65))
+    return out or None
+
+
 def simulate_quantum_score(
     scan: Dict[str, Any],
     assume_tls_13_all: bool,
     assume_pqc_hybrid_kem: bool,
 ) -> Dict[str, Any]:
-    """Heuristic what-if projection on 0–100 quantum score (same scale as engine)."""
+    """
+    What-if projection on the 0–100 quantum score.
+
+    When ``cbom`` is present, baseline and projected scores are recomputed with
+    ``quantum_risk_engine.calculate_score`` (same catalog as live scans). Otherwise
+    a legacy TLS-fraction heuristic is used so old documents still return a value.
+    """
+    from app.db.models import AlgorithmCategory, CryptoComponent
+    from app.modules import quantum_risk_engine
+
     qs = scan.get("quantum_score") or {}
-    base = float(qs.get("score") or 0)
-    tls = scan.get("tls_results") or []
-    n = max(len(tls), 1)
-    legacy = 0
-    for t in tls:
-        v = str(t.get("tls_version") or "")
-        if v and "1.3" not in v and "TLSv1.3" not in v.upper():
-            legacy += 1
-        elif not v:
-            legacy += 1
+    stored = float(qs.get("score") or 0)
+    confs = _tls_confidence_levels(scan)
 
-    delta = 0.0
-    if assume_tls_13_all:
-        delta += min(22.0, (legacy / n) * 28.0)
-    if assume_pqc_hybrid_kem:
-        non_pq = sum(1 for t in tls if not (t.get("pqc_kem_observed") or t.get("hybrid_key_exchange")))
-        delta += min(14.0, (non_pq / n) * 14.0)
+    comps: List[CryptoComponent] = []
+    for row in scan.get("cbom") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            comps.append(CryptoComponent.model_validate(row))
+        except Exception:
+            continue
 
-    projected = round(min(100.0, base + delta), 1)
+    if not comps:
+        tls = scan.get("tls_results") or []
+        n = max(len(tls), 1)
+        legacy = 0
+        for t in tls:
+            v = str(t.get("tls_version") or "")
+            if v and "1.3" not in v and "TLSv1.3" not in v.upper():
+                legacy += 1
+            elif not v:
+                legacy += 1
+        delta = 0.0
+        if assume_tls_13_all:
+            delta += min(22.0, (legacy / n) * 28.0)
+        if assume_pqc_hybrid_kem:
+            non_pq = sum(1 for t in tls if not (t.get("pqc_kem_observed") or t.get("hybrid_key_exchange")))
+            delta += min(14.0, (non_pq / n) * 14.0)
+        projected = round(min(100.0, stored + delta), 1)
+        return {
+            "baseline_score": stored,
+            "projected_score": projected,
+            "delta": round(projected - stored, 1),
+            "assumptions": {
+                "assume_tls_13_all": assume_tls_13_all,
+                "assume_pqc_hybrid_kem": assume_pqc_hybrid_kem,
+            },
+            "note": "No CBOM on this scan — heuristic TLS fractions only. Re-run scan for catalog-aligned simulation.",
+            "catalog_version": "",
+        }
+
+    base_q = quantum_risk_engine.calculate_score(
+        comps,
+        aggregation="estate_weakest",
+        tls_scan_confidences=confs,
+    )
+    base = float(base_q.score)
+
+    patched: List[CryptoComponent] = []
+    for c in comps:
+        if assume_tls_13_all and c.category == AlgorithmCategory.PROTOCOL:
+            patched.append(c.model_copy(update={"name": "TLSv1.3"}))
+        elif assume_pqc_hybrid_kem and c.category == AlgorithmCategory.KEY_EXCHANGE:
+            low = (c.name or "").lower()
+            if any(x in low for x in ("kyber", "ml-kem", "mlkem", "crystals", "x25519kyber", "pqtls", "kemtls")):
+                patched.append(c)
+            else:
+                patched.append(
+                    c.model_copy(update={"name": f"{c.name or 'ECDHE'} X25519Kyber768Draft00"})
+                )
+        else:
+            patched.append(c)
+
+    proj_q = quantum_risk_engine.calculate_score(
+        patched,
+        aggregation="estate_weakest",
+        tls_scan_confidences=confs,
+    )
+    projected = float(proj_q.score)
     return {
         "baseline_score": base,
         "projected_score": projected,
@@ -188,5 +261,6 @@ def simulate_quantum_score(
             "assume_tls_13_all": assume_tls_13_all,
             "assume_pqc_hybrid_kem": assume_pqc_hybrid_kem,
         },
-        "note": "Indicative only — not a replacement for lab validation or formal crypto review.",
+        "note": "Indicative only — same catalog as engine; not a replacement for lab validation or formal crypto review.",
+        "catalog_version": proj_q.catalog_version,
     }

@@ -151,7 +151,13 @@ def _classify_key_exchange(kx: str | None) -> CryptoComponent:
     )
 
 
-def _classify_signature_and_hash(sig_alg: str | None, key_size: int | None) -> List[CryptoComponent]:
+def _classify_signature_and_hash(
+    sig_alg: str | None,
+    key_size: int | None,
+    *,
+    hash_usage_context: str = "Certificate signature hash",
+    sig_usage_context: str = "Certificate public key algorithm",
+) -> List[CryptoComponent]:
     """Assess the certificate's signature and embedded hash algorithms."""
     name = sig_alg or "UNKNOWN"
     name_lower = name.lower().replace("-", "").replace("_", "")
@@ -178,7 +184,7 @@ def _classify_signature_and_hash(sig_alg: str | None, key_size: int | None) -> L
         components.append(CryptoComponent(
             name=hash_alg,
             category=AlgorithmCategory.HASH,
-            usage_context="Certificate signature hash",
+            usage_context=hash_usage_context,
             risk_level=hash_risk,
             quantum_status=QuantumStatus.QUANTUM_SAFE if hash_alg not in ["MD5", "SHA-1"] else QuantumStatus.VULNERABLE,
         ))
@@ -208,11 +214,11 @@ def _classify_signature_and_hash(sig_alg: str | None, key_size: int | None) -> L
         name=base_sig,
         category=AlgorithmCategory.SIGNATURE,
         key_size=key_size,
-        usage_context="Certificate public key algorithm",
+        usage_context=sig_usage_context,
         risk_level=sig_risk,
         quantum_status=quantum,
     ))
-    
+
     return components
 
 
@@ -245,6 +251,24 @@ def analyze(tls_info: TLSInfo) -> List[CryptoComponent]:
             _classify_signature_and_hash(
                 tls_info.certificate.signature_algorithm,
                 tls_info.certificate.public_key_size,
+                hash_usage_context="Leaf certificate signature hash",
+                sig_usage_context="Leaf certificate public key algorithm",
+            )
+        )
+
+    # Full chain: intermediates / root may use weaker hashes or RSA sizes
+    for entry in tls_info.cert_chain or []:
+        if getattr(entry, "error", None):
+            continue
+        if not entry.signature_algorithm:
+            continue
+        d = int(entry.depth) if entry.depth is not None else 0
+        components.extend(
+            _classify_signature_and_hash(
+                entry.signature_algorithm,
+                entry.public_key_size,
+                hash_usage_context=f"Certificate chain depth {d} signature hash",
+                sig_usage_context=f"Certificate chain depth {d} public key algorithm",
             )
         )
 

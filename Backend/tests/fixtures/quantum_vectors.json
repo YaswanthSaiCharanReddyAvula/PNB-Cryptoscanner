@@ -1,0 +1,162 @@
+[
+  {
+    "id": "kyber_hybrid_kex",
+    "description": "Cipher-suite style KEX string with Kyber hybrid token",
+    "components": [
+      {
+        "name": "TLSv1.3",
+        "category": "protocol",
+        "usage_context": "negotiated",
+        "host": "a.example"
+      },
+      {
+        "name": "TLS_AES_256_GCM_SHA384",
+        "category": "cipher",
+        "key_size": 256,
+        "usage_context": "negotiated",
+        "host": "a.example"
+      },
+      {
+        "name": "X25519KYBER768",
+        "category": "key_exchange",
+        "usage_context": "negotiated",
+        "host": "a.example"
+      },
+      {
+        "name": "RSA",
+        "category": "signature",
+        "key_size": 2048,
+        "usage_context": "leaf",
+        "host": "a.example"
+      },
+      {
+        "name": "SHA-256",
+        "category": "hash",
+        "usage_context": "leaf",
+        "host": "a.example"
+      }
+    ],
+    "expected_score_min": 70,
+    "expected_score_max": 100
+  },
+  {
+    "id": "ecdhe_rsa_cipher_blob",
+    "description": "ECDHE in long OpenSSL-style KEX string",
+    "components": [
+      {
+        "name": "TLSv1.2",
+        "category": "protocol",
+        "usage_context": "negotiated",
+        "host": "b.example"
+      },
+      {
+        "name": "ECDHE-RSA-AES128-GCM-SHA256",
+        "category": "cipher",
+        "key_size": 128,
+        "usage_context": "negotiated",
+        "host": "b.example"
+      },
+      {
+        "name": "ECDHE-RSA-AES128-GCM-SHA256",
+        "category": "key_exchange",
+        "usage_context": "negotiated",
+        "host": "b.example"
+      },
+      {
+        "name": "RSA",
+        "category": "signature",
+        "key_size": 2048,
+        "usage_context": "leaf",
+        "host": "b.example"
+      },
+      {
+        "name": "SHA-256",
+        "category": "hash",
+        "usage_context": "leaf",
+        "host": "b.example"
+      }
+    ],
+    "expected_score_min": 35,
+    "expected_score_max": 65
+  },
+  {
+    "id": "md5_hash_drags_score",
+    "description": "Weak hash must reduce aggregate vs SHA-256 baseline",
+    "components": [
+      {
+        "name": "TLSv1.3",
+        "category": "protocol",
+        "usage_context": "negotiated",
+        "host": "c.example"
+      },
+      {
+        "name": "TLS_AES_256_GCM_SHA384",
+        "category": "cipher",
+        "key_size": 256,
+        "usage_context": "negotiated",
+        "host": "c.example"
+      },
+      {
+        "name": "ECDHE",
+        "category": "key_exchange",
+        "usage_context": "negotiated",
+        "host": "c.example"
+      },
+      {
+        "name": "RSA",
+        "category": "signature",
+        "key_size": 2048,
+        "usage_context": "leaf",
+        "host": "c.example"
+      },
+      {
+        "name": "MD5",
+        "category": "hash",
+        "usage_context": "leaf",
+        "host": "c.example"
+      }
+    ],
+    "expected_score_min": 20,
+    "expected_score_max": 45
+  },
+  {
+    "id": "sha1_sig_weak",
+    "description": "SHA-1 in signature name string",
+    "components": [
+      {
+        "name": "TLSv1.2",
+        "category": "protocol",
+        "usage_context": "negotiated",
+        "host": "d.example"
+      },
+      {
+        "name": "AES128",
+        "category": "cipher",
+        "key_size": 128,
+        "usage_context": "negotiated",
+        "host": "d.example"
+      },
+      {
+        "name": "ECDHE",
+        "category": "key_exchange",
+        "usage_context": "negotiated",
+        "host": "d.example"
+      },
+      {
+        "name": "sha1withrsa",
+        "category": "signature",
+        "key_size": 2048,
+        "usage_context": "leaf",
+        "host": "d.example"
+      },
+      {
+        "name": "SHA-1",
+        "category": "hash",
+        "usage_context": "leaf",
+        "host": "d.example"
+      }
+    ],
+    "expected_score_min": 15,
+    "expected_score_max": 40
+  }
+]

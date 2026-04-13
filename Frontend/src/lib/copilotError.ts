@@ -1,14 +1,13 @@
 import axios from "axios";
-
-const defaultApiHint =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+import { getViteApiBaseUrl } from "@/lib/runtimeConfig";
 
 /** User-visible text when POST /ai/copilot/chat fails. */
 export function formatCopilotRequestError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     if (!err.response) {
+      const hint = getViteApiBaseUrl();
       return (
-        `Cannot reach the API (${defaultApiHint}). ` +
+        `Cannot reach the API (${hint}). ` +
         "Confirm the FastAPI backend is running, the URL matches this app (frontend .env VITE_API_BASE_URL), " +
         "and firewalls allow the browser to reach that host. " +
         "LM Studio is only used by the backend after the request succeeds."

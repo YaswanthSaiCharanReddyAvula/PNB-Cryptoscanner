@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { saveScanLogs, loadScanLogs, clearScanLogs } from '@/lib/scanSession';
+import { getViteApiBaseUrl } from '@/lib/runtimeConfig';
 
-/** Same host as REST API (Kali VM IP when VITE_API_BASE_URL points there). */
+/** Same host as REST API (HTTPS → wss://). */
 function getBackendWsOrigin(): string {
-  const base =
-    import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+  const base = getViteApiBaseUrl();
   try {
     const u = new URL(base);
     const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';

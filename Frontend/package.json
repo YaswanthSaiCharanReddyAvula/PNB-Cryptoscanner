@@ -2,6 +2,8 @@
   "name": "vite_react_shadcn_ts",
   "private": true,
   "version": "0.0.0",
+  "description": "QuantumShield Crypto Scanner — desktop shell (Electron)",
+  "author": "QuantumShield",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -12,7 +14,9 @@
     "electron:dev": "cross-env ELECTRON_DEV=1 concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:8080 && electron .\"",
     "electron:start": "electron .",
     "electron:preview": "npm run build:electron && electron .",
-    "electron:dist": "npm run build:electron && electron-builder",
+    "clean:release": "node -e \"try{require('fs').rmSync('release',{recursive:true,force:true})}catch(e){}\"",
+    "electron:dist": "npm run clean:release && npm run build:electron && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "electron:dist:signed": "npm run clean:release && npm run build:electron && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -90,6 +94,10 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^34.0.2",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
@@ -101,10 +109,6 @@
     "typescript-eslint": "^8.38.0",
     "vite": "^6.4.1",
     "vitest": "^3.2.4",
-    "concurrently": "^9.1.2",
-    "cross-env": "^7.0.3",
-    "electron": "^34.0.2",
-    "electron-builder": "^25.1.8",
     "wait-on": "^8.0.1"
   },
   "build": {
@@ -119,7 +123,10 @@
       "package.json"
     ],
     "asar": true,
+    "forceCodeSigning": false,
     "win": {
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
       "target": [
         "nsis"
       ]

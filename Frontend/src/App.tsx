@@ -65,9 +65,13 @@ function AppRoutes() {
 
 /** Hash routes in Electron (file:// or dev server) so navigation works; browser keeps history API. */
 function AppRouterShell({ children }: { children: React.ReactNode }) {
+  const hasElectronUA =
+    typeof navigator !== "undefined" &&
+    String(navigator.userAgent || "").toLowerCase().includes("electron");
   const isElectron =
-    typeof window !== "undefined" &&
-    !!(window as Window & { electronAPI?: { platform?: string } }).electronAPI;
+    hasElectronUA ||
+    (typeof window !== "undefined" &&
+      !!(window as Window & { electronAPI?: { platform?: string } }).electronAPI);
   const Router = isElectron ? HashRouter : BrowserRouter;
   return <Router>{children}</Router>;
 }

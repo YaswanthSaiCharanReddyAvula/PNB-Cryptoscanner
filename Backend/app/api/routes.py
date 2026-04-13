@@ -534,7 +534,26 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             },
             scan_id,
         )
-        q_score = quantum_risk_engine.calculate_score(all_components)
+        def _tls_row_confidence(raw: Any) -> float:
+            if raw is None:
+                return 0.65
+            s = str(raw).strip().lower()
+            return {"high": 0.9, "medium": 0.7, "low": 0.5}.get(s, 0.65)
+
+        def _row_confidence_value(row: Any) -> Any:
+            if isinstance(row, dict):
+                return row.get("confidence")
+            return getattr(row, "confidence", None)
+
+        tls_conf_levels = [_tls_row_confidence(_row_confidence_value(t)) for t in tls_results]
+        agg_raw = (getattr(settings, "QUANTUM_SCORE_AGGREGATION", None) or "estate_weakest").strip().lower()
+        if agg_raw not in ("estate_weakest", "per_host_min", "p25"):
+            agg_raw = "estate_weakest"
+        q_score = quantum_risk_engine.calculate_score(
+            all_components,
+            aggregation=agg_raw,  # type: ignore[arg-type]
+            tls_scan_confidences=tls_conf_levels,
+        )
 
         is_high_risk = 1 if q_score.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH] else 0
 
@@ -2080,6 +2099,7 @@ async def get_pqc_posture():
             "tls_modern_endpoints": 0,
             "asset_pqc_status": [],
             "recommendations": [],
+            "quantum_readiness": None,
         }
 
     tls_results = scan.get("tls_results", []) or []
@@ -2160,6 +2180,8 @@ async def get_pqc_posture():
         })
 
     total = len(hosts) or 1
+    qs = scan.get("quantum_score") or {}
+    q_break = qs.get("breakdown") if isinstance(qs.get("breakdown"), dict) else {}
     return {
         "elite_count": elite_pqc_count,
         "standard_count": standard_count,
@@ -2172,6 +2194,21 @@ async def get_pqc_posture():
         "tls_modern_endpoints": tls_modern_endpoints,
         "asset_pqc_status": asset_pqc_status,
         "recommendations": [r.get("rationale") for r in scan.get("recommendations", [])][:5],
+        "quantum_readiness": {
+            "score": qs.get("score"),
+            "risk_level": qs.get("risk_level"),
+            "confidence": qs.get("confidence"),
+            "catalog_version": qs.get("catalog_version"),
+            "aggregation": qs.get("aggregation"),
+            "drivers": (qs.get("drivers") or [])[:5],
+            "breakdown": {
+                "key_exchange": q_break.get("key_exchange_score"),
+                "signature": q_break.get("signature_score"),
+                "cipher": q_break.get("cipher_score"),
+                "protocol": q_break.get("protocol_score"),
+                "hash": q_break.get("hash_score"),
+            },
+        },
     }
 
 
@@ -2283,6 +2320,11 @@ def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
     hndl_risk_count = sum(1 for t in tls_results if _is_hndl_risk(t))
 
     drivers: List[str] = []
+    qs_explain = scan.get("quantum_score") or {}
+    q_drv = qs_explain.get("drivers") if isinstance(qs_explain.get("drivers"), list) else []
+    for d in q_drv[:3]:
+        if isinstance(d, str) and d.strip():
+            drivers.append(d.strip())
     if tls_total:
         drivers.append(f"TLSv1.3 endpoints: {tls_1_3}/{tls_total}")
         if legacy_count:
@@ -2321,6 +2363,8 @@ def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
         "explain": {
             "score": score_1000,
             "tier": tier,
+            "quantum_confidence": qs_explain.get("confidence"),
+            "quantum_catalog_version": qs_explain.get("catalog_version"),
             "evidence": {
                 "tls_total": tls_total,
                 "tls_1_3": tls_1_3,
@@ -2330,7 +2374,7 @@ def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
                 "hndl_risk_inferred": hndl_risk_count,
             },
             "drivers": drivers,
-            "note": "Explainability is heuristic and derived from tls_results evidence only; validate with PKI and engineering owners."
+            "note": "Explainability merges quantum engine drivers (CBOM) with tls_results heuristics; validate with PKI and engineering owners.",
         },
         "tiers": [
             {"status": "Legacy",    "range": "< 400"},
@@ -2393,14 +2437,14 @@ async def simulate_quantum_score_endpoint(body: SimulateQuantumRequest):
         assume_tls_13_all=body.assume_tls_13_all,
         assume_pqc_hybrid_kem=body.assume_pqc_hybrid_kem,
     )
-    raw = (scan.get("quantum_score") or {}).get("score", 0)
     return {
         "domain": scan.get("domain"),
-        "baseline_score_100": raw,
+        "baseline_score_100": sim["baseline_score"],
         "projected_score_100": sim["projected_score"],
         "delta": sim["delta"],
         "assumptions": sim["assumptions"],
         "note": sim["note"],
+        "catalog_version": sim.get("catalog_version") or "",
         "nist_pqc_references": NIST_PQC_REFERENCES,
     }
 

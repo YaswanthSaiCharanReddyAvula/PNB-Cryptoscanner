@@ -1,0 +1,30 @@
+# Build Backend image and push to Artifact Registry.
+# Run from repo root:
+#   gcloud builds submit --config=deploy/gcp/cloudbuild.yaml .
+#
+# Substitutions _REGION and _REPO are optional; set in trigger or CLI:
+#   gcloud builds submit --config=deploy/gcp/cloudbuild.yaml \
+#     --substitutions=_REGION=us-central1,_REPO=quantumshield .
+
+substitutions:
+  _REGION: us-central1
+  _REPO: quantumshield
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:$SHORT_SHA"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:latest"
+      - "-f"
+      - Backend/Dockerfile
+      - Backend
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:$SHORT_SHA"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -174,6 +174,7 @@ class QuantumScoreBreakdown(BaseModel):
     signature_score: float = 0
     cipher_score: float = 0
     protocol_score: float = 0
+    hash_score: float = 50
 
 
 class QuantumScore(BaseModel):
@@ -182,6 +183,11 @@ class QuantumScore(BaseModel):
     risk_level: RiskLevel
     breakdown: QuantumScoreBreakdown
     summary: str = ""
+    # Observability / audit (Phase 4)
+    confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    catalog_version: str = ""
+    drivers: List[str] = Field(default_factory=list)
+    aggregation: str = "estate_weakest"
 
 
 class Recommendation(BaseModel):

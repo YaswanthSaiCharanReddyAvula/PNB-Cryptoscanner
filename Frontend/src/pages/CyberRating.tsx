@@ -86,6 +86,7 @@ export default function CyberRating() {
     projected_score_100: number;
     delta: number;
     note?: string;
+    catalog_version?: string;
     assumptions?: { assume_tls_13_all?: boolean; assume_pqc_hybrid_kem?: boolean };
     nist_pqc_references?: Record<string, { label: string; url: string }>;
   } | null>(null);
@@ -164,6 +165,7 @@ export default function CyberRating() {
         projected_score_100?: number;
         delta?: number;
         note?: string;
+        catalog_version?: string;
         assumptions?: { assume_tls_13_all?: boolean; assume_pqc_hybrid_kem?: boolean };
         nist_pqc_references?: Record<string, { label: string; url: string }>;
       };
@@ -172,6 +174,7 @@ export default function CyberRating() {
         projected_score_100: Number(d.projected_score_100 ?? 0),
         delta: Number(d.delta ?? 0),
         note: d.note,
+        catalog_version: d.catalog_version,
         assumptions: d.assumptions,
         nist_pqc_references: d.nist_pqc_references,
       });
@@ -291,6 +294,16 @@ export default function CyberRating() {
                 className="mt-4 overflow-hidden"
               >
                 <div className="flex flex-wrap gap-2 mb-3">
+                  {typeof (explainData as { quantum_confidence?: number }).quantum_confidence === "number" && (
+                    <span className="text-xs px-2 py-0.5 rounded border border-emerald-500/25 bg-emerald-500/5 text-emerald-800 font-semibold">
+                      Quantum confidence: {Math.round(Number((explainData as { quantum_confidence?: number }).quantum_confidence) * 100)}%
+                    </span>
+                  )}
+                  {(explainData as { quantum_catalog_version?: string }).quantum_catalog_version ? (
+                    <span className="text-xs px-2 py-0.5 rounded border border-slate-300 bg-slate-50 text-slate-800 font-mono">
+                      Catalog {(explainData as { quantum_catalog_version?: string }).quantum_catalog_version}
+                    </span>
+                  ) : null}
                   <span className="text-xs px-2 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary font-semibold">
                     TLS 1.3: {explainData.evidence?.tls_1_3 ?? 0}/{explainData.evidence?.tls_total ?? 0}
                   </span>
@@ -399,6 +412,11 @@ export default function CyberRating() {
         {simResult?.note && (
           <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">{simResult.note}</p>
         )}
+        {simResult?.catalog_version ? (
+          <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+            Simulation catalog: {simResult.catalog_version}
+          </p>
+        ) : null}
         {simResult?.nist_pqc_references && (
           <div className="mt-4 rounded-lg border border-border/80 bg-secondary/20 p-3">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

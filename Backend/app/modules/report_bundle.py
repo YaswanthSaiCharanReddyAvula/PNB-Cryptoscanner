@@ -78,12 +78,15 @@ async def build_export_bundle_payload(
             "quantum_scoring": {
                 "formula": "weighted_mean_of_category_minimums",
                 "weights": {
-                    "key_exchange": 0.4,
-                    "signature": 0.3,
-                    "cipher": 0.2,
-                    "protocol": 0.1,
+                    "key_exchange": 0.36,
+                    "signature": 0.28,
+                    "cipher": 0.18,
+                    "protocol": 0.08,
+                    "hash": 0.10,
                 },
-                "reference": "app/modules/quantum_risk_engine.py",
+                "catalog": "app/modules/data/pqc_algorithm_catalog.json",
+                "nist_framing": "NIST IR 8547 (PQC transition); FIPS 203/204/205 vocabulary",
+                "reference": "app/modules/quantum_risk_engine.py + quantum_catalog.py",
             },
             "tls_pqc_signals": {
                 "note": (

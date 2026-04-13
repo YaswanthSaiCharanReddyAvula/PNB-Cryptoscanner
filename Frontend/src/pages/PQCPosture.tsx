@@ -201,7 +201,8 @@ export default function PQCPosture() {
             <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Readiness Assessment</p>
             <p className="text-[11px] text-white/55 mt-2 max-w-2xl leading-relaxed">
               &quot;Elite&quot; includes TLS 1.3-class endpoints; &quot;PQC / hybrid signal&quot; means Kyber-like strings in
-              cipher/KEX names from the scanner — verify in your environment. Not a guarantee of NIST PQC in production.
+              cipher/KEX names from the scanner — verify in your environment. Asset values below are posture heuristics and
+              are not the same metric as the Cyber Rating page&apos;s composite 0-1000 score.
             </p>
           </div>
           {statsText.length > 0 && (
@@ -216,6 +217,58 @@ export default function PQCPosture() {
           )}
         </div>
       </motion.div>
+
+      {posture?.quantum_readiness != null && typeof posture.quantum_readiness.score === "number" && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm ring-1 ring-slate-100"
+        >
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Quantum readiness (engine)</h3>
+          <p className="text-xs text-muted-foreground mt-1 max-w-3xl leading-relaxed">
+            From the latest scan&apos;s CBOM + catalog. Confidence reflects TLS scan certainty; drivers list the weakest categories.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-6">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Score</p>
+              <p className="text-2xl font-bold tabular-nums" style={{ color: NAVY }}>
+                {Math.round(Number(posture.quantum_readiness.score))}
+                <span className="text-sm font-medium text-muted-foreground">/100</span>
+              </p>
+            </div>
+            {typeof posture.quantum_readiness.confidence === "number" && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Confidence</p>
+                <p className="text-lg font-semibold tabular-nums">
+                  {Math.round(Number(posture.quantum_readiness.confidence) * 100)}%
+                </p>
+              </div>
+            )}
+            {posture.quantum_readiness.catalog_version ? (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Catalog</p>
+                <p className="text-sm font-mono text-slate-800">{String(posture.quantum_readiness.catalog_version)}</p>
+              </div>
+            ) : null}
+            {posture.quantum_readiness.risk_level ? (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Risk</p>
+                <p className="text-sm font-medium capitalize">{String(posture.quantum_readiness.risk_level)}</p>
+              </div>
+            ) : null}
+          </div>
+          {Array.isArray(posture.quantum_readiness.drivers) && posture.quantum_readiness.drivers.length > 0 && (
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Top drivers</p>
+              <ul className="space-y-1 text-sm text-slate-700">
+                {posture.quantum_readiness.drivers.map((d: string, i: number) => (
+                  <li key={i}>• {d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -412,12 +465,16 @@ export default function PQCPosture() {
                 ))}
                 {selectedAsset.score !== undefined && (
                   <div className="flex justify-between items-center py-2 border-b border-border/40">
-                    <span className="text-xs text-muted-foreground font-medium">Score</span>
+                    <span className="text-xs text-muted-foreground font-medium">Posture indicator</span>
                     <span className="text-sm font-bold" style={{ color: scoreTier(selectedAsset.score).color }}>
                       {selectedAsset.score}<span className="text-[10px] text-muted-foreground font-normal"> / 1000</span>
                     </span>
                   </div>
                 )}
+                <p className="text-[10px] text-muted-foreground">
+                  This per-asset indicator is derived from TLS posture buckets (critical/standard/modern/PQ signal). Cyber Rating uses a separate
+                  enterprise composite score, so values may differ.
+                </p>
                 <div className="mt-2 rounded-lg p-3 flex items-center gap-3"
                   style={{ backgroundColor: selectedAsset.pqc_supported ? `${GREEN}12` : `${RED}12`, border: `1px solid ${selectedAsset.pqc_supported ? GREEN : RED}30` }}>
                   {selectedAsset.pqc_supported ? <CheckCircle size={20} color={GREEN} /> : <XCircle size={20} color={RED} />}

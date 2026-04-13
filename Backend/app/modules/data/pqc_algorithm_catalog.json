@@ -1,0 +1,49 @@
+{
+  "catalog_version": "2026-03-1",
+  "nist_alignment_note": "Heuristic mapping aligned with NIST PQC standards vocabulary (FIPS 203 ML-KEM, FIPS 204 ML-DSA, FIPS 205 SLH-DSA); not a certification claim.",
+  "kex_contains_rules": [
+    {"contains": ["ml-kem", "mlkem", "ml_kem", "kyber", "crystals", "dilithiumkem", "x25519kyber", "pqtls", "kemtls"], "score": 95, "nist_ref": "FIPS 203 (ML-KEM)", "label": "PQC / hybrid KEM signal in KEX name"},
+    {"contains": ["ecdhe"], "score": 25, "nist_ref": "Classical ECDHE", "label": "ECDHE (Shor-vulnerable classical DH)"},
+    {"contains": ["dhe", "edh"], "score": 20, "nist_ref": "Finite-field DH", "label": "DHE / FFDHE"},
+    {"contains": ["ecdh"], "score": 22, "nist_ref": "ECDH", "label": "ECDH (static or ephemeral naming)"},
+    {"contains": ["_rsa", "rsa_", "rsa-with", "rsakex", "kexrsa"], "score": 10, "nist_ref": "Static RSA KX", "label": "RSA key transport (no FS)"},
+    {"contains": ["rsa"], "score": 12, "nist_ref": "RSA in suite", "label": "RSA-related KEX naming"},
+    {"contains": ["dh"], "score": 18, "nist_ref": "DH family", "label": "DH / DH-like"}
+  ],
+  "sig_contains_rules": [
+    {"contains": ["ml-dsa", "mldsa", "dilithium"], "score": 95, "nist_ref": "FIPS 204", "label": "ML-DSA / Dilithium"},
+    {"contains": ["slh-dsa", "slhdsa", "sphincs"], "score": 88, "nist_ref": "FIPS 205", "label": "SLH-DSA / SPHINCS+"},
+    {"contains": ["falcon"], "score": 90, "nist_ref": "NIST PQC (additional)", "label": "Falcon"},
+    {"contains": ["ed25519", "ed448"], "score": 30, "nist_ref": "Classical ECC sig", "label": "EdDSA (quantum-vulnerable)"},
+    {"contains": ["ecdsa"], "score": 25, "nist_ref": "Classical ECC sig", "label": "ECDSA"},
+    {"contains": ["dsa"], "score": 12, "nist_ref": "DSA", "label": "DSA"},
+    {"contains": ["rsa"], "score": 15, "nist_ref": "RSA signatures", "label": "RSA (base; tiers use key_size)"},
+    {"contains": ["md5"], "score": 5, "nist_ref": "Legacy hash", "label": "MD5 in name"},
+    {"contains": ["sha1", "sha-1"], "score": 5, "nist_ref": "Legacy hash", "label": "SHA-1 in name"}
+  ],
+  "rsa_signature_key_size_tiers": [
+    {"max_bits": 1023, "score": 5, "label": "RSA key <1024"},
+    {"max_bits": 2047, "score": 10, "label": "RSA 1024–2047"},
+    {"max_bits": 3071, "score": 16, "label": "RSA 2048"},
+    {"max_bits": 4095, "score": 20, "label": "RSA 3072"},
+    {"max_bits": 999999, "score": 24, "label": "RSA ≥4096"}
+  ],
+  "hash_contains_rules": [
+    {"contains": ["md5"], "score": 8, "label": "MD5"},
+    {"contains": ["sha-1", "sha1"], "score": 15, "label": "SHA-1"},
+    {"contains": ["sha224", "sha-224"], "score": 55, "label": "SHA-224"},
+    {"contains": ["sha256", "sha-256"], "score": 78, "label": "SHA-256"},
+    {"contains": ["sha384", "sha-384"], "score": 82, "label": "SHA-384"},
+    {"contains": ["sha512", "sha-512"], "score": 85, "label": "SHA-512"},
+    {"contains": ["sha3"], "score": 88, "label": "SHA-3 family"}
+  ],
+  "protocol_scores": {
+    "TLSv1.3": 90,
+    "TLSv1.2": 70,
+    "TLSv1.1": 30,
+    "TLSv1": 20,
+    "TLSv1.0": 20,
+    "SSLv3": 5,
+    "SSLv2": 0
+  }
+}

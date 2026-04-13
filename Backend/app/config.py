@@ -77,6 +77,10 @@ class Settings(BaseSettings):
         """False when using wildcard origin (browser + Starlette rules)."""
         return self.CORS_ORIGINS.strip() != "*"
 
+    # ── Quantum scoring rollup (see quantum_risk_engine.calculate_score) ──
+    # estate_weakest | per_host_min | p25
+    QUANTUM_SCORE_AGGREGATION: str = "estate_weakest"
+
     # ── Scanner defaults ─────────────────────────────────────────
     SCAN_TIMEOUT: int = 120            # seconds per full scan
     TOOL_TIMEOUT: int = 30             # max seconds per individual tool binary

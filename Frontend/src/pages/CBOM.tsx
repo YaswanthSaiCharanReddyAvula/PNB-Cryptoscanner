@@ -179,12 +179,16 @@ function mapCryptoToCbomAsset(r: any) {
 }
 
 export default function CBOM() {
+  const LATEST_DOMAIN = "__latest__";
   const [summary,       setSummary]       = useState<any>(null);
   const [keyLengthData, setKeyLengthData] = useState<any[]>([]);
   const [caData,        setCaData]        = useState<any[]>([]);
   const [protocolData,  setProtocolData]  = useState<any[]>([]);
   const [pqcStats,      setPqcStats]      = useState({ safe: 0, ready: 0, vuln: 0, hndl: 0 });
   const [pqcFilter,     setPqcFilter]     = useState("All");
+  const [domains,       setDomains]       = useState<string[]>([]);
+  const [selectedDomain, setSelectedDomain] = useState<string>(LATEST_DOMAIN);
+  const [refreshSeq,    setRefreshSeq]    = useState(0);
 
   // Live data replacing mock arrays
   const [cbomAssets,  setCbomAssets]  = useState<any[]>([]);
@@ -194,14 +198,34 @@ export default function CBOM() {
 
   useEffect(() => {
     let cancelled = false;
+    reportingService
+      .getDomains()
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res.data) ? res.data : [];
+        setDomains(rows.map((d: any) => String(d)).filter(Boolean));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDomains([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const selectedParam = selectedDomain === LATEST_DOMAIN ? undefined : selectedDomain;
+    setLoading(true);
 
     cbomService
-      .getSummary()
+      .getSummary(selectedParam)
       .then((summaryRes) => {
         if (cancelled) return;
         const summaryData = summaryRes.data;
         setSummary(summaryData);
-        const domain = summaryData?.domain as string | undefined;
+        const domain = (selectedParam ?? summaryData?.domain) as string | undefined;
 
         return Promise.all([
           cbomService.getCharts(domain),
@@ -281,6 +305,7 @@ export default function CBOM() {
         });
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Could not load CBOM page data", err);
         setLoading(false);
       });
@@ -288,7 +313,7 @@ export default function CBOM() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedDomain, refreshSeq]);
 
   const CIPHER_MAX = cipherUsage.length
     ? Math.max(...cipherUsage.map((c: any) => c.count))
@@ -476,7 +501,7 @@ export default function CBOM() {
         <DossierPageHeader
           eyebrow="Cryptographic inventory"
           title="Crypto Bill of Materials"
-          description="TLS, certificates, and algorithm inventory derived from the latest completed scan."
+          description="TLS, certificates, and algorithm inventory derived from the selected domain's latest completed scan."
         />
       </div>
 
@@ -490,9 +515,27 @@ export default function CBOM() {
             <p><strong>NIST Compliance:</strong> FIPS 140-3 / NIST SP 800-208</p>
           </div>
         </div>
-        <Button onClick={() => window.location.reload()} variant="outline" className="mt-4 gap-2 border-primary/50 text-primary hover:bg-primary/10 hover:text-primary sm:mt-0">
-          <RefreshCw className="w-4 h-4" /> Regenerate
-        </Button>
+        <div className="mt-4 flex flex-col sm:mt-0 sm:items-end gap-2">
+          <select
+            className="h-10 min-w-[260px] px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            value={selectedDomain}
+            onChange={(e) => setSelectedDomain(e.target.value)}
+          >
+            <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
+            {domains.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          <Button
+            onClick={() => setRefreshSeq((v) => v + 1)}
+            variant="outline"
+            className="gap-2 border-primary/50 text-primary hover:bg-primary/10 hover:text-primary"
+          >
+            <RefreshCw className="w-4 h-4" /> Refresh selected
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 no-print">
@@ -736,6 +779,19 @@ export default function CBOM() {
               </div>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <select
+                  className="h-10 min-w-[240px] px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  value={selectedDomain}
+                  onChange={(e) => setSelectedDomain(e.target.value)}
+                  title="Select scanned domain"
+                >
+                  <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
+                  {domains.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+                <select
                   className="h-10 px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   value={pqcFilter}
                   onChange={e => setPqcFilter(e.target.value)}
@@ -779,11 +835,35 @@ export default function CBOM() {
 
           {/* Per-Application CBOM Table */}
           <div className="rounded-xl border border-border bg-card overflow-hidden no-print">
-            <div className="px-6 py-4 border-b border-border">
-              <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">Per-Application CBOM</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                CERT-IN fields plus Phase 3 threat/NIST mapping (indicative — not certification advice).
-              </p>
+            <div className="px-6 py-4 border-b border-border flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">Per-Application CBOM</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  CERT-IN fields plus Phase 3 threat/NIST mapping (indicative — not certification advice).
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <select
+                  className="h-9 min-w-[240px] px-3 py-2 bg-secondary border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  value={selectedDomain}
+                  onChange={(e) => setSelectedDomain(e.target.value)}
+                  title="Per-Application CBOM domain"
+                >
+                  <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
+                  {domains.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  onClick={() => setRefreshSeq((v) => v + 1)}
+                  variant="outline"
+                  className="h-9 gap-2 border-primary/40 text-xs"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                </Button>
+              </div>
             </div>
             {perAppCbom.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground text-sm">
