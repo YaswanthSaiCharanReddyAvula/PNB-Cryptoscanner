@@ -22,6 +22,7 @@ import SecurityRoadmap from "./pages/SecurityRoadmap";
 import NotFound from "./pages/NotFound";
 import Settings from "./pages/Settings";
 import About from "./pages/About";
+import Downloads from "./pages/Downloads";
 
 const queryClient = new QueryClient();
 
@@ -33,6 +34,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
+  const hasElectronUA =
+    typeof navigator !== "undefined" &&
+    String(navigator.userAgent || "").toLowerCase().includes("electron");
+  const isElectron =
+    hasElectronUA ||
+    (typeof window !== "undefined" &&
+      !!(window as Window & { electronAPI?: { platform?: string } }).electronAPI);
 
   return (
     <Routes>
@@ -56,6 +64,9 @@ function AppRoutes() {
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/migration" element={<ProtectedRoute><Migration /></ProtectedRoute>} />
       <Route path="/executive-brief" element={<ProtectedRoute><ExecutiveBrief /></ProtectedRoute>} />
+      {!isElectron && (
+        <Route path="/downloads" element={<ProtectedRoute><Downloads /></ProtectedRoute>} />
+      )}
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/about" element={<ProtectedRoute><About /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />

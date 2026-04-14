@@ -15,6 +15,7 @@ import {
   Star,
   FileText,
   Milestone,
+  Download,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -43,6 +44,7 @@ const navItems = [
   { title: "Cyber Rating", url: "/cyber-rating", icon: Star },
   { title: "Security roadmap", url: "/security-roadmap", icon: Milestone },
   { title: "Executive brief", url: "/executive-brief", icon: FileText },
+  { title: "Downloads", url: "/downloads", icon: Download },
   { title: "Threat Map", url: "/asset-discovery", icon: Map },
   { title: "Migration", url: "/migration", icon: Route },
   { title: "Policy & Standards", url: "/policy", icon: ScrollText },
@@ -54,6 +56,16 @@ export function AppSidebar() {
   /** Collapsed = narrow icon rail (labels hidden); mobile sheet is always full width. */
   const collapsed = !isMobile && state === "collapsed";
   const location = useLocation();
+  const hasElectronUA =
+    typeof navigator !== "undefined" &&
+    String(navigator.userAgent || "").toLowerCase().includes("electron");
+  const isElectron =
+    hasElectronUA ||
+    (typeof window !== "undefined" &&
+      !!(window as Window & { electronAPI?: { platform?: string } }).electronAPI);
+  const visibleNavItems = isElectron
+    ? navItems.filter((item) => item.url !== "/downloads")
+    : navItems;
 
   const isActive = (path: string) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
@@ -100,7 +112,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const active = isActive(item.url);
                 return (
                   <SidebarMenuItem key={item.title}>
