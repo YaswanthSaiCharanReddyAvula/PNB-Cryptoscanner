@@ -172,6 +172,14 @@ app.include_router(scanner_router, prefix="/api/v1")
 # WebSocket scan updates
 app.include_router(ws_router)
 
+# ML monitoring (optional — safe to skip if ml package not installed)
+try:
+    from ml.monitoring import router as _ml_router
+    app.include_router(_ml_router)
+    logger.info("ML monitoring endpoints mounted at /api/ml/*")
+except Exception as _ml_import_exc:
+    logger.debug("ML monitoring not loaded: %s", _ml_import_exc)
+
 
 
 # ── Health check ─────────────────────────────────────────────────

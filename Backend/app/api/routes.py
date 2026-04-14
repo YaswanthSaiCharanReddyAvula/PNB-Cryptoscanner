@@ -557,6 +557,46 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         is_high_risk = 1 if q_score.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH] else 0
 
+        # ── Shadow ML assessment (never changes user-facing quantum_status) ──
+        try:
+            from ml import ml_engine as _ml_eng, ensemble_policy as _ens_pol, feature_builder as _ml_fb
+            if _ml_eng is not None and _ens_pol is not None and _ml_fb is not None:
+                from ml.ensemble import RuleAssessment as _RA
+                from ml.shadow_store import ShadowStore as _SS
+                _shadow = _SS(collection.database)
+                _tls_map = {t.host: t for t in tls_results if hasattr(t, "host")}
+                for _comp in all_components:
+                    try:
+                        _tls_ctx = _tls_map.get(_comp.host)
+                        _rule_a = _RA(
+                            quantum_status_rule=(_comp.quantum_status.value
+                                                 if hasattr(_comp.quantum_status, "value")
+                                                 else str(_comp.quantum_status)).upper(),
+                            rule_confidence=float(q_score.confidence),
+                        )
+                        _fv = _ml_fb.build(_comp, tls_info=_tls_ctx, rule_assessment={
+                            "quantum_status": _rule_a.quantum_status_rule.lower(),
+                            "confidence": _rule_a.rule_confidence,
+                        })
+                        _ml_result = _ml_eng.predict(_fv)
+                        _ens_result = _ens_pol.decide(_rule_a, _ml_result, _comp)
+                        await _shadow.save(
+                            scan_id=scan_id,
+                            component_name=_comp.name or "",
+                            component_category=(_comp.category.value
+                                                if hasattr(_comp.category, "value")
+                                                else str(_comp.category)),
+                            component_key_size=_comp.key_size,
+                            component_host=_comp.host or "",
+                            ml_assessment=_ml_result,
+                            ensemble_assessment=_ens_result,
+                        )
+                    except Exception as _ml_comp_exc:
+                        logger.debug("ML shadow skip for %s: %s", _comp.name, _ml_comp_exc)
+                logger.info("[%s] ML shadow assessments stored for %d components", scan_id, len(all_components))
+        except Exception as _ml_exc:
+            logger.debug("ML shadow layer inactive: %s", _ml_exc)
+
         await ws_manager.broadcast({
             "type": "metrics",
             "status": "update",

@@ -1,0 +1,4 @@
+name,category,key_size,usage_context,label,notes
+ML-KEM-768,key_exchange,768,,0,PQC safe
+RSA,signature,2048,,2,Shor vulnerable
+AES-256-GCM,cipher,256,,1,Grover partial

@@ -1,0 +1,26 @@
+{
+  "model_id": "cf17da83-4612-4995-817a-369fae64c83f",
+  "model_version": "1.0.0",
+  "training_data_hash": "8843e12c313f5fe41fcede6be003fed4",
+  "feature_schema_version": "1.0.0",
+  "metrics": {
+    "accuracy": 1.0,
+    "accuracy_pct": "100.00%",
+    "macro_f1": 1.0,
+    "per_class_f1": {
+      "0": 1.0,
+      "1": 1.0,
+      "2": 1.0
+    },
+    "per_class_accuracy": {
+      "0": "100.0% (110 samples)",
+      "1": "100.0% (93 samples)",
+      "2": "100.0% (104 samples)"
+    },
+    "critical_miss_rate": 0.0,
+    "brier_score": 0.0002,
+    "calibration_ece": 0.0185
+  },
+  "trained_at": "2026-04-13T14:39:22.235942+00:00",
+  "onnx_path": "A:\\Hackathon\\PNB - Crypto Scanner\\Backend\\ml\\models\\quantum_classifier_v1.onnx"
+}
