@@ -7,29 +7,9 @@ export function getApiOrigin(): string {
   return base.replace(/\/api\/v1\/?$/, "") || "http://localhost:8000";
 }
 
-function isNgrokHost(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host.endsWith(".ngrok-free.app") || host.endsWith(".ngrok-free.dev");
-  } catch {
-    return false;
-  }
-}
-
-function withTunnelHeaders(url: string, headers?: Record<string, string>): Record<string, string> | undefined {
-  if (!isNgrokHost(url)) return headers;
-  return {
-    ...(headers || {}),
-    "ngrok-skip-browser-warning": "true",
-  };
-}
-
 export const healthService = {
   check: () =>
-    axios.get(`${getApiOrigin()}/health`, {
-      timeout: 8000,
-      headers: withTunnelHeaders(getApiOrigin()),
-    }),
+    axios.get(`${getApiOrigin()}/health`, { timeout: 8000 }),
 };
 
 const api = axios.create({
@@ -42,7 +22,6 @@ const api = axios.create({
 // Request interceptor — do not send Bearer on login/forgot-password (avoids confusing proxies; stale JWT irrelevant)
 api.interceptors.request.use((config) => {
   config.baseURL = getViteApiBaseUrl();
-  config.headers = withTunnelHeaders(config.baseURL, config.headers as Record<string, string>) as typeof config.headers;
   const path = `${config.baseURL ?? ""}${config.url ?? ""}`;
   const rel = config.url ?? "";
   const skipAuth =
