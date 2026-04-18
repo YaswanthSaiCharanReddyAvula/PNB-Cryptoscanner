@@ -1,0 +1,209 @@
+[
+  {
+    "name": "WordPress",
+    "category": "cms",
+    "matches": [
+      {"type": "html", "pattern": "/wp-content/", "confidence": "high"},
+      {"type": "html", "pattern": "<meta name=\"generator\" content=\"WordPress ([\\d.]+)\"", "version_group": 1, "confidence": "high"},
+      {"type": "cookie", "pattern": "wordpress_logged_in", "confidence": "medium"},
+      {"type": "header", "pattern": "X-Pingback.*xmlrpc\\.php", "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:wordpress:wordpress:{version}"
+  },
+  {
+    "name": "Drupal",
+    "category": "cms",
+    "matches": [
+      {"type": "html", "pattern": "Drupal\\.settings", "confidence": "high"},
+      {"type": "html", "pattern": "/sites/default/files/", "confidence": "high"},
+      {"type": "header", "pattern": "X-Drupal-Cache", "confidence": "high"},
+      {"type": "html", "pattern": "<meta name=\"Generator\" content=\"Drupal ([\\d.]+)\"", "version_group": 1, "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:drupal:drupal:{version}"
+  },
+  {
+    "name": "Joomla",
+    "category": "cms",
+    "matches": [
+      {"type": "html", "pattern": "/media/jui/", "confidence": "high"},
+      {"type": "html", "pattern": "<meta name=\"generator\" content=\"Joomla", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "React",
+    "category": "js_library",
+    "matches": [
+      {"type": "html", "pattern": "data-reactroot", "confidence": "high"},
+      {"type": "html", "pattern": "__REACT_DEVTOOLS_GLOBAL_HOOK__", "confidence": "high"},
+      {"type": "script", "pattern": "react\\.production\\.min\\.js", "confidence": "high"},
+      {"type": "script", "pattern": "react-dom", "confidence": "medium"}
+    ]
+  },
+  {
+    "name": "Angular",
+    "category": "js_library",
+    "matches": [
+      {"type": "html", "pattern": "ng-version=\"([\\d.]+)\"", "version_group": 1, "confidence": "high"},
+      {"type": "html", "pattern": "ng-app", "confidence": "medium"},
+      {"type": "script", "pattern": "angular\\.min\\.js", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Vue.js",
+    "category": "js_library",
+    "matches": [
+      {"type": "html", "pattern": "data-v-[a-f0-9]", "confidence": "high"},
+      {"type": "html", "pattern": "__vue__", "confidence": "high"},
+      {"type": "script", "pattern": "vue\\.min\\.js", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "jQuery",
+    "category": "js_library",
+    "matches": [
+      {"type": "script", "pattern": "jquery[.-]([\\d.]+)\\.min\\.js", "version_group": 1, "confidence": "high"},
+      {"type": "script", "pattern": "jquery\\.js", "confidence": "medium"}
+    ],
+    "cpe_template": "cpe:2.3:a:jquery:jquery:{version}"
+  },
+  {
+    "name": "Bootstrap",
+    "category": "js_library",
+    "matches": [
+      {"type": "script", "pattern": "bootstrap[.-]([\\d.]+)\\.min", "version_group": 1, "confidence": "high"},
+      {"type": "html", "pattern": "class=\".*navbar.*\"", "confidence": "low"}
+    ]
+  },
+  {
+    "name": "nginx",
+    "category": "web_server",
+    "matches": [
+      {"type": "header", "pattern": "server.*nginx/([\\d.]+)", "version_group": 1, "confidence": "high"},
+      {"type": "header", "pattern": "server.*nginx", "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:nginx:nginx:{version}"
+  },
+  {
+    "name": "Apache",
+    "category": "web_server",
+    "matches": [
+      {"type": "header", "pattern": "server.*Apache/([\\d.]+)", "version_group": 1, "confidence": "high"},
+      {"type": "header", "pattern": "server.*Apache", "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:apache:http_server:{version}"
+  },
+  {
+    "name": "Microsoft IIS",
+    "category": "web_server",
+    "matches": [
+      {"type": "header", "pattern": "server.*Microsoft-IIS/([\\d.]+)", "version_group": 1, "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:microsoft:iis:{version}"
+  },
+  {
+    "name": "LiteSpeed",
+    "category": "web_server",
+    "matches": [
+      {"type": "header", "pattern": "server.*LiteSpeed", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Cloudflare",
+    "category": "cdn",
+    "matches": [
+      {"type": "header", "pattern": "server.*cloudflare", "confidence": "high"},
+      {"type": "header", "pattern": "cf-ray", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "FastAPI",
+    "category": "framework",
+    "matches": [
+      {"type": "header", "pattern": "x-process-time", "confidence": "medium"},
+      {"type": "html", "pattern": "FastAPI", "confidence": "medium"}
+    ]
+  },
+  {
+    "name": "Django",
+    "category": "framework",
+    "matches": [
+      {"type": "html", "pattern": "csrfmiddlewaretoken", "confidence": "high"},
+      {"type": "cookie", "pattern": "csrftoken", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Laravel",
+    "category": "framework",
+    "matches": [
+      {"type": "cookie", "pattern": "laravel_session", "confidence": "high"},
+      {"type": "header", "pattern": "x-powered-by.*Laravel", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Spring Boot",
+    "category": "framework",
+    "matches": [
+      {"type": "header", "pattern": "X-Application-Context", "confidence": "high"},
+      {"type": "html", "pattern": "Whitelabel Error Page", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Express.js",
+    "category": "framework",
+    "matches": [
+      {"type": "header", "pattern": "x-powered-by.*Express", "confidence": "high"},
+      {"type": "cookie", "pattern": "connect\\.sid", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "PHP",
+    "category": "language",
+    "matches": [
+      {"type": "header", "pattern": "x-powered-by.*PHP/([\\d.]+)", "version_group": 1, "confidence": "high"},
+      {"type": "cookie", "pattern": "PHPSESSID", "confidence": "high"}
+    ],
+    "cpe_template": "cpe:2.3:a:php:php:{version}"
+  },
+  {
+    "name": "ASP.NET",
+    "category": "language",
+    "matches": [
+      {"type": "header", "pattern": "x-aspnet-version.*([\\d.]+)", "version_group": 1, "confidence": "high"},
+      {"type": "header", "pattern": "x-powered-by.*ASP\\.NET", "confidence": "high"},
+      {"type": "cookie", "pattern": "ASP\\.NET_SessionId", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Google Analytics",
+    "category": "analytics",
+    "matches": [
+      {"type": "html", "pattern": "google-analytics\\.com/analytics\\.js", "confidence": "high"},
+      {"type": "html", "pattern": "googletagmanager\\.com", "confidence": "high"},
+      {"type": "html", "pattern": "gtag\\(", "confidence": "medium"}
+    ]
+  },
+  {
+    "name": "Webpack",
+    "category": "build_tool",
+    "matches": [
+      {"type": "html", "pattern": "webpackJsonp", "confidence": "high"},
+      {"type": "script", "pattern": "webpack", "confidence": "low"}
+    ]
+  },
+  {
+    "name": "Next.js",
+    "category": "framework",
+    "matches": [
+      {"type": "html", "pattern": "__NEXT_DATA__", "confidence": "high"},
+      {"type": "html", "pattern": "_next/static", "confidence": "high"}
+    ]
+  },
+  {
+    "name": "Nuxt.js",
+    "category": "framework",
+    "matches": [
+      {"type": "html", "pattern": "__NUXT__", "confidence": "high"},
+      {"type": "html", "pattern": "_nuxt/", "confidence": "high"}
+    ]
+  }
+]

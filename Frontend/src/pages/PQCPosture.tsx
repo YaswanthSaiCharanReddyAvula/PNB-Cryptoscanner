@@ -19,6 +19,7 @@ import {
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { pqcService } from "@/services/api";
+import { useDomain } from "@/contexts/DomainContext";
 
 /** Enterprise blue (primary) — matches Intelligence Dossier mockups */
 const BRAND = "#2563eb";
@@ -109,21 +110,23 @@ const BarLabel = (props: any) => {
 };
 
 export default function PQCPosture() {
+  const { selectedDomain } = useDomain();
   const [posture,       setPosture]       = useState<any>(null);
   const [algorithms,    setAlgorithms]    = useState<any[]>([]);
   const [loading,       setLoading]       = useState(true);
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
-      pqcService.getPosture().catch(() => ({ data: null })),
-      pqcService.getVulnerableAlgorithms().catch(() => ({ data: [] })),
+      pqcService.getPosture(selectedDomain ?? undefined).catch(() => ({ data: null })),
+      pqcService.getVulnerableAlgorithms(selectedDomain ?? undefined).catch(() => ({ data: [] })),
     ]).then(([postureRes, algoRes]) => {
       setPosture(postureRes.data);
       setAlgorithms(Array.isArray(algoRes.data) ? algoRes.data : []);
       setLoading(false);
     });
-  }, []);
+  }, [selectedDomain]);
 
   // Computed from real API data
   const classificationData = posture ? [
@@ -358,42 +361,49 @@ export default function PQCPosture() {
         {/* Heatmap (static — represents risk model, not scan data) */}
         <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white via-slate-50/50 to-slate-100/40 p-5 shadow-sm ring-1 ring-slate-100">
           <h3 className="mb-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Risk Overview</h3>
-          <div className="mt-1 flex flex-col items-center gap-5">
-            <div
-              className="relative rounded-2xl bg-slate-100/60 p-4 ring-1 ring-inset ring-slate-200/80"
-              style={{
-                backgroundImage:
-                  "radial-gradient(ellipse 120% 80% at 50% 0%, rgb(255 255 255 / 0.9), transparent 55%)",
-              }}
-            >
-              <div className="grid grid-cols-3 gap-3">
-                {HEATMAP.map((row, ri) =>
-                  row.map((level, ci) => {
-                    const idx = ri * 3 + ci;
+          <div className="mt-1 flex flex-col h-full gap-5">
+            {posture?.quantum_readiness?.breakdown ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 w-full max-w-[320px]">
+                  {Object.entries(posture.quantum_readiness.breakdown).map(([key, score], idx) => {
+                    if (score == null) return null;
+                    const numScore = Number(score);
+                    // Determine risk level based on score (Lower score = higher risk)
+                    const level = numScore > 80 ? 0 : numScore > 40 ? 1 : 2;
+                    const style = HEAT_STYLES[level];
+                    const title = key.replace(/_/g, " ");
+                    
                     return (
                       <motion.div
-                        key={`${ri}-${ci}`}
-                        initial={{ opacity: 0, scale: 0.88, y: 6 }}
+                        key={key}
+                        initial={{ opacity: 0, scale: 0.9, y: 6 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
-                        transition={{ delay: idx * 0.04, type: "spring", stiffness: 380, damping: 22 }}
-                        whileHover={{ scale: 1.06, y: -2 }}
-                        className={`flex h-[4.25rem] w-[4.25rem] items-center justify-center rounded-2xl text-white sm:h-[4.5rem] sm:w-[4.5rem] ${HEAT_STYLES[level].className}`}
-                        title={HEAT_STYLES[level].label}
+                        transition={{ delay: idx * 0.05, type: "spring", stiffness: 300, damping: 20 }}
+                        whileHover={{ scale: 1.05, y: -2 }}
+                        className={`flex flex-col items-center justify-center p-3 rounded-2xl text-white aspect-square ${style.className}`}
+                        title={`${title}: ${numScore}/100`}
                       >
                         {level === 2 ? (
-                          <span className="text-sm font-black tracking-tight drop-shadow-md">H</span>
+                          <span className="text-2xl font-black tracking-tight drop-shadow-md mb-1.5">H</span>
                         ) : level === 1 ? (
-                          <span className="text-sm font-black tracking-tight drop-shadow-md">M</span>
+                          <span className="text-2xl font-black tracking-tight drop-shadow-md mb-1.5">M</span>
                         ) : (
-                          <Check className="h-7 w-7 stroke-[3] drop-shadow-md" aria-hidden />
+                          <Check className="h-7 w-7 stroke-[3] drop-shadow-md mb-1.5" aria-hidden />
                         )}
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-white/95 truncate w-full text-center px-1 drop-shadow-sm">
+                          {title}
+                        </span>
                       </motion.div>
                     );
-                  }),
-                )}
+                  })}
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+                No risk breakdown data available
+              </div>
+            )}
+            <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 mt-auto pt-4 border-t border-slate-100">
               {HEAT_STYLES.map((h) => (
                 <div key={h.label} className="flex items-center gap-2 text-[11px] font-medium text-slate-600">
                   <span className={`h-3 w-3 shrink-0 rounded-md ${h.swatch}`} aria-hidden />

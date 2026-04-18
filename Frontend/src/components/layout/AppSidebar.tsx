@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
+  { title: "New Scan", url: "/scan", icon: Zap },
   { title: "Inventory Runs", url: "/inventory-runs", icon: History },
   { title: "Inventory Assets", url: "/inventory", icon: Boxes },
   { title: "CBOM", url: "/cbom", icon: ShieldCheck },
@@ -152,16 +153,6 @@ export function AppSidebar() {
         className={cn("border-t border-sidebar-border p-3", collapsed && "flex flex-col items-center gap-2 px-1 py-3")}
       >
         {!collapsed ? (
-          <>
-            <Button
-              asChild
-              className="mb-3 w-full rounded-lg bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-            >
-              <Link to="/" className="gap-2 font-semibold">
-                <Zap className="h-4 w-4 stroke-[2]" />
-                New scan
-              </Link>
-            </Button>
             <div className="flex flex-col gap-1">
               <a
                 href="#"
@@ -180,19 +171,8 @@ export function AppSidebar() {
                 Documentation
               </a>
             </div>
-          </>
         ) : (
           <>
-            <Button
-              asChild
-              size="icon"
-              title="New scan"
-              className="h-9 w-9 shrink-0 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-            >
-              <Link to="/" aria-label="New scan">
-                <Zap className="h-4 w-4 stroke-[2]" />
-              </Link>
-            </Button>
             <a
               href="#"
               title="Support"

@@ -85,6 +85,9 @@ async def reset_scan_document_for_rerun(
         "started_at": None,
         "completed_at": None,
         "error": None,
+        "current_stage": None,
+        "progress": None,
+        # -- V1 fields --
         "assets": [],
         "tls_results": [],
         "cbom": [],
@@ -95,8 +98,24 @@ async def reset_scan_document_for_rerun(
         "cve_findings": [],
         "vuln_findings": [],
         "dns_records": [],
-        "current_stage": None,
-        "progress": None,
+        # -- V2 engine fields (must clear to avoid stale data) --
+        "recon_full": None,
+        "subdomains": [],
+        "services": [],
+        "network_services": [],
+        "os_fingerprints": [],
+        "cdn_waf_intel": [],
+        "tech_fingerprints": [],
+        "web_profiles": [],
+        "hidden_findings": [],
+        "infrastructure_intel": None,
+        "all_findings": [],
+        "graph": None,
+        "risk_scores": [],
+        "executive_summary": "",
+        "estate_tier": None,
+        "stages": [],
+        "stage_metrics": [],
     }
     if scan_opts:
         set_doc["scan_options"] = scan_opts

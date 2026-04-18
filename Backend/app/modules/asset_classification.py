@@ -12,7 +12,7 @@ import httpx
 
 from app.db.models import DiscoveredAsset, HeadersResult, TLSInfo
 from app.config import settings
-from app.utils.asset_type import classify_asset_ports
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,8 @@ def _surface_from_ports(ports: List[int]) -> str:
         return "vpn"
     if p & RDP_PORTS:
         return "rdp"
-    slug = classify_asset_ports(list(p))
-    if slug == "web_app":
+    if p & {80, 443, 8080, 8443}:
         return "web"
-    if slug == "api":
-        return "api"
     return "unknown"
 
 

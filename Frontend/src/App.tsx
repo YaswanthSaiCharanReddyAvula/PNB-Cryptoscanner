@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { DomainProvider } from "@/contexts/DomainContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -23,6 +24,8 @@ import NotFound from "./pages/NotFound";
 import Settings from "./pages/Settings";
 import About from "./pages/About";
 import Downloads from "./pages/Downloads";
+import ScanResults from "./pages/ScanResults";
+import NewScan from "./pages/NewScan";
 
 const queryClient = new QueryClient();
 
@@ -49,6 +52,7 @@ function AppRoutes() {
         element={isAuthenticated ? <Navigate to="/" replace /> : <Login />}
       />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/scan" element={<ProtectedRoute><NewScan /></ProtectedRoute>} />
       <Route path="/inventory" element={<ProtectedRoute><AssetInventory /></ProtectedRoute>} />
       <Route path="/asset-inventory" element={<Navigate to="/inventory" replace />} />
       <Route path="/inventory-runs" element={<ProtectedRoute><InventoryRuns /></ProtectedRoute>} />
@@ -69,6 +73,8 @@ function AppRoutes() {
       )}
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/about" element={<ProtectedRoute><About /></ProtectedRoute>} />
+      <Route path="/scan-results/:domain" element={<ProtectedRoute><ScanResults /></ProtectedRoute>} />
+      <Route path="/scan-results" element={<ProtectedRoute><ScanResults /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
@@ -90,13 +96,15 @@ function AppRouterShell({ children }: { children: React.ReactNode }) {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <AppRouterShell>
-          <AppRoutes />
-        </AppRouterShell>
-      </TooltipProvider>
+      <DomainProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <AppRouterShell>
+            <AppRoutes />
+          </AppRouterShell>
+        </TooltipProvider>
+      </DomainProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

@@ -76,7 +76,8 @@ async def _run_sslscan(host: str, port: int, cmd_timeout: int | None = None) -> 
     target = f"{host}:{port}"
     logger.info("Running sslscan on %s...", target)
     tlim = cmd_timeout if cmd_timeout is not None else settings.SCAN_TIMEOUT
-    output = await _run_command(["sslscan", "--no-colour", target], timeout=tlim)
+    # SNI is required for modern hosts (Cloudflare, Vercel, etc.)
+    output = await _run_command(["sslscan", "--no-colour", f"--sni-name={host}", target], timeout=tlim)
     
     protocols = set()
     ciphers = []
@@ -251,12 +252,15 @@ async def _run_openssl(host: str, port: int, cmd_timeout: int | None = None) -> 
 
 def _derive_key_exchange(cipher_name: str | None) -> str | None:
     if not cipher_name:
-        return None
+        return "Unknown"
     name = cipher_name.upper().replace("-", "_")
     for token in ["ECDHE", "DHE", "ECDH", "DH", "RSA", "PSK"]:
         if token in name:
             return token
-    return "UNKNOWN"
+    # TLS 1.3 ciphers do not specify key exchange in the name (e.g. TLS_AES_128_GCM_SHA256)
+    if name.startswith("TLS_AES") or name.startswith("TLS_CHACHA20"):
+        return "TLSv1.3 Default"
+    return "Unknown"
 
 
 def _determine_confidence(sslscan_res: Dict, testssl_res: Dict, zgrab_success: bool, openssl_success: bool) -> ConfidenceLevel:

@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 
 from app.config import settings
 from app.db.models import ActiveVulnFinding, DiscoveredAsset
-from app.utils.asset_type import classify_asset_ports
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +99,7 @@ async def run_nuclei_scan(
     webish = [
         a
         for a in assets
-        if classify_asset_ports(a.open_ports or []) == "web_app"
+        if set(a.open_ports or []) & {80, 443, 8080, 8443}
     ]
     max_h = max(1, int(settings.NUCLEI_MAX_HOSTS))
     webish = webish[:max_h]

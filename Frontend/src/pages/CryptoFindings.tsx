@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/table";
 import { Link } from "react-router-dom";
 import { cryptoService, pqcService, reportingService } from "@/services/api";
+import { useDomain } from "@/contexts/DomainContext";
 import {
   Select,
   SelectContent,
@@ -115,6 +116,7 @@ function tlsNistHint(lens: string, weakTls: boolean): string {
 }
 
 export default function CryptoFindings() {
+  const { selectedDomain } = useDomain();
   const [rows, setRows] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<FindingsView>("all");
@@ -148,10 +150,10 @@ export default function CryptoFindings() {
       setLoading(true);
       try {
         const [cryptoRes, cbomRes, scanFindingsRes, tmRes, catRes] = await Promise.all([
-          cryptoService.getCryptoSecurityData(),
-          pqcService.getPerAppCbom(),
-          cryptoService.getScanFindings().catch(() => ({ data: null })),
-          reportingService.getThreatModelSummary().catch(() => ({ data: null })),
+          cryptoService.getCryptoSecurityData(selectedDomain ?? undefined),
+          pqcService.getPerAppCbom(selectedDomain ?? undefined),
+          cryptoService.getScanFindings(selectedDomain ?? undefined).catch(() => ({ data: null })),
+          reportingService.getThreatModelSummary(selectedDomain ?? undefined).catch(() => ({ data: null })),
           reportingService.getNistCatalog().catch(() => ({ data: null })),
         ]);
         if (cancelled) return;
@@ -275,7 +277,7 @@ export default function CryptoFindings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedDomain]);
 
   return (
     <div className="space-y-8">

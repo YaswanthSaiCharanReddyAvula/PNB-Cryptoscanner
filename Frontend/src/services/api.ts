@@ -63,6 +63,10 @@ export const authService = {
     // The scanner demo router at /auth/login accepts { username/email, password }
     return api.post("/auth/login", { email, username: email, password });
   },
+  verifyOtp: (email: string, otp: string) =>
+    api.post("/auth/verify-otp", { email, otp }),
+  resendOtp: (email: string) =>
+    api.post("/auth/resend-otp", { email }),
   forgotPassword: (email: string) =>
     api.post("/auth/forgot-password", { email }),
 };
@@ -128,8 +132,8 @@ export const cbomService = {
 // ── PQC ───────────────────────────────────────────────────────────
 
 export const pqcService = {
-  getPosture:              () => api.get("/pqc/posture"),
-  getVulnerableAlgorithms: () => api.get("/pqc/vulnerable-algorithms"),
+  getPosture:              (domain?: string) => api.get("/pqc/posture", { params: domain ? { domain } : {} }),
+  getVulnerableAlgorithms: (domain?: string) => api.get("/pqc/vulnerable-algorithms", { params: domain ? { domain } : {} }),
   getRiskCategories:       () => api.get("/pqc/risk-categories"),
   getCompliance:           () => api.get("/pqc/compliance"),
   getPerAppCbom:           (domain?: string) => api.get("/cbom/per-app", { params: { domain } }),
@@ -138,7 +142,7 @@ export const pqcService = {
 // ── Cyber Rating ──────────────────────────────────────────────────
 
 export const cyberRatingService = {
-  getRating:     () => api.get("/cyber-rating"),
+  getRating:     (domain?: string) => api.get("/cyber-rating", { params: domain ? { domain } : {} }),
   getRatingHistory: (params?: { limit?: number; domain?: string }) =>
     api.get("/cyber-rating/history", { params }),
   getRiskFactors:() => api.get("/cyber-rating/risk-factors"),
@@ -262,7 +266,7 @@ export const dnsService = {
 // ── Crypto ────────────────────────────────────────────────────────
 
 export const cryptoService = {
-  getCryptoSecurityData: () => api.get("/crypto/security"),
+  getCryptoSecurityData: (domain?: string) => api.get("/crypto/security", { params: domain ? { domain } : {} }),
   /** CVE / TLS mapping vs optional Nuclei findings from latest completed scan */
   getScanFindings: (domain?: string) =>
     api.get("/crypto/scan-findings", { params: domain ? { domain } : {} }),
@@ -278,6 +282,8 @@ export type ScanControllerPayload = {
 export const scanService = {
   startScan: (domain: string, controller?: ScanControllerPayload) =>
     api.post("/scan", { domain, ...controller }),
+  cancelScan: (scanId: string) =>
+    api.post(`/scan/${encodeURIComponent(scanId)}/cancel`),
   /** Phase 2: multiple domains (comma-free list); max domains enforced server-side */
   startBatchScan: (
     domains: string[],
@@ -316,6 +322,8 @@ export const scanService = {
   getResults:      (domain: string) => api.get(`/results/${domain}`),
   getCBOM:         (domain: string) => api.get(`/cbom/${domain}`),
   getQuantumScore: (domain: string) => api.get(`/quantum-score/${domain}`),
+  /** Full raw scan document — contains recon_full, tls_results, cbom, cdn_waf_intel etc. */
+  getScanDetails:  (domain: string) => api.get(`/results/${domain}`),
 };
 
 export default api;

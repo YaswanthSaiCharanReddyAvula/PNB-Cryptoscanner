@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useDomain } from "@/contexts/DomainContext";
 import { Loader2, Rocket, ExternalLink } from "lucide-react";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,8 @@ type Row = {
   started_at?: string;
   scan_id?: string;
   batch_id?: string | null;
+  quantum_score?: number | null;
+  risk_level?: string | null;
 };
 
 function normalizeScanStatus(status: unknown, error: unknown): string {
@@ -58,9 +61,9 @@ type SortMode =
   | "completed_asc";
 
 export default function InventoryRuns() {
+  const { selectedDomain } = useDomain();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-  const [domainFilter, setDomainFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortMode, setSortMode] = useState<SortMode>("domain_asc");
 
@@ -80,6 +83,12 @@ export default function InventoryRuns() {
           started_at: s.started_at,
           scan_id: s.scan_id,
           batch_id: s.batch_id ?? null,
+          quantum_score: typeof s.quantum_score === "object" && s.quantum_score !== null
+            ? (s.quantum_score.score ?? null)
+            : (s.quantum_score ?? null),
+          risk_level: s.risk_level
+            ?? (typeof s.quantum_score === "object" && s.quantum_score !== null ? s.quantum_score.risk_level : null)
+            ?? null,
         }));
         if (!cancelled) setRows(normalized);
       } catch {
@@ -104,7 +113,7 @@ export default function InventoryRuns() {
   }, [rows]);
 
   const filteredSorted = useMemo(() => {
-    const q = domainFilter.trim().toLowerCase();
+    const q = selectedDomain?.trim().toLowerCase() || "";
     let list = rows.filter((r) => {
       if (q && !(r.domain || "").toLowerCase().includes(q)) return false;
       if (statusFilter === "all") return true;
@@ -144,7 +153,7 @@ export default function InventoryRuns() {
       }
     });
     return list;
-  }, [rows, domainFilter, statusFilter, sortMode]);
+  }, [rows, selectedDomain, statusFilter, sortMode]);
 
   const statusBadge = (r: Row) => {
     const v = (r.status || "").toLowerCase();
@@ -210,24 +219,6 @@ export default function InventoryRuns() {
 
         {!loading && rows.length > 0 && (
           <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="inv-domain-filter" className="text-xs text-slate-600">
-                Filter by domain (partial match; browser suggestions list scanned roots)
-              </Label>
-              <Input
-                id="inv-domain-filter"
-                list="inventory-run-domains"
-                placeholder="e.g. bank or example.com"
-                value={domainFilter}
-                onChange={(e) => setDomainFilter(e.target.value)}
-                className="h-9 max-w-xl bg-background"
-              />
-              <datalist id="inventory-run-domains">
-                {uniqueDomains.map((d) => (
-                  <option key={d} value={d} />
-                ))}
-              </datalist>
-            </div>
             <div className="grid gap-4 sm:grid-cols-2 sm:max-w-xl">
               <div className="space-y-1.5">
                 <Label className="text-xs text-slate-600">Status</Label>
@@ -280,50 +271,43 @@ export default function InventoryRuns() {
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Domain
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Status
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Started
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Completed
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Batch
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase text-slate-600">
-                  Scan ID
-                </TableHead>
-                <TableHead className="text-right text-xs font-semibold uppercase text-slate-600">
-                  Actions
-                </TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Domain</TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Status</TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Risk</TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Started</TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Completed</TableHead>
+                <TableHead className="text-xs font-semibold uppercase text-slate-600">Scan ID</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase text-slate-600">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredSorted.map((r) => (
                 <TableRow key={`${r.scan_id || r.domain}-${r.started_at}`} className="border-slate-100">
-                  <TableCell className="font-medium text-slate-900">{r.domain || "—"}</TableCell>
+                  <TableCell className="font-medium text-slate-900 font-mono">{r.domain || "—"}</TableCell>
                   <TableCell>{statusBadge(r)}</TableCell>
-                  <TableCell className="text-slate-600">
+                  <TableCell>
+                    {r.risk_level ? (
+                      <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${
+                        r.risk_level === "critical" ? "bg-red-50 text-red-700 border-red-200" :
+                        r.risk_level === "high" ? "bg-orange-50 text-orange-700 border-orange-200" :
+                        r.risk_level === "medium" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
+                        "bg-green-50 text-green-700 border-green-200"
+                      }`}>{r.risk_level}{r.quantum_score != null ? ` · ${Number(r.quantum_score).toFixed(0)}` : ""}</span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="text-slate-600 text-xs">
                     {r.started_at ? new Date(r.started_at).toLocaleString() : "—"}
                   </TableCell>
-                  <TableCell className="text-slate-600">
+                  <TableCell className="text-slate-600 text-xs">
                     {r.completed_at ? new Date(r.completed_at).toLocaleString() : "—"}
                   </TableCell>
-                  <TableCell className="font-mono text-[10px] text-slate-500">
-                    {r.batch_id ? `${r.batch_id.slice(0, 8)}…` : "—"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-slate-500">
-                    {r.scan_id || "—"}
+                  <TableCell className="font-mono text-xs text-slate-400">
+                    {r.scan_id ? `${r.scan_id.slice(0, 12)}…` : "—"}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="sm" asChild className="text-blue-600">
-                      <Link to={`/?domain=${encodeURIComponent(r.domain)}`}>
-                        Open
+                      <Link to={`/scan-results/${encodeURIComponent(r.domain)}`}>
+                        Results
                         <ExternalLink className="ml-1 h-3 w-3" />
                       </Link>
                     </Button>

@@ -239,6 +239,12 @@ class ScanRequest(BaseModel):
                 out.append(s)
         return out or None
 
+    # Custom engine scan depth: fast | standard | aggressive
+    scan_depth: Optional[str] = Field(
+        default=None,
+        description="Scan depth for custom engine: fast, standard, aggressive",
+    )
+
     # Controller (UI): when unset, server uses settings.MAX_SUBDOMAINS / TOOL_TIMEOUT
     max_subdomains: Optional[int] = Field(
         default=None,

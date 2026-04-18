@@ -1,0 +1,82 @@
+[
+  {
+    "id": "QS-VULN-TLS-001",
+    "name": "TLS 1.0 Enabled",
+    "severity": "high",
+    "category": "tls_misconfig",
+    "description": "Server accepts TLS 1.0 connections which have known vulnerabilities (BEAST, POODLE).",
+    "remediation": "Disable TLS 1.0. Require TLS 1.2 minimum, TLS 1.3 preferred.",
+    "cve_ids": ["CVE-2011-3389", "CVE-2014-3566"],
+    "quantum_relevance": true
+  },
+  {
+    "id": "QS-VULN-TLS-002",
+    "name": "TLS 1.1 Enabled",
+    "severity": "medium",
+    "category": "tls_misconfig",
+    "description": "Server accepts TLS 1.1 which is deprecated.",
+    "remediation": "Disable TLS 1.1. Require TLS 1.2 minimum.",
+    "cve_ids": [],
+    "quantum_relevance": true
+  },
+  {
+    "id": "QS-VULN-CERT-001",
+    "name": "Expired TLS Certificate",
+    "severity": "critical",
+    "category": "tls_misconfig",
+    "description": "The TLS certificate has expired.",
+    "remediation": "Renew the certificate immediately.",
+    "cve_ids": [],
+    "quantum_relevance": false
+  },
+  {
+    "id": "QS-VULN-CERT-002",
+    "name": "Self-Signed Certificate",
+    "severity": "high",
+    "category": "tls_misconfig",
+    "description": "The certificate is self-signed and not trusted by browsers.",
+    "remediation": "Replace with a certificate from a trusted Certificate Authority.",
+    "cve_ids": [],
+    "quantum_relevance": false
+  },
+  {
+    "id": "QS-VULN-HDR-001",
+    "name": "Missing HSTS Header",
+    "severity": "medium",
+    "category": "missing_header",
+    "description": "Strict-Transport-Security header is absent.",
+    "remediation": "Add Strict-Transport-Security with max-age >= 31536000.",
+    "cve_ids": [],
+    "quantum_relevance": false
+  },
+  {
+    "id": "QS-VULN-CORS-001",
+    "name": "Permissive CORS with Credentials",
+    "severity": "high",
+    "category": "misconfig",
+    "description": "CORS policy reflects arbitrary origin with credentials allowed.",
+    "remediation": "Restrict Access-Control-Allow-Origin to specific trusted origins.",
+    "cve_ids": [],
+    "quantum_relevance": false
+  },
+  {
+    "id": "QS-VULN-EXPOSED-001",
+    "name": "Publicly Exposed Database Port",
+    "severity": "critical",
+    "category": "network_exposure",
+    "description": "A database service port is reachable from the internet.",
+    "remediation": "Restrict database ports to internal networks via firewall rules.",
+    "cve_ids": [],
+    "quantum_relevance": false
+  },
+  {
+    "id": "QS-VULN-HIDDEN-001",
+    "name": "Git Repository Exposed",
+    "severity": "critical",
+    "category": "info_disclosure",
+    "description": ".git directory is publicly accessible, potentially exposing source code and secrets.",
+    "remediation": "Block access to .git via web server config (deny from all).",
+    "cve_ids": [],
+    "quantum_relevance": false
+  }
+]

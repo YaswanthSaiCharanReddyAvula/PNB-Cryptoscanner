@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -48,6 +48,7 @@ import { useScan } from "@/hooks/useScan";
 import { ScanProgressBar } from "@/components/dashboard/ScanProgressBar";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { setLastScannedDomain } from "@/lib/lastScanDomain";
+import { useDomain } from "@/contexts/DomainContext";
 import { cn } from "@/lib/utils";
 import {
   PieChart,
@@ -205,6 +206,128 @@ function inferAssetTypeFromPorts(ports: number[]) {
   return "API";
 }
 
+/** Inline domain search bar with autocomplete dropdown */
+function DomainSearchBar() {
+  const { selectedDomain, setSelectedDomain, availableDomains, loading } = useDomain();
+  const [query, setQuery] = useState(selectedDomain ?? "");
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) return availableDomains;
+    return availableDomains.filter((d) => d.toLowerCase().includes(q));
+  }, [query, availableDomains]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const selectDomain = (d: string) => {
+    setQuery(d);
+    setSelectedDomain(d);
+    setOpen(false);
+    toast.success(`Showing results for ${d}`);
+  };
+
+  return (
+    <div className="relative">
+      <div className="flex gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            ref={inputRef}
+            placeholder={loading ? "Loading domains…" : "Search scanned domains…"}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && filtered.length > 0) {
+                selectDomain(filtered[0]);
+              }
+            }}
+            className="pl-10 h-11 bg-secondary border-border"
+          />
+        </div>
+        {selectedDomain && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setQuery("");
+              setSelectedDomain(null);
+            }}
+            className="h-11 text-xs"
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+
+      {/* Autocomplete dropdown */}
+      {open && filtered.length > 0 && (
+        <div
+          ref={dropdownRef}
+          className="absolute left-0 right-0 z-50 mt-1.5 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-xl"
+        >
+          {filtered.map((d) => (
+            <button
+              key={d}
+              onClick={() => selectDomain(d)}
+              className={cn(
+                "flex w-full items-center gap-2 px-4 py-2.5 text-sm text-left transition-colors hover:bg-primary/10",
+                d === selectedDomain && "bg-primary/5 font-semibold text-primary",
+              )}
+            >
+              <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{d}</span>
+              {d === selectedDomain && (
+                <Badge variant="outline" className="ml-auto text-[9px] border-primary/30 text-primary">
+                  Active
+                </Badge>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {open && filtered.length === 0 && query.trim() && (
+        <div className="absolute left-0 right-0 z-50 mt-1.5 rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground shadow-xl">
+          No scanned domains match "<strong>{query}</strong>".{" "}
+          <Link to="/scan" className="text-primary hover:underline font-medium">
+            Run a new scan →
+          </Link>
+        </div>
+      )}
+
+      {selectedDomain && (
+        <p className="mt-2 text-xs text-muted-foreground flex items-center gap-2">
+          Viewing results for: <span className="text-primary font-semibold">{selectedDomain}</span>
+          {" · "}
+          <Link to={`/scan-results/${encodeURIComponent(selectedDomain)}`} className="font-medium text-primary hover:underline">
+            Full results →
+          </Link>
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [domain, setDomain] = useState("");
   const [scannedDomain, setScannedDomain] = useState("");
@@ -230,6 +353,7 @@ export default function Dashboard() {
     results,
     error,
     startScan,
+    cancelScan,
     scanId,
     targetDomain: activeScanDomain,
   } = useScan();
@@ -308,10 +432,16 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (results && results.status === "completed" && !isScanning) {
-      toast.success(`Scan completed successfully for ${displayScanDomain}!`);
+    if (results && (results as any).status === "completed" && !isScanning) {
+      toast.success(`Scan completed for ${displayScanDomain}!`, {
+        action: {
+          label: "View Results",
+          onClick: () => window.location.href = `/scan-results/${encodeURIComponent(displayScanDomain)}`,
+        },
+        duration: 8000,
+      });
       refreshDashboardData(results);
-    } else if (error) {
+    } else if (error && typeof error === "string") {
       toast.error(error);
     }
   }, [results, isScanning, error, displayScanDomain]);
@@ -666,146 +796,15 @@ export default function Dashboard() {
         description="Enterprise-wide cryptographic resilience, live scan orchestration, and fleet posture at a glance."
       />
 
-      {/* Domain Input */}
-      <div className="dossier-card p-5">
-        <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3">Scan Domain</h3>
-        <div className="flex flex-col gap-4">
-          <div className="flex gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Enter domain (e.g., securebank.com)"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleScan()}
-                className="pl-10 bg-secondary border-border"
-                disabled={isScanning}
-              />
-            </div>
-            <Button onClick={handleScan} disabled={isScanning} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
-              {isScanning && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Scan
-            </Button>
-          </div>
-          <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-secondary/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <Switch
-                id="scan-controller"
-                checked={controllerEnabled}
-                onCheckedChange={setControllerEnabled}
-                disabled={isScanning}
-                aria-label="Controller"
-              />
-              <div>
-                <Label htmlFor="scan-controller" className="cursor-pointer text-sm font-semibold text-foreground">
-                  Controller
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Off: server defaults. On: cap subdomains and per-tool execution time.
-                </p>
-              </div>
-            </div>
-            {controllerEnabled && (
-              <div className="grid w-full gap-3 sm:max-w-md sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="ctrl-max-subs" className="text-xs text-muted-foreground">
-                    Subdomain scan limit
-                  </Label>
-                  <Input
-                    id="ctrl-max-subs"
-                    type="number"
-                    min={1}
-                    max={500}
-                    value={controllerMaxSubs}
-                    onChange={(e) => setControllerMaxSubs(e.target.value)}
-                    disabled={isScanning}
-                    className="bg-background border-border"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ctrl-exec-sec" className="text-xs text-muted-foreground">
-                    Execution time limit (seconds)
-                  </Label>
-                  <Input
-                    id="ctrl-exec-sec"
-                    type="number"
-                    min={10}
-                    max={900}
-                    value={controllerExecSec}
-                    onChange={(e) => setControllerExecSec(e.target.value)}
-                    disabled={isScanning}
-                    className="bg-background border-border"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-        {!isScanning && displayScanDomain && stageIndex >= 5 && (
-          <p className="text-xs text-muted-foreground mt-2">
-            Scan results available for: <span className="text-primary font-medium">{displayScanDomain}</span>.{" "}
-            <Link to="/security-roadmap" className="font-medium text-primary hover:underline">
-              View security roadmap
-            </Link>
-            .
-          </p>
-        )}
+      {/* Domain Search Bar */}
+      <div className="dossier-card relative overflow-hidden p-5">
+        <div className="absolute -z-10 -right-20 -top-20 h-80 w-80 rounded-full bg-primary/5 blur-3xl" />
+        <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+          <Search className="h-4 w-4 text-primary" />
+          Select Domain
+        </h3>
+        <DomainSearchBar />
       </div>
-
-      <div className="dossier-card p-5">
-        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-foreground">
-              Portfolio batch scan
-            </h3>
-          </div>
-          <Link
-            to="/inventory-runs"
-            className="text-xs font-medium text-blue-600 hover:text-blue-700"
-          >
-            Inventory Runs →
-          </Link>
-        </div>
-        <p className="mb-3 text-xs text-muted-foreground">
-          Queue up to {MAX_BATCH_DOMAINS} root domains in one request. Jobs share a global concurrency
-          limit on the server (Phase 2).
-        </p>
-        <Textarea
-          placeholder={"example.com\nbank.example.org"}
-          value={batchRaw}
-          onChange={(e) => setBatchRaw(e.target.value)}
-          disabled={batchBusy}
-          rows={4}
-          className="resize-y bg-secondary/50 font-mono text-sm border-border"
-        />
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={handleBatchScan}
-            disabled={batchBusy}
-            className="border border-slate-200 bg-white hover:bg-slate-50"
-          >
-            {batchBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Queue batch
-          </Button>
-          <span className="text-[11px] text-muted-foreground">
-            Parsed: {parseBatchDomains(batchRaw).length} domain(s)
-          </span>
-        </div>
-      </div>
-
-      <ScanProgressBar
-        isScanning={isScanning}
-        stageIndex={stageIndex}
-        targetDomain={displayScanDomain}
-        pipelineStageLabel={
-          isScanning && results && typeof (results as { current_stage?: string }).current_stage === "string"
-            ? (results as { current_stage: string }).current_stage
-            : null
-        }
-      />
       
       {hndlCount > 0 && (
         <HNDLAlert 
@@ -1361,14 +1360,6 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-
-      <LiveScanConsole
-        isOpen={isConsoleOpen}
-        onClose={() => setIsConsoleOpen(false)}
-        messages={messages}
-        scanId={scanId}
-        wsStatus={wsStatus}
-      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ReactFlow,
@@ -222,7 +222,7 @@ function SortableTable<T extends Record<string, string>>({
           {Array.from({ length: totalPages }, (_, i) => i + 1)
             .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
             .map((p, i, arr) => (
-              <>
+              <React.Fragment key={p}>
                 {i > 0 && arr[i - 1] !== p - 1 && (
                   <span key={`ellipsis-${p}`} className="px-2 py-1 text-xs text-muted-foreground">…</span>
                 )}
@@ -238,7 +238,7 @@ function SortableTable<T extends Record<string, string>>({
                 >
                   {p}
                 </button>
-              </>
+              </React.Fragment>
             ))}
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}

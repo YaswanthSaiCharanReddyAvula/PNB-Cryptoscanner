@@ -11,6 +11,14 @@ import {
   MapPin,
   Sparkles,
   Copy,
+  ArrowDown,
+  Clock,
+  ShieldAlert,
+  Target,
+  Microscope,
+  Rocket,
+  BarChart3,
+  Info,
 } from "lucide-react";
 import { DossierPageHeader } from "@/components/layout/DossierPageHeader";
 import { Button } from "@/components/ui/button";
@@ -19,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { aiService, roadmapService, scanService } from "@/services/api";
-import { getLastScannedDomain } from "@/lib/lastScanDomain";
+import { useDomain } from "@/contexts/DomainContext";
 import {
   inferTierRoadmapStep,
   tierRowsForRoadmapPath,
@@ -90,9 +98,201 @@ function confidenceBadge(conf: string | undefined) {
   );
 }
 
+// ── AI Plan Parser ────────────────────────────────────────────────────────
+type PlanStep = { text: string };
+type PlanPhase = {
+  title: string;
+  dateRange: string;
+  steps: PlanStep[];
+};
+type ParsedPlan = {
+  phases: PlanPhase[];
+  considerations: string[];
+};
+
+const PHASE_ICONS = [Microscope, Rocket, BarChart3, Target, ShieldAlert];
+
+function parseAIPlan(bullets: string[], rawText: string | null): ParsedPlan {
+  const lines = bullets.length > 0 ? bullets : (rawText || "").split("\n");
+  const phases: PlanPhase[] = [];
+  const considerations: string[] = [];
+  let currentPhase: PlanPhase | null = null;
+  let inConsiderations = false;
+
+  for (const raw of lines) {
+    const line = raw.replace(/^[-*•]\s*/, "").replace(/\*\*/g, "").trim();
+    if (!line) continue;
+
+    // Detect phase header: "Phase 1: Days 1-30 — Title" or "Phase 1: Days 1-30 - Title"
+    const phaseMatch = line.match(/^Phase\s+(\d+)[:\s]+(Days?[\s\d\-–—]+)?[-–—]?\s*(.+)?$/i);
+    if (phaseMatch) {
+      if (currentPhase) phases.push(currentPhase);
+      inConsiderations = false;
+      const dateRaw = line.match(/Days?[\s\d\-–—]+/i)?.[0]?.trim() ?? "";
+      const titleRaw = line.replace(/^Phase\s+\d+[:\s]+/i, "").replace(/Days?[\s\d\-–—]+[-–—]?/i, "").trim();
+      currentPhase = { title: titleRaw || `Phase ${phaseMatch[1]}`, dateRange: dateRaw, steps: [] };
+      continue;
+    }
+
+    // Detect important considerations block
+    if (/important\s+consideration/i.test(line)) {
+      if (currentPhase) { phases.push(currentPhase); currentPhase = null; }
+      inConsiderations = true;
+      continue;
+    }
+
+    if (inConsiderations) {
+      if (line.length > 5) considerations.push(line);
+    } else if (currentPhase) {
+      if (line.length > 5) currentPhase.steps.push({ text: line });
+    } else {
+      // Content before any phase — treat as first phase
+      if (line.length > 5) {
+        if (!currentPhase) currentPhase = { title: "Getting Started", dateRange: "", steps: [] };
+        currentPhase.steps.push({ text: line });
+      }
+    }
+  }
+  if (currentPhase) phases.push(currentPhase);
+  return { phases, considerations };
+}
+
+const PHASE_COLORS = [
+  { bg: "bg-blue-500/10", border: "border-blue-500/30", text: "text-blue-700 dark:text-blue-300", num: "bg-blue-500 text-white" },
+  { bg: "bg-violet-500/10", border: "border-violet-500/30", text: "text-violet-700 dark:text-violet-300", num: "bg-violet-500 text-white" },
+  { bg: "bg-emerald-500/10", border: "border-emerald-500/30", text: "text-emerald-700 dark:text-emerald-300", num: "bg-emerald-500 text-white" },
+  { bg: "bg-amber-500/10", border: "border-amber-500/30", text: "text-amber-700 dark:text-amber-300", num: "bg-amber-500 text-white" },
+  { bg: "bg-rose-500/10", border: "border-rose-500/30", text: "text-rose-700 dark:text-rose-300", num: "bg-rose-500 text-white" },
+];
+
+function VisualRoadmap({ bullets, rawText, source }: { bullets: string[]; rawText: string | null; source: "llm" | "deterministic" | null }) {
+  const parsed = parseAIPlan(bullets, rawText);
+  const hasPhases = parsed.phases.length > 0;
+
+  // Fallback: if parser found no phases, show a simple formatted list
+  if (!hasPhases) {
+    const allLines = bullets.length > 0 ? bullets : (rawText || "").split("\n").filter(Boolean);
+    return (
+      <div className="space-y-2">
+        {allLines.map((line, i) => (
+          <div key={i} className="flex gap-3 items-start">
+            <div className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10">
+              <Check className="h-3 w-3 text-primary" />
+            </div>
+            <p className="text-sm text-foreground leading-relaxed">{line.replace(/^[-*•]\s*/, "").replace(/\*\*/g, "")}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {/* Source badge */}
+      {source === "llm" && (
+        <div className="flex items-center gap-2 rounded-lg bg-emerald-500/8 border border-emerald-500/20 px-3 py-2 mb-4">
+          <Sparkles className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+          <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-200/90">
+            Generated by your local model (LM Studio / OpenAI-compatible).
+          </p>
+        </div>
+      )}
+      {source === "deterministic" && (
+        <div className="flex items-center gap-2 rounded-lg bg-amber-500/8 border border-amber-500/20 px-3 py-2 mb-4">
+          <Info className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+          <p className="text-[11px] font-medium text-amber-900 dark:text-amber-100/90">
+            Local model did not respond — showing a phased plan built directly from this scan&apos;s roadmap items.
+          </p>
+        </div>
+      )}
+
+      {/* Phase cards */}
+      {parsed.phases.map((phase, idx) => {
+        const color = PHASE_COLORS[idx % PHASE_COLORS.length];
+        const PhaseIcon = PHASE_ICONS[idx % PHASE_ICONS.length];
+        const isLast = idx === parsed.phases.length - 1;
+        return (
+          <div key={idx}>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.08 }}
+              className={`rounded-xl border ${color.border} ${color.bg} overflow-hidden`}
+            >
+              {/* Phase header */}
+              <div className={`flex items-center gap-3 px-4 py-3 border-b ${color.border}`}>
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${color.num} text-xs font-bold`}>
+                  {idx + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-semibold ${color.text}`}>{phase.title}</p>
+                  {phase.dateRange && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <Clock className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground font-mono">{phase.dateRange}</span>
+                    </div>
+                  )}
+                </div>
+                <PhaseIcon className={`h-4 w-4 shrink-0 ${color.text} opacity-70`} />
+              </div>
+
+              {/* Steps */}
+              {phase.steps.length > 0 && (
+                <div className="px-4 py-3 space-y-2.5">
+                  {phase.steps.map((step, sIdx) => (
+                    <div key={sIdx} className="flex items-start gap-3">
+                      <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/70 dark:bg-white/10 border border-border shadow-sm">
+                        <Check className="h-3 w-3 text-primary" strokeWidth={2.5} />
+                      </div>
+                      <p className="text-sm text-foreground leading-relaxed">{step.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+
+            {/* Connector arrow between phases */}
+            {!isLast && (
+              <div className="flex justify-center py-2">
+                <div className="flex flex-col items-center gap-0.5">
+                  <div className="h-4 w-0.5 bg-border rounded-full" />
+                  <ArrowDown className="h-4 w-4 text-muted-foreground/50" />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Important Considerations */}
+      {parsed.considerations.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: parsed.phases.length * 0.08 + 0.1 }}
+          className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/8"
+        >
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-500/20">
+            <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">Important Considerations</p>
+          </div>
+          <div className="px-4 py-3 space-y-2.5">
+            {parsed.considerations.map((note, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <p className="text-sm text-amber-900 dark:text-amber-100/90 leading-relaxed">{note}</p>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 export default function SecurityRoadmap() {
   const location = useLocation();
-  const [activeDomain, setActiveDomain] = useState<string | null>(null);
+  const { selectedDomain } = useDomain();
   const [data, setData] = useState<RoadmapResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [noSession, setNoSession] = useState(false);
@@ -121,7 +321,6 @@ export default function SecurityRoadmap() {
     setNoSession(false);
     setLoading(true);
     setData(null);
-    setActiveDomain(d);
     try {
       const res = await roadmapService.getSecurityRoadmap(d);
       setData(res.data as RoadmapResponse);
@@ -149,9 +348,6 @@ export default function SecurityRoadmap() {
     try {
       const res = await roadmapService.getSecurityRoadmapLatest();
       setData(res.data as RoadmapResponse);
-      setActiveDomain(
-        (res.data as RoadmapResponse)?.domain ? String((res.data as RoadmapResponse).domain) : null,
-      );
     } catch (err: unknown) {
       const ax = err as { response?: { status?: number; data?: { detail?: string } } };
       if (ax.response?.status === 404) {
@@ -175,9 +371,6 @@ export default function SecurityRoadmap() {
     try {
       const res = await roadmapService.getSecurityRoadmapByScanId(sid);
       setData(res.data as RoadmapResponse);
-      setActiveDomain(
-        (res.data as RoadmapResponse)?.domain ? String((res.data as RoadmapResponse).domain) : null,
-      );
     } catch (err: unknown) {
       const ax = err as { response?: { status?: number; data?: { detail?: string } } };
       toast.error(ax.response?.data?.detail || "Failed to load historical roadmap.");
@@ -208,15 +401,14 @@ export default function SecurityRoadmap() {
   }, []);
 
   useEffect(() => {
-    const d = getLastScannedDomain();
-    if (d) load(d);
+    if (selectedDomain) load(selectedDomain);
     else loadLatest();
     void refreshRecentCompleted();
-  }, [location.key, load]);
+  }, [selectedDomain, load, loadLatest, refreshRecentCompleted]);
 
   const items = data?.items ?? [];
   const currentStep = data ? inferTierRoadmapStep(data) : null;
-  const planDomain = (activeDomain || data?.domain || "").trim().toLowerCase();
+  const planDomain = (selectedDomain || data?.domain || "").trim().toLowerCase();
 
   return (
     <div className="space-y-8">
@@ -230,10 +422,10 @@ export default function SecurityRoadmap() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-foreground uppercase tracking-wide">Active domain</h3>
-            {activeDomain && !noSession ? (
-              <p className="mt-1 font-mono text-sm text-foreground">{activeDomain}</p>
+            {selectedDomain && !noSession ? (
+              <p className="mt-1 font-mono text-sm text-foreground">{selectedDomain}</p>
             ) : (
-              <p className="mt-1 text-sm text-muted-foreground">None set — run a scan from Overview first.</p>
+              <p className="mt-1 text-sm text-muted-foreground">None set — use the search bar to select a domain.</p>
             )}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -273,8 +465,7 @@ export default function SecurityRoadmap() {
               onClick={() => {
                 if (selectedScanId) void loadByScanId(selectedScanId);
                 else {
-                  const d = getLastScannedDomain();
-                  if (d) void load(d);
+                  if (selectedDomain) void load(selectedDomain);
                   else void loadLatest();
                 }
                 void refreshRecentCompleted();
@@ -400,29 +591,12 @@ export default function SecurityRoadmap() {
             )}
           </div>
           {(aiBullets.length > 0 || aiPlanText) && (
-            <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
-              {aiPlanSource === "llm" && (
-                <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-200/90">
-                  Generated by your local model (LM Studio / OpenAI-compatible).
-                </p>
-              )}
-              {aiPlanSource === "deterministic" && (
-                <p className="text-[11px] font-medium text-amber-900 dark:text-amber-100/90">
-                  Local model did not respond — showing a phased plan built directly from this scan&apos;s roadmap
-                  items (same data as the table below).
-                </p>
-              )}
-              {aiBullets.length > 0 ? (
-                <ul className="list-disc pl-5 space-y-1.5 text-sm text-foreground">
-                  {aiBullets.map((b, i) => (
-                    <li key={i} className="leading-relaxed">
-                      {b.replace(/^\-\s*/, "")}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <pre className="whitespace-pre-wrap text-sm text-foreground font-sans">{aiPlanText}</pre>
-              )}
+            <div className="rounded-xl border border-border bg-secondary/20 p-5 space-y-4">
+              <VisualRoadmap
+                bullets={aiBullets}
+                rawText={aiPlanText}
+                source={aiPlanSource}
+              />
               {aiDisclaimer && (
                 <p className="text-[11px] text-muted-foreground border-t border-border/60 pt-3">{aiDisclaimer}</p>
               )}
@@ -683,7 +857,7 @@ export default function SecurityRoadmap() {
         </div>
       )}
 
-      {!loading && activeDomain && !data && !noSession && (
+      {!loading && selectedDomain && !data && !noSession && (
         <div className="rounded-xl border border-border bg-card px-6 py-10 text-center text-sm text-muted-foreground">
           <p className="mb-2">No roadmap data loaded for this domain yet.</p>
           <p>

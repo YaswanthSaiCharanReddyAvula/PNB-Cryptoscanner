@@ -107,6 +107,8 @@ from app.db.models import (
     ScanStatus,
     RiskLevel,
     TLSInfo,
+    AlgorithmCategory,
+    QuantumStatus,
 )
 from app.modules import (
     asset_discovery,
@@ -157,7 +159,7 @@ from app.modules.scan_lifecycle import (
 )
 from app.modules.webhook_notify import post_json_webhook, post_slack_incoming_webhook
 from app.core.ws_manager import manager as ws_manager
-from app.utils.asset_type import asset_type_label, classify_asset_ports
+from app.utils.asset_type import asset_type_label, classify_asset_service
 from app.utils.ca_display_name import (
     extract_issuer_raw_from_tls_row,
     normalize_ca_display_name,
@@ -269,9 +271,390 @@ async def _notify_scan_complete_hooks(scan_id: str, domain: str, quantum_score: 
 
 
 async def _run_scan_pipeline_gated(scan_id: str, request: ScanRequest) -> None:
-    """Run pipeline with global concurrency cap (Phase 2 portfolio scans)."""
+    """Run pipeline with global concurrency cap (Phase 2 portfolio scans).
+
+    Delegates to the new custom scanner engine when ``scan_depth`` is
+    present on *request* (or when the ``SCANNER_SCAN_DEPTH`` env var is
+    set).  Falls back to the legacy 8-stage pipeline otherwise so that
+    existing behaviour is preserved.
+    """
     async with _scan_sem:
+        scan_depth = getattr(request, "scan_depth", None) or settings.SCANNER_SCAN_DEPTH
+        if scan_depth in ("fast", "standard", "aggressive"):
+            try:
+                await _run_custom_scan_pipeline(scan_id, request, scan_depth)
+                return
+            except Exception:
+                logger.warning(
+                    "[%s] Custom engine failed, falling back to legacy pipeline",
+                    scan_id, exc_info=True,
+                )
         await _run_scan_pipeline(scan_id, request)
+
+
+
+
+async def _run_custom_scan_pipeline(
+    scan_id: str, request: ScanRequest, scan_depth: str = "standard"
+) -> None:
+    """Execute the new custom scanner engine (zero external binaries)."""
+    from app.scanner.pipeline import PipelineManager, ScanContext
+    from app.scanner.engines.adaptive import AdaptiveRateController
+    from app.scanner.engines.recon import SurfaceReconEngine
+    from app.scanner.engines.network import NetworkScanEngine
+    from app.scanner.engines.os_fingerprint import OSFingerprintEngine
+    from app.scanner.engines.tls_engine import TLSCryptoEngine
+    from app.scanner.engines.crypto_analysis import CryptoAnalysisEngine
+    from app.scanner.engines.cdn_waf import CDNWAFEngine
+    from app.scanner.engines.tech_fingerprint import TechFingerprintEngine
+    from app.scanner.engines.web_discovery import WebAPIDiscoveryEngine
+    from app.scanner.engines.hidden_discovery import HiddenDiscoveryEngine
+    from app.scanner.engines.vuln_engine import VulnerabilityEngine
+    from app.scanner.engines.correlation import CorrelationRiskEngine
+    from app.scanner.engines.reporting import CBOMReportEngine
+
+    db = get_database()
+    collection = db[SCANS_COLLECTION]
+
+    await collection.update_one(
+        {"scan_id": scan_id},
+        {"$set": {
+            "status": ScanStatus.RUNNING.value,
+            "started_at": datetime.utcnow(),
+            "current_stage": "Initialising custom engine",
+            "progress": 0,
+        }},
+    )
+
+    async def _broadcast(event_name, payload):
+        """Pipeline calls broadcast(event_name, payload_dict).
+        We wrap it into a WS message and send to the correct scan_id room."""
+        msg = {"type": "status", "event": event_name}
+        if isinstance(payload, dict):
+            msg.update(payload)
+        await ws_manager.broadcast(msg, scan_id)
+
+    throttle = AdaptiveRateController()
+    ctx = ScanContext(
+        scan_id=scan_id,
+        domain=request.domain.strip().lower(),
+        options={
+            "scan_depth": scan_depth,
+            "max_subdomains": request.max_subdomains,
+            "port_profile": settings.SCANNER_PORT_PROFILE,
+            "ai_adaptive": settings.SCANNER_AI_ADAPTIVE,
+        },
+        throttle=throttle,
+        broadcast=_broadcast,
+        db=db,
+    )
+
+    stages = [
+        SurfaceReconEngine(),
+        NetworkScanEngine(),
+        OSFingerprintEngine(),
+        TLSCryptoEngine(),
+        CryptoAnalysisEngine(),
+        CDNWAFEngine(),
+        TechFingerprintEngine(),
+        WebAPIDiscoveryEngine(),
+        HiddenDiscoveryEngine(),
+        VulnerabilityEngine(),
+        CorrelationRiskEngine(),
+        CBOMReportEngine(),
+    ]
+
+    pipeline = PipelineManager(stages=stages)
+
+    try:
+        result = await pipeline.run(ctx)
+
+        tls_list = []
+        for tp in (ctx.tls_profiles or []):
+            tls_list.append(tp if isinstance(tp, dict) else tp)
+
+        update: dict = {
+            "status": ScanStatus.COMPLETED.value,
+            "completed_at": datetime.utcnow(),
+            "progress": 100,
+            "current_stage": "Completed",
+        }
+
+        # ── Normalize subdomains → assets list ──
+        if ctx.subdomains:
+            normalized_hosts: list[str] = []
+            for sub in ctx.subdomains:
+                if isinstance(sub, dict):
+                    host = str(sub.get("hostname") or sub.get("subdomain") or "").strip().lower()
+                else:
+                    host = str(sub).strip().lower()
+                if host:
+                    normalized_hosts.append(host)
+
+            update["subdomains"] = normalized_hosts
+            update["assets"] = [
+                {
+                    "subdomain": host,
+                    "ip": (ctx.ip_map or {}).get(host, [None])[0] if ctx.ip_map else None,
+                    "open_ports": [
+                        sv.get("port")
+                        for sv in (ctx.services or [])
+                        if isinstance(sv, dict) and sv.get("host") == host
+                    ],
+                }
+                for host in normalized_hosts
+            ]
+
+        # ── Core scan data ──
+        if ctx.tls_profiles:
+            update["tls_results"] = [t if isinstance(t, dict) else t for t in ctx.tls_profiles]
+        if ctx.crypto_findings:
+            update["cbom"] = [f if isinstance(f, dict) else f for f in ctx.crypto_findings]
+        if ctx.dns_records:
+            update["dns_records"] = [r if isinstance(r, dict) else r for r in ctx.dns_records]
+
+        # ── V2 engine fields (previously not saved!) ──
+        if ctx.services:
+            update["services"] = [s if isinstance(s, dict) else s for s in ctx.services]
+        if ctx.os_fingerprints:
+            update["os_fingerprints"] = [o if isinstance(o, dict) else o for o in ctx.os_fingerprints]
+        if ctx.cdn_waf_intel:
+            update["cdn_waf_intel"] = [c if isinstance(c, dict) else c for c in ctx.cdn_waf_intel]
+        if ctx.tech_fingerprints:
+            update["tech_fingerprints"] = [t if isinstance(t, dict) else t for t in ctx.tech_fingerprints]
+        if ctx.web_profiles:
+            update["web_profiles"] = [w if isinstance(w, dict) else w for w in ctx.web_profiles]
+        if ctx.hidden_findings:
+            update["hidden_findings"] = [h if isinstance(h, dict) else h for h in ctx.hidden_findings]
+        if ctx.vuln_findings:
+            update["vuln_findings"] = [v if isinstance(v, dict) else v for v in ctx.vuln_findings]
+        if ctx.all_findings:
+            update["all_findings"] = [f if isinstance(f, dict) else f for f in ctx.all_findings]
+        if ctx.ip_map:
+            update["ip_map"] = ctx.ip_map
+        if ctx.whois:
+            update["whois"] = ctx.whois
+        if ctx.graph:
+            update["graph"] = ctx.graph
+        if ctx.risk_scores:
+            update["risk_scores"] = ctx.risk_scores
+        if ctx.estate_tier and ctx.estate_tier != "Unknown":
+            update["estate_tier"] = ctx.estate_tier
+        if ctx.executive_summary:
+            update["executive_summary"] = ctx.executive_summary
+
+        # ── Quantum Risk Scoring via quantum_risk_engine + ML Ensemble ──
+        # Convert crypto_findings dicts → CryptoComponent objects for the engine
+        _COMPONENT_TO_CATEGORY = {
+            "cipher_kex": AlgorithmCategory.KEY_EXCHANGE,
+            "cipher_enc": AlgorithmCategory.CIPHER,
+            "cipher_mac": AlgorithmCategory.HASH,
+            "certificate_key": AlgorithmCategory.SIGNATURE,
+            "cert_signature": AlgorithmCategory.HASH,
+            "certificate_validity": AlgorithmCategory.SIGNATURE,
+            "certificate_trust": AlgorithmCategory.SIGNATURE,
+            "protocol": AlgorithmCategory.PROTOCOL,
+            "hndl_risk": AlgorithmCategory.KEY_EXCHANGE,
+            "crypto_score": AlgorithmCategory.CIPHER,  # composite
+        }
+        _RISK_TO_QSTATUS = {
+            "critical": QuantumStatus.VULNERABLE,
+            "high": QuantumStatus.VULNERABLE,
+            "medium": QuantumStatus.PARTIALLY_SAFE,
+            "low": QuantumStatus.QUANTUM_SAFE,
+            "none": QuantumStatus.QUANTUM_SAFE,
+            "info": QuantumStatus.QUANTUM_SAFE,
+        }
+
+        all_components: list[CryptoComponent] = []
+        for fd in (ctx.crypto_findings or []):
+            f = fd if isinstance(fd, dict) else {}
+            comp_type = f.get("component", "")
+            algo = f.get("algorithm", "unknown")
+            qr = f.get("quantum_risk", "medium")
+
+            # Skip composite score rows — not real components
+            if comp_type == "crypto_score":
+                continue
+
+            cat = _COMPONENT_TO_CATEGORY.get(comp_type, AlgorithmCategory.CIPHER)
+            qs_status = _RISK_TO_QSTATUS.get(qr, QuantumStatus.VULNERABLE)
+
+            # Extract key_size from algorithm name if present (e.g. "RSA-2048" → 2048)
+            key_size = None
+            for token in algo.replace("-", " ").split():
+                if token.isdigit():
+                    key_size = int(token)
+                    break
+
+            all_components.append(CryptoComponent(
+                name=algo,
+                category=cat,
+                key_size=key_size,
+                usage_context=comp_type,
+                risk_level=RiskLevel(qr) if qr in ("critical", "high", "medium", "low", "safe") else RiskLevel.MEDIUM,
+                quantum_status=qs_status,
+                host=f.get("host"),
+                details=f.get("evidence"),
+            ))
+
+        # Call the real quantum risk engine
+        try:
+            q_score_obj = quantum_risk_engine.calculate_score(
+                all_components,
+                aggregation="estate_weakest",
+            )
+            q_score_dict = q_score_obj.model_dump(mode="json")
+            update["quantum_score"] = q_score_dict
+            update["risk_level"] = q_score_dict.get("risk_level", "medium")
+            logger.info("[%s] Quantum score: %.1f (%s)", scan_id,
+                       q_score_obj.score, q_score_obj.risk_level.value)
+        except Exception as qe:
+            logger.warning("[%s] Quantum risk engine failed: %s", scan_id, qe)
+            # Fallback to the reporting engine's simple score
+            q_score = result.get("quantum_score", {})
+            if q_score:
+                update["quantum_score"] = q_score
+
+        # ── Shadow ML Ensemble Assessment (if available) ──
+        try:
+            from ml import ml_engine as _ml_eng, ensemble_policy as _ens_pol, feature_builder as _ml_fb
+            if _ml_eng is not None and _ens_pol is not None and _ml_fb is not None:
+                from ml.ensemble import RuleAssessment as _RA
+                from ml.shadow_store import ShadowStore as _SS
+                _shadow = _SS(db)
+                for _comp in all_components:
+                    try:
+                        _rule_a = _RA(
+                            quantum_status_rule=(_comp.quantum_status.value
+                                                 if hasattr(_comp.quantum_status, "value")
+                                                 else str(_comp.quantum_status)).upper(),
+                            rule_confidence=float(q_score_obj.confidence) if 'q_score_obj' in dir() else 0.65,
+                        )
+                        _fv = _ml_fb.build(_comp, tls_info=None, rule_assessment={
+                            "quantum_status": _rule_a.quantum_status_rule.lower(),
+                            "confidence": _rule_a.rule_confidence,
+                        })
+                        _ml_result = _ml_eng.predict(_fv)
+                        _ens_result = _ens_pol.decide(_rule_a, _ml_result, _comp)
+                        await _shadow.save(
+                            scan_id=scan_id,
+                            component_name=_comp.name or "",
+                            component_category=(_comp.category.value
+                                                if hasattr(_comp.category, "value")
+                                                else str(_comp.category)),
+                            component_key_size=_comp.key_size,
+                            component_host=_comp.host or "",
+                            ml_assessment=_ml_result,
+                            ensemble_assessment=_ens_result,
+                        )
+                    except Exception as _ml_comp_exc:
+                        logger.debug("ML shadow skip for %s: %s", _comp.name, _ml_comp_exc)
+                logger.info("[%s] ML shadow assessments stored for %d components", scan_id, len(all_components))
+        except Exception as _ml_exc:
+            logger.debug("[%s] ML shadow layer inactive: %s", scan_id, _ml_exc)
+
+        recs = result.get("recommendations", [])
+        if recs:
+            update["recommendations"] = recs
+        if pipeline.metrics:
+            update["stage_metrics"] = [m.model_dump() for m in pipeline.metrics]
+
+        await collection.update_one({"scan_id": scan_id}, {"$set": update})
+
+        # ── Broadcast structured intermediate results for LiveScanConsole ──
+        # TLS finding cards
+        for tp in (ctx.tls_profiles or []):
+            p = tp if isinstance(tp, dict) else {}
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "tls_finding",
+                "payload": {
+                    "host": p.get("host", ""),
+                    "port": p.get("port", 443),
+                    "tls_versions": p.get("tls_versions_supported", {}),
+                    "negotiated_cipher": p.get("negotiated_cipher"),
+                    "cert": {
+                        "issuer": (p.get("leaf_cert") or {}).get("issuer", ""),
+                        "subject": (p.get("leaf_cert") or {}).get("subject", ""),
+                        "valid_to": (p.get("leaf_cert") or {}).get("valid_to", ""),
+                        "key_type": (p.get("leaf_cert") or {}).get("key_type", ""),
+                        "key_size": (p.get("leaf_cert") or {}).get("key_size"),
+                    } if p.get("leaf_cert") else None,
+                    "pqc_signals": p.get("pqc_signals", []),
+                    "forward_secrecy": p.get("forward_secrecy", False),
+                    "ciphers_count": len(p.get("accepted_ciphers") or []),
+                },
+            }, scan_id)
+
+        # Crypto summary card
+        if ctx.crypto_findings:
+            categories = {}
+            vulnerable = []
+            for f in ctx.crypto_findings:
+                fd = f if isinstance(f, dict) else {}
+                comp = fd.get("component", "unknown")
+                categories[comp] = categories.get(comp, 0) + 1
+                if fd.get("quantum_risk") in ("critical", "high"):
+                    vulnerable.append(fd.get("algorithm", "unknown"))
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "crypto_summary",
+                "payload": {
+                    "total_components": len(ctx.crypto_findings),
+                    "by_category": categories,
+                    "vulnerable_count": len(vulnerable),
+                    "vulnerable_algorithms": list(set(vulnerable))[:10],
+                },
+            }, scan_id)
+
+        # Quantum score card
+        if update.get("quantum_score"):
+            qs = update["quantum_score"]
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "quantum_score",
+                "payload": {
+                    "score": qs.get("score", 0),
+                    "risk_level": qs.get("risk_level", "unknown"),
+                    "confidence": qs.get("confidence", 0),
+                },
+            }, scan_id)
+
+        # CBOM summary card
+        cbom_data = result.get("cbom") or ctx.cbom or {}
+        if cbom_data:
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "cbom_summary",
+                "payload": {
+                    "domain": ctx.domain,
+                    "total_components": cbom_data.get("total_components", 0),
+                    "quantum_safe_count": cbom_data.get("quantum_safe_count", 0),
+                    "weak_crypto_count": cbom_data.get("weak_crypto_count", 0),
+                },
+            }, scan_id)
+
+        await ws_manager.broadcast({
+            "type": "status",
+            "status": "completed",
+            "message": "Custom engine scan completed.",
+        }, scan_id)
+
+        logger.info("[%s] Custom engine scan completed.", scan_id)
+
+    except Exception as exc:
+        logger.exception("[%s] Custom engine pipeline failed: %s", scan_id, exc)
+        err = str(exc)[:500]
+        await collection.update_one(
+            {"scan_id": scan_id},
+            {"$set": {
+                "status": ScanStatus.FAILED.value,
+                "error": err,
+                "completed_at": datetime.utcnow(),
+            }},
+        )
+        await ws_manager.broadcast({"type": "status", "status": "failed", "message": err}, scan_id)
 
 
 async def _registered_hostnames_for_domain(db, domain: str, lim: int = 500) -> List[str]:
@@ -408,9 +791,9 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             {"$set": {"dns_records": [r.model_dump() for r in dns_records]}},
         )
 
-        web_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "web_app")
-        srv_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "server")
-        api_count = sum(1 for a in assets if classify_asset_ports(a.open_ports) == "api")
+        web_count = sum(1 for a in assets if classify_asset_service(getattr(a, "services", [])) == "web_app")
+        api_count = sum(1 for a in assets if classify_asset_service(getattr(a, "services", [])) == "api")
+        srv_count = len(assets) - web_count - api_count
 
         await ws_manager.broadcast({
             "type": "metrics",
@@ -807,6 +1190,40 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         "message": "Scan initiated — poll GET /results/{domain} for progress.",
         "reused": False,
     }
+
+
+@router.post(
+    "/scan/{scan_id}/cancel",
+    summary="Cancel a running or pending scan",
+)
+async def cancel_scan(scan_id: str):
+    """Marks a scan as failed/cancelled. The pipeline checks the DB and will exit early."""
+    db = get_database()
+    collection = db[SCANS_COLLECTION]
+    
+    doc = await collection.find_one({"scan_id": scan_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Scan not found")
+        
+    if doc.get("status") in ("completed", "failed"):
+        return {"status": "ok", "message": "Scan is already finished."}
+        
+    await collection.update_one(
+        {"scan_id": scan_id},
+        {"$set": {
+            "status": "failed",
+            "error": "Cancelled by user via UI",
+            "completed_at": datetime.utcnow()
+        }}
+    )
+    
+    await ws_manager.broadcast({
+        "type": "status",
+        "status": "failed",
+        "message": "Cancelled by user via UI",
+    }, scan_id)
+    
+    return {"status": "ok", "message": "Scan cancellation requested."}
 
 
 @router.post(
@@ -1320,9 +1737,19 @@ async def bulk_asset_metadata(items: List[AssetMetadataUpdate]):
 @router.get("/results/{domain}", summary="Get scan results for a domain")
 async def get_results(domain: str):
     db = get_database()
+    
+    # Priority 1: Find active running or pending scan
     doc = await db[SCANS_COLLECTION].find_one(
-        {"domain": domain}, sort=[("started_at", -1)]
+        {"domain": domain, "status": {"$in": ["running", "pending"]}},
+        sort=[("started_at", -1)]
     )
+    
+    # Priority 2: Fall back to latest terminal scan (completed/failed with a valid timestamp)
+    if not doc:
+        doc = await db[SCANS_COLLECTION].find_one(
+            {"domain": domain}, sort=[("completed_at", -1)]
+        )
+        
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1371,14 +1798,36 @@ async def get_cbom_per_app(domain: str = None):
     if domain:
         query["domain"] = domain
         
-    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
-    if not doc:
+    scans = await db[SCANS_COLLECTION].find(query, sort=[("completed_at", -1)]).to_list(length=5)
+
+    if not scans:
         return []
         
     # Standardize output for the table + Phase 3 threat ↔ NIST enrichment
-    cbom_report = doc.get("cbom_report") or {}
-    components = cbom_report.get("components", []) or []
-    return [enrich_cbom_component_dict(dict(c)) for c in components]
+    all_components = []
+    seen = set()
+    for doc in scans:
+        cbom_report = doc.get("cbom_report") or {}
+        components = cbom_report.get("components")
+        
+        # Fallback to raw cbom array if report was not generated
+        if not components:
+            components = doc.get("cbom", [])
+        for c in components:
+            c_dict = dict(c)
+            domain_val = doc.get("domain", "")
+            
+            # Deduplicate
+            sig = (domain_val, c_dict.get("name"), c_dict.get("category"), c_dict.get("key_size"))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            
+            enriched = enrich_cbom_component_dict(c_dict)
+            enriched["domain"] = domain_val
+            all_components.append(enriched)
+        
+    return all_components
 
 def _normalize_negotiated_tls_label(raw: str | None) -> str:
     """Bucket negotiated tls_version for distribution (one count per TLS endpoint row)."""
@@ -1667,7 +2116,7 @@ def _compute_dashboard_kpis_from_completed_scans(scans: List[dict]) -> dict:
 
     for s in scans:
         for a in s.get("assets", []) or []:
-            cat = classify_asset_ports(a.get("open_ports") or [])
+            cat = classify_asset_service(a.get("services") or [])
             if cat == "web_app":
                 public_web_apps += 1
             elif cat == "server":
@@ -1952,9 +2401,7 @@ async def get_assets():
             tls = tls_map.get(host, {})
             cert = tls.get("certificate") or {}
 
-            # Infer fields (must match /dashboard/summary and /assets/distribution)
-            ports = a.get("open_ports") or []
-            a_type = asset_type_label(classify_asset_ports(ports))
+            a_type = asset_type_label(classify_asset_service(a.get("services") or []))
 
             days = cert.get("days_until_expiry")
             if days is None:
@@ -1966,6 +2413,11 @@ async def get_assets():
             else:
                 cert_status_slug = "valid"
 
+            quantum_score = scan.get("quantum_score") if isinstance(scan, dict) else None
+            risk_level = ""
+            if isinstance(quantum_score, dict):
+                risk_level = str(quantum_score.get("risk_level") or "")
+
             assets.append(
                 {
                     "asset_name": host,
@@ -1974,7 +2426,7 @@ async def get_assets():
                     "ipv6": "",
                     "type": a_type,
                     "owner": "",
-                    "risk": scan.get("quantum_score", {}).get("risk_level", "").capitalize(),
+                    "risk": risk_level.capitalize(),
                     "hndlRisk": False,
                     "certificate_status": cert_status_slug,
                     "certStatus": cert_status_slug.replace("_", " ").title()
@@ -2023,7 +2475,7 @@ async def get_asset_distribution():
                 continue
             seen_hosts.add(key)
 
-            cat = classify_asset_ports(a.get("open_ports") or [])
+            cat = classify_asset_service(a.get("services") or [])
             if cat == "web_app":
                 public_web_apps += 1
             elif cat == "server":
@@ -2066,26 +2518,87 @@ async def get_nameserver_records():
 # ════════════════════════════════════════════════════════════════════
 
 @router.get("/crypto/security", summary="Get crypto security overview", tags=["Crypto"])
-async def get_crypto_security():
+async def get_crypto_security(domain: Optional[str] = None):
     db = get_database()
+    query: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
     scans = await db[SCANS_COLLECTION].find(
-        {"status": "completed"}, sort=[("completed_at", -1)]
+        query, sort=[("completed_at", -1)]
     ).to_list(length=5)
 
-    results = []
+    results_dict = {}
+    
     for scan in scans:
+        cbom_report = scan.get("cbom_report") or {}
+        components = cbom_report.get("components") or scan.get("cbom", [])
+        ml_pqc_map = {}
+        for c in components:
+            if c.get("category") == "cipher" and c.get("name"):
+                ml_pqc_map[c.get("name")] = c.get("quantum_status", "").replace("_", "-")
+                
+        host_services: dict[str, list[dict]] = {}
+        for svc in (scan.get("services") or []):
+            h = (svc.get("host") or "").lower()
+            if h:
+                host_services.setdefault(h, []).append(svc)
+        
         for t in scan.get("tls_results", []):
+            host = (t.get("host") or scan.get("domain", "")).lower()
+            port = t.get("port", 443)
+            key = f"{host}:{port}"
+            
+            asset_slug = classify_asset_service(services=host_services.get(host))
             raw_iss = extract_issuer_raw_from_tls_row(t)
-            results.append({
-                "asset": t.get("host", scan.get("domain", "")),
-                "key_length": str(t.get('cipher_bits') or ""),
-                "cipher_suite": t.get("cipher_suite", ""),
-                "tls_version": t.get("tls_version", ""),
-                "certificate_authority": normalize_ca_display_name(raw_iss),
-                "pqcStatus": "",
-            })
+            cert = t.get("certificate") or {}
+            
+            # Extract fields
+            tls_version = t.get("tls_version", "")
+            cipher_suite = t.get("cipher_suite", "")
+            key_length_val = str(t.get('cipher_bits') or "")
+            key_exchange = t.get("key_exchange", "")
+            if key_exchange == "UNKNOWN":
+                if cipher_suite.startswith("TLS_AES") or cipher_suite.startswith("TLS_CHACHA20"):
+                    key_exchange = "TLSv1.3 Default"
+                else:
+                    key_exchange = "Unknown"
+            elif not key_exchange:
+                key_exchange = "Unknown"
+            ca_val = normalize_ca_display_name(raw_iss)
+            cert_expiry_val = cert.get("days_until_expiry")
+            
+            if key not in results_dict:
+                results_dict[key] = {
+                    "asset": t.get("host", scan.get("domain", "")),
+                    "port": port,
+                    "key_length": key_length_val,
+                    "cipher_suite": cipher_suite,
+                    "tls_version": tls_version,
+                    "key_exchange": key_exchange,
+                    "certificate_authority": ca_val,
+                    "cert_expiry": f"{cert_expiry_val} days" if cert_expiry_val is not None else "—",
+                    "pqcStatus": ml_pqc_map.get(cipher_suite, ""),
+                    "asset_type": asset_type_label(asset_slug),
+                }
+            else:
+                # Merge missing fields from older scans if current is incomplete
+                existing = results_dict[key]
+                if not existing["pqcStatus"] and ml_pqc_map.get(cipher_suite):
+                    existing["pqcStatus"] = ml_pqc_map.get(cipher_suite)
+                if not existing["tls_version"] and tls_version:
+                    existing["tls_version"] = tls_version
+                if not existing["cipher_suite"] and cipher_suite:
+                    existing["cipher_suite"] = cipher_suite
+                if not existing["key_length"] and key_length_val:
+                    existing["key_length"] = key_length_val
+                if not existing["key_exchange"] and key_exchange:
+                    existing["key_exchange"] = key_exchange
+                if existing["certificate_authority"] == "Unknown" and ca_val != "Unknown":
+                    existing["certificate_authority"] = ca_val
+                if existing["cert_expiry"] == "—" and cert_expiry_val is not None:
+                    existing["cert_expiry"] = f"{cert_expiry_val} days"
 
-    return results
+    return list(results_dict.values())
 
 
 @router.get(
@@ -2121,10 +2634,13 @@ async def get_crypto_scan_findings(domain: Optional[str] = None):
 # ════════════════════════════════════════════════════════════════════
 
 @router.get("/pqc/posture", summary="Get PQC posture overview", tags=["PQC"])
-async def get_pqc_posture():
+async def get_pqc_posture(domain: Optional[str] = None):
     db = get_database()
+    query: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
     scan = await db[SCANS_COLLECTION].find_one(
-        {"status": "completed"}, sort=[("completed_at", -1)]
+        query, sort=[("completed_at", -1)]
     )
     if not scan:
         return {
@@ -2142,9 +2658,9 @@ async def get_pqc_posture():
             "quantum_readiness": None,
         }
 
-    tls_results = scan.get("tls_results", []) or []
+    tls_results = scan.get("tls_profiles", []) or scan.get("tls_results", []) or []
     assets = scan.get("assets", []) or []
-    tls_map = {t.get("host"): t for t in tls_results if t.get("host")}
+    tls_map = {t.get("host"): t for t in tls_results if isinstance(t, dict) and t.get("host")}
 
     # Some scan runs may not persist asset_discovery output (assets=[]), but still have tls_results.
     # Derive a host list from tls_results as fallback, and tolerate different asset key names.
@@ -2158,6 +2674,7 @@ async def get_pqc_posture():
                 hosts.append(h)
     else:
         for t in tls_results:
+            if not isinstance(t, dict): continue
             h = (t.get("host") or "").strip()
             if h:
                 hosts.append(h)
@@ -2177,9 +2694,32 @@ async def get_pqc_posture():
 
     for host in hosts:
         tls = tls_map.get(host, {})
-        tv = str(tls.get("tls_version") or "")
-        pq_signal = bool(tls.get("pqc_kem_observed") or tls.get("hybrid_key_exchange"))
-        tls_mod = bool(tls.get("tls_modern")) or ("TLSv1.3" in tv or "TLS1.3" in tv.upper() or "1.3" in tv)
+        
+        # Support both V1 (tls_version, pqc_kem_observed) and V2 (tls_versions_supported, pqc_signals)
+        pqc_signals = tls.get("pqc_signals", [])
+        pqc_signal_hints = tls.get("pqc_signal_hints") or []
+        if pqc_signals:
+            pqc_signal_hints.extend(pqc_signals)
+            
+        pq_signal = bool(tls.get("pqc_kem_observed") or tls.get("hybrid_key_exchange") or pqc_signals)
+        
+        supported_versions = tls.get("tls_versions_supported", {})
+        if supported_versions:
+            tls_mod = bool(supported_versions.get("TLSv1_3"))
+            if supported_versions.get("TLSv1_3"):
+                tv = "TLSv1.3"
+            elif supported_versions.get("TLSv1_2"):
+                tv = "TLSv1.2"
+            elif supported_versions.get("TLSv1_1"):
+                tv = "TLSv1.1"
+            elif supported_versions.get("TLSv1"):
+                tv = "TLSv1"
+            else:
+                tv = "Unknown"
+        else:
+            tv = str(tls.get("tls_version") or "")
+            tls_mod = bool(tls.get("tls_modern")) or ("TLSv1.3" in tv or "TLS1.3" in tv.upper() or "1.3" in tv)
+            
         if pq_signal:
             pqc_kem_endpoints += 1
         if tls_mod:
@@ -2208,8 +2748,8 @@ async def get_pqc_posture():
             "pqc_supported": is_ready,
             "pqc_kem_observed": pq_signal,
             "tls_modern": tls_mod,
-            "pqc_signal_hints": (tls.get("pqc_signal_hints") or [])[:8],
-            "tls_version": tls.get("tls_version", "Unknown"),
+            "pqc_signal_hints": pqc_signal_hints[:8],
+            "tls_version": tv or "Unknown",
             "risk": "Low" if is_ready else "High",
             "status": (
                 "PQC / hybrid signal"
@@ -2254,10 +2794,13 @@ async def get_pqc_posture():
 
 
 @router.get("/pqc/vulnerable-algorithms", summary="Get vulnerable algorithms list", tags=["PQC"])
-async def get_vulnerable_algorithms():
+async def get_vulnerable_algorithms(domain: Optional[str] = None):
     db = get_database()
+    query: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
     scan = await db[SCANS_COLLECTION].find_one(
-        {"status": "completed"}, sort=[("completed_at", -1)]
+        query, sort=[("completed_at", -1)]
     )
     if not scan:
         return []
@@ -2287,8 +2830,13 @@ async def get_pqc_compliance():
 def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
     """Build 0-1000 cyber rating payload from a completed scan document."""
     # Scale 0-100 to 0-1000
-    raw_score = (scan.get("quantum_score") or {}).get("score", 75)
-    score_1000 = int(raw_score * 10)
+    qscore = scan.get("quantum_score") if isinstance(scan, dict) else {}
+    raw_score = (qscore or {}).get("score", 75) if isinstance(qscore, dict) else 75
+    try:
+        normalized_score = float(raw_score) if raw_score is not None else 75.0
+    except (TypeError, ValueError):
+        normalized_score = 75.0
+    score_1000 = int(normalized_score * 10)
     score_1000 = max(0, min(1000, score_1000))
     tier = "Elite-PQC" if score_1000 > 700 else "Standard" if score_1000 >= 400 else "Legacy"
 
@@ -2380,7 +2928,7 @@ def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
     per_url = []
     tls_results = scan.get("tls_results", [])
     for t in tls_results[:8]:
-        url_score = int(raw_score * 10)
+        url_score = int(normalized_score * 10)
         tv = _tls_ver(t)
         if tv == "TLSv1.3":
             url_score += 50
@@ -2426,10 +2974,13 @@ def _build_cyber_rating_payload(scan: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/cyber-rating", summary="Get enterprise cyber rating", tags=["Cyber Rating"])
-async def get_cyber_rating():
+async def get_cyber_rating(domain: Optional[str] = None):
     db = get_database()
+    query: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
     scan = await db[SCANS_COLLECTION].find_one(
-        {"status": "completed"}, sort=[("completed_at", -1)]
+        query, sort=[("completed_at", -1)]
     )
     if not scan:
         return {"score": 0, "max_score": 1000, "tier": "N/A", "per_url_scores": []}
@@ -3560,8 +4111,7 @@ async def get_network_graph(domain: Optional[str] = None):
         days = cert.get("days_until_expiry")
         
         # Categorization (aligned with dashboard distribution)
-        ports = asset.get("open_ports") or []
-        asset_type = classify_asset_ports(ports)
+        asset_type = classify_asset_service(asset.get("services") or [])
         
         # Risk assessment (simplified logic matching dashboard)
         risk = "low"
@@ -3605,6 +4155,41 @@ class LoginPayload(BaseModel):
     email: str = ""
     password: str = ""
 
+def _get_otp_html(otp: str) -> str:
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0; }}
+            .container {{ max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
+            .header {{ background-color: #2563eb; padding: 20px; text-align: center; color: white; }}
+            .header h1 {{ margin: 0; font-size: 24px; letter-spacing: 1px; color: #ffffff; }}
+            .content {{ padding: 40px 30px; text-align: center; color: #333333; }}
+            .content p {{ font-size: 16px; line-height: 1.5; color: #555555; }}
+            .otp-box {{ margin: 30px auto; padding: 15px 30px; background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 8px; display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #1e293b; }}
+            .footer {{ background-color: #f8fafc; padding: 15px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1 style="color: white; margin: 0;">QSCAS Security</h1>
+            </div>
+            <div class="content">
+                <h2>Your Verification Code</h2>
+                <p>Please use the following 6-digit code to securely log in to your account. This code will expire in exactly <strong>1 minute</strong>.</p>
+                <div class="otp-box">{otp}</div>
+                <p>If you did not request this login, please ignore this email.</p>
+            </div>
+            <div class="footer">
+                &copy; 2026 QuantumShield System. All rights reserved.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
 @router.post("/auth/login", summary="Demo login — returns bearer token", tags=["Auth"])
 async def demo_login(payload: LoginPayload):
     """
@@ -3624,7 +4209,7 @@ async def demo_login(payload: LoginPayload):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    demo_admin_email = "scanner@example.com"
+    demo_admin_email = "yaswanthavula879@gmail.com"
     demo_employee_email = "employee@example.com"
     demo_password = "pass123"
 
@@ -3645,19 +4230,51 @@ async def demo_login(payload: LoginPayload):
     )
 
     if pwd == demo_password and identity_admin_ok:
-        token_id = uuid.uuid4().hex[:8]
+        import random
+        from datetime import datetime, timedelta
+        import smtplib
+        from email.mime.text import MIMEText
+        
+        otp = str(random.randint(100000, 999999))
+        
+        # Store in global OTP store with 1-minute expiration
+        global _otp_store
+        if '_otp_store' not in globals():
+            _otp_store = {}
+        _otp_store[demo_admin_email] = {
+            "code": otp,
+            "expires_at": datetime.now() + timedelta(minutes=1)
+        }
+        
+        print(f"\n\n{'='*50}")
+        print(f"📧 SENDING EMAIL TO: {demo_admin_email}")
+        print(f"🔐 YOUR QSCAS VERIFICATION OTP IS: {otp}")
+        print(f"{'='*50}\n\n")
+
+        # Real SMTP sending logic
+        try:
+            sender_email = "abdulyunus295@gmail.com" # TODO: Change to your sender email
+            sender_password = "xiln ujts eqra krol" # TODO: Provide your Google App Password
+            
+            html_content = _get_otp_html(otp)
+            msg = MIMEText(html_content, "html")
+            msg["Subject"] = "QSCAS Login Verification Code"
+            msg["From"] = sender_email
+            msg["To"] = demo_admin_email
+
+            # Try to connect (Will fail if app password is not provided, but won't crash backend)
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            server.quit()
+            print("✅ Email sent successfully via SMTP!")
+        except Exception as e:
+            print(f"⚠️ SMTP failed (did you set up your App Password?): {e}")
+
         return {
-            "access_token": f"demo-token-admin-{token_id}",
-            "token_type": "bearer",
-            "role": "Admin",
-            "user": {
-                "id": token_id,
-                "username": "admin",
-                "email": demo_admin_email,
-                "full_name": "Admin Operator",
-                "role": "Admin",
-                "is_active": True,
-            },
+            "requires_otp": True,
+            "email": demo_admin_email,
+            "message": "OTP sent to email (Valid for 1 min)"
         }
 
     if pwd == demo_password and identity_employee_ok:
@@ -3679,3 +4296,89 @@ async def demo_login(payload: LoginPayload):
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid email or password",
     )
+
+class OTPPayload(BaseModel):
+    email: str
+    otp: str
+
+@router.post("/auth/verify-otp", summary="Verify OTP and complete login", tags=["Auth"])
+async def verify_otp(payload: OTPPayload):
+    from datetime import datetime
+    email = payload.email.strip().lower()
+    provided_otp = payload.otp.strip()
+    
+    global _otp_store
+    if '_otp_store' not in globals():
+        _otp_store = {}
+        
+    otp_data = _otp_store.get(email)
+    
+    if not otp_data:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired OTP code")
+        
+    if datetime.now() > otp_data["expires_at"]:
+        del _otp_store[email]
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OTP has expired. Please request a new one.")
+        
+    if otp_data["code"] == provided_otp:
+        # Clear the OTP once used
+        del _otp_store[email]
+        token_id = uuid.uuid4().hex[:8]
+        return {
+            "access_token": f"demo-token-admin-{token_id}",
+            "token_type": "bearer",
+            "role": "Admin",
+            "user": {
+                "id": token_id,
+                "username": "admin",
+                "email": email,
+                "full_name": "Yaswanth Admin",
+                "role": "Admin",
+                "is_active": True,
+            },
+        }
+    
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP code")
+
+from fastapi import Body
+@router.post("/auth/resend-otp", summary="Resend OTP email", tags=["Auth"])
+async def resend_otp(payload: dict = Body(...)):
+    email = payload.get("email", "").strip().lower()
+    if email not in ["yaswanthavula879@gmail.com", "abdulyunus295@gmail.com"]:
+        raise HTTPException(status_code=400, detail="Invalid email")
+        
+    import random
+    from datetime import datetime, timedelta
+    import smtplib
+    from email.mime.text import MIMEText
+    
+    otp = str(random.randint(100000, 999999))
+    
+    global _otp_store
+    if '_otp_store' not in globals():
+        _otp_store = {}
+    _otp_store[email] = {
+        "code": otp,
+        "expires_at": datetime.now() + timedelta(minutes=1)
+    }
+    
+    try:
+        import fastapi
+        sender_email = "abdulyunus295@gmail.com" 
+        sender_password = "xiln ujts eqra krol" 
+        
+        html_content = _get_otp_html(otp)
+        msg = MIMEText(html_content, "html")
+        msg["Subject"] = "New QSCAS Login Verification Code"
+        msg["From"] = sender_email
+        msg["To"] = email
+
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        print(f"⚠️ SMTP failed on resend: {e}")
+        
+    return {"message": "New OTP sent successfully"}
+

@@ -1,0 +1,218 @@
+[
+  {
+    "service": "ssh_openssh",
+    "patterns": ["^SSH-2\\.0-OpenSSH", "^SSH-1\\.\\d+-OpenSSH"],
+    "version_regex": "SSH-[\\d.]+-OpenSSH[_-]([\\d.p]+)",
+    "default_port": [22]
+  },
+  {
+    "service": "ssh_dropbear",
+    "patterns": ["^SSH-2\\.0-dropbear"],
+    "version_regex": "dropbear[_-]([\\d.]+)",
+    "default_port": [22]
+  },
+  {
+    "service": "http_apache",
+    "patterns": ["Apache/?\\d", "Apache/", "Server:\\s*Apache"],
+    "version_regex": "Apache/([\\d.]+)",
+    "default_port": [80, 443, 8080, 8443]
+  },
+  {
+    "service": "http_nginx",
+    "patterns": ["nginx/?\\d", "nginx/", "Server:\\s*nginx"],
+    "version_regex": "nginx/([\\d.]+)",
+    "default_port": [80, 443, 8080, 8443]
+  },
+  {
+    "service": "http_iis",
+    "patterns": ["Microsoft-IIS/", "Server:\\s*Microsoft-IIS"],
+    "version_regex": "Microsoft-IIS/([\\d.]+)",
+    "default_port": [80, 443, 8080]
+  },
+  {
+    "service": "http_litespeed",
+    "patterns": ["LiteSpeed", "Server:\\s*LiteSpeed"],
+    "version_regex": "LiteSpeed/([\\d.]+)",
+    "default_port": [80, 443, 8088]
+  },
+  {
+    "service": "http_caddy",
+    "patterns": ["Caddy", "Server:\\s*Caddy"],
+    "version_regex": "Caddy/([\\d.]+)",
+    "default_port": [80, 443, 2015]
+  },
+  {
+    "service": "smtp_postfix",
+    "patterns": ["Postfix", "ESMTP Postfix"],
+    "version_regex": "Postfix[/ ]+([\\w.]+)",
+    "default_port": [25, 465, 587]
+  },
+  {
+    "service": "smtp_exim",
+    "patterns": ["Exim", "ESMTP Exim"],
+    "version_regex": "Exim ([\\d.]+)",
+    "default_port": [25, 465, 587]
+  },
+  {
+    "service": "smtp_exchange",
+    "patterns": ["Microsoft ESMTP MAIL", "Microsoft Exchange", "Exchange Server"],
+    "version_regex": "Exchange Server [\\w ]+ ([\\d.]+)",
+    "default_port": [25, 465, 587]
+  },
+  {
+    "service": "smtp_sendmail",
+    "patterns": ["Sendmail", "ESMTP Sendmail"],
+    "version_regex": "Sendmail[/ ]+([\\d.]+)",
+    "default_port": [25, 465, 587]
+  },
+  {
+    "service": "ftp_vsftpd",
+    "patterns": ["vsftpd", "\\(vsFTPd\\)"],
+    "version_regex": "vsftpd ([\\d.]+)",
+    "default_port": [21]
+  },
+  {
+    "service": "ftp_proftpd",
+    "patterns": ["ProFTPD", "ProFTPd"],
+    "version_regex": "ProFTPD ([\\d.]+)",
+    "default_port": [21]
+  },
+  {
+    "service": "ftp_filezilla",
+    "patterns": ["FileZilla Server", "FileZilla"],
+    "version_regex": "FileZilla Server[/ ]+([\\d.]+)",
+    "default_port": [21]
+  },
+  {
+    "service": "ftp_pureftpd",
+    "patterns": ["Pure-FTPd", "pure-ftpd"],
+    "version_regex": "Pure-FTPd[/ ]*([\\d.]*)",
+    "default_port": [21]
+  },
+  {
+    "service": "mysql",
+    "patterns": ["mysql_native_password", "^.\\x00\\x00\\x00\\x0a[\\d.]+", "MariaDB", "mysqld"],
+    "version_regex": "([\\d.]+)-?(MariaDB)?",
+    "default_port": [3306]
+  },
+  {
+    "service": "postgresql",
+    "patterns": ["PostgreSQL", "FATAL:.*PostgreSQL", "pg_hba\\.conf"],
+    "version_regex": "PostgreSQL ([\\d.]+)",
+    "default_port": [5432]
+  },
+  {
+    "service": "mariadb",
+    "patterns": ["MariaDB", "5\\.5\\.5-[\\d.]+-MariaDB"],
+    "version_regex": "([\\d.]+)-MariaDB",
+    "default_port": [3306]
+  },
+  {
+    "service": "redis",
+    "patterns": ["-ERR wrong number of arguments", "DENIED Redis", "redis_version:", "^\\$\\d+\\r\\nredis"],
+    "version_regex": "redis_version:([\\d.]+)",
+    "default_port": [6379]
+  },
+  {
+    "service": "mongodb",
+    "patterns": ["MongoDB", "mongod", "It looks like you are trying to access MongoDB", "ismaster"],
+    "version_regex": "db version v([\\d.]+)",
+    "default_port": [27017]
+  },
+  {
+    "service": "mssql",
+    "patterns": ["Microsoft SQL Server", "MSSQL", "TDS Protocol"],
+    "version_regex": "Microsoft SQL Server[\\s]+([\\d.]+)",
+    "default_port": [1433]
+  },
+  {
+    "service": "rdp",
+    "patterns": ["\\x03\\x00\\x00", "MS Terminal Services", "Remote Desktop Protocol", "RDP"],
+    "version_regex": null,
+    "default_port": [3389]
+  },
+  {
+    "service": "vnc",
+    "patterns": ["^RFB \\d", "VNC", "RFB 00[3-9]"],
+    "version_regex": "RFB ([\\d.]+)",
+    "default_port": [5900, 5901, 5902]
+  },
+  {
+    "service": "dns_bind",
+    "patterns": ["BIND", "named", "ISC BIND"],
+    "version_regex": "BIND ([\\d.\\-P]+)",
+    "default_port": [53]
+  },
+  {
+    "service": "imap_dovecot",
+    "patterns": ["Dovecot", "\\* OK.*Dovecot"],
+    "version_regex": "Dovecot[/ ]*([\\d.]+)",
+    "default_port": [143, 993]
+  },
+  {
+    "service": "imap_cyrus",
+    "patterns": ["Cyrus IMAP", "\\* OK.*Cyrus"],
+    "version_regex": "Cyrus IMAP[/ ]+v?([\\d.]+)",
+    "default_port": [143, 993]
+  },
+  {
+    "service": "pop3",
+    "patterns": ["\\+OK POP3", "\\+OK Dovecot", "\\+OK.*POP3", "POP3 server ready"],
+    "version_regex": null,
+    "default_port": [110, 995]
+  },
+  {
+    "service": "elasticsearch",
+    "patterns": ["\"cluster_name\"", "\"tagline\"\\s*:\\s*\"You Know, for Search\"", "elasticsearch"],
+    "version_regex": "\"number\"\\s*:\\s*\"([\\d.]+)\"",
+    "default_port": [9200, 9300]
+  },
+  {
+    "service": "memcached",
+    "patterns": ["STAT pid", "STAT version", "ERROR\\r\\n", "memcached"],
+    "version_regex": "STAT version ([\\d.]+)",
+    "default_port": [11211]
+  },
+  {
+    "service": "rabbitmq",
+    "patterns": ["AMQP", "RabbitMQ", "\\x00\\x00\\x09\\x01"],
+    "version_regex": "RabbitMQ[/ ]+([\\d.]+)",
+    "default_port": [5672, 15672]
+  },
+  {
+    "service": "http_tomcat",
+    "patterns": ["Apache-Coyote", "Apache Tomcat", "Tomcat"],
+    "version_regex": "(?:Apache Tomcat|Tomcat)/([\\d.]+)",
+    "default_port": [8080, 8443, 8009]
+  },
+  {
+    "service": "http_nodejs",
+    "patterns": ["X-Powered-By:\\s*Express", "Server:\\s*Node", "nodejs"],
+    "version_regex": "Node/([\\d.]+)",
+    "default_port": [3000, 8080, 5000]
+  },
+  {
+    "service": "http_python_werkzeug",
+    "patterns": ["Werkzeug", "Server:\\s*Werkzeug", "Python/"],
+    "version_regex": "Werkzeug/([\\d.]+)",
+    "default_port": [5000, 8000, 8080]
+  },
+  {
+    "service": "http_python_gunicorn",
+    "patterns": ["gunicorn", "Server:\\s*gunicorn"],
+    "version_regex": "gunicorn/([\\d.]+)",
+    "default_port": [8000, 8080]
+  },
+  {
+    "service": "http_python_uvicorn",
+    "patterns": ["uvicorn", "Server:\\s*uvicorn"],
+    "version_regex": "uvicorn/([\\d.]+)",
+    "default_port": [8000, 8080]
+  },
+  {
+    "service": "docker_api",
+    "patterns": ["Docker", "Api-Version", "docker/", "Docker-Experimental"],
+    "version_regex": "Api-Version:\\s*([\\d.]+)",
+    "default_port": [2375, 2376]
+  }
+]

@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     QUANTUM_SCORE_AGGREGATION: str = "estate_weakest"
 
     # ── Scanner defaults ─────────────────────────────────────────
-    SCAN_TIMEOUT: int = 120            # seconds per full scan
+    SCAN_TIMEOUT: int = 600            # seconds per full scan
     TOOL_TIMEOUT: int = 30             # max seconds per individual tool binary
     # testssl.sh is heavy; cap per target (parallel scans × many ports add up). Partial JSON on kill is ignored.
     TESTSSL_TIMEOUT: int = 90
@@ -136,6 +136,32 @@ class Settings(BaseSettings):
     REPORT_SCHEDULER_POLL_SECONDS: int = 30
     REPORT_MAX_ATTACHMENT_MB: int = 10
     GENERATED_REPORTS_DIR: str = "generated_reports"
+
+    # ── Custom Scanner Engine ─────────────────────────────────────
+    SCANNER_PORT_PROFILE: str = "standard"
+    SCANNER_MAX_SUBDOMAINS: int = 200
+    SCANNER_DNS_TIMEOUT: float = 3.0
+    SCANNER_TCP_TIMEOUT: float = 2.0
+    SCANNER_BANNER_TIMEOUT: float = 3.0
+    SCANNER_TLS_TIMEOUT: float = 5.0
+    SCANNER_HTTP_TIMEOUT: float = 10.0
+    SCANNER_MAX_CIPHER_PROBES: int = 30
+    SCANNER_ENABLE_CT_LOGS: bool = True
+    SCANNER_ENABLE_WHOIS: bool = True
+    SCANNER_ENABLE_ASN_LOOKUP: bool = True
+    SCANNER_ENABLE_ZONE_TRANSFER: bool = True
+    SCANNER_ENABLE_BRUTE_FORCE: bool = True
+    SCANNER_SCAN_DEPTH: str = "standard"
+    SCANNER_MAX_SCAN_SECONDS: int = 900
+    SCANNER_MAX_TOTAL_REQUESTS: int = 10000
+    SCANNER_GLOBAL_CONCURRENCY: int = 500
+    SCANNER_RESPECT_ROBOTS: bool = True
+    SCANNER_AI_ADAPTIVE: bool = True
+    SCANNER_STAGE_VERBOSE_LOGS: bool = True
+    SCANNER_STAGE_WS_SUMMARY: bool = True
+    SCANNER_STAGE_DB_SUMMARY: bool = True
+    SCANNER_STAGE_PREVIEW_LIMIT: int = 3
+    SCANNER_STAGE_MESSAGE_MAX_LEN: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -111,13 +111,30 @@ export function useScan() {
       }
     } catch (err: unknown) {
       console.error(err);
-      const ax = err as { response?: { data?: { detail?: string } } };
-      setErrorMsg(ax.response?.data?.detail || "Failed to start scan");
+      const ax = err as { response?: { data?: { detail?: string | { message?: string } }; status?: number } };
+      const detail = ax.response?.data?.detail;
+      // detail may be a string or an object {error, message, scan_id, domain}
+      const msg = typeof detail === "string"
+        ? detail
+        : (detail as { message?: string })?.message || "Failed to start scan";
+      setErrorMsg(msg);
       setIsScanning(false);
       setScanId(null);
       clearActiveScan();
     }
   }, []);
+
+  const cancelCurrentScan = useCallback(async () => {
+    if (!scanId) return;
+    try {
+      await scanService.cancelScan(scanId);
+      setIsScanning(false);
+      setErrorMsg("Scan cancelled by user.");
+      clearActiveScan();
+    } catch (err) {
+      console.error("Failed to cancel scan:", err);
+    }
+  }, [scanId]);
 
   const { data: results, error, isError } = useQuery({
     queryKey: ["scanResults", targetDomain, scanId],
@@ -192,5 +209,6 @@ export function useScan() {
     results: results && !(results as { _simulated?: boolean })._simulated ? results : null,
     error: errorMsg,
     startScan,
+    cancelScan: cancelCurrentScan,
   };
 }

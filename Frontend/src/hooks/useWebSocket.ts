@@ -77,7 +77,7 @@ export const useWebSocket = (scanId: string | null) => {
     if (!scanId) return;
 
     const wsUrl = `${getBackendWsOrigin()}/ws/scan/${scanId}`;
-    
+
     setStatus('connecting');
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;

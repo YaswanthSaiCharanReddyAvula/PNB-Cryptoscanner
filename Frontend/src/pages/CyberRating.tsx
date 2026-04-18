@@ -11,6 +11,7 @@ import {
 import { cyberRatingService } from "@/services/api";
 import { toast } from "sonner";
 import { tierRowsForTable } from "@/lib/tierComplianceCriteria";
+import { useDomain } from "@/contexts/DomainContext";
 
 const BRAND = "#2563eb";
 const RED = "#dc2626";
@@ -71,6 +72,7 @@ function formatDateTime(value?: string): string {
 }
 
 export default function CyberRating() {
+  const { selectedDomain } = useDomain();
   const [score1000,     setScore1000]     = useState<number | null>(null);
   const [urlScores,     setUrlScores]     = useState<any[]>([]);
   const [explain,        setExplain]       = useState<any | null>(null);
@@ -106,7 +108,7 @@ export default function CyberRating() {
 
   const fetchScore = useCallback(async () => {
     try {
-      const res = await cyberRatingService.getRating();
+      const res = await cyberRatingService.getRating(selectedDomain ?? undefined);
       const d = res.data;
       // Backend returns score on 0–1000 scale and tier "N/A" when no scan exists.
       if (d?.tier === "N/A" || d == null) {
@@ -129,7 +131,7 @@ export default function CyberRating() {
 
   const fetchRatingHistory = useCallback(async () => {
     try {
-      const res = await cyberRatingService.getRatingHistory({ limit: 200 });
+      const res = await cyberRatingService.getRatingHistory({ limit: 200, domain: selectedDomain ?? undefined });
       const rows = Array.isArray(res.data?.history) ? (res.data.history as RatingHistoryRow[]) : [];
       setHistory(rows);
     } catch {
@@ -157,6 +159,7 @@ export default function CyberRating() {
     setSimBusy(true);
     try {
       const res = await cyberRatingService.simulateQuantumScore({
+        domain: selectedDomain ?? null,
         assume_tls_13_all: simTls,
         assume_pqc_hybrid_kem: simPqc,
       });

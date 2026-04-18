@@ -27,14 +27,15 @@ export function ScanProgressBar({
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isScanning) {
-      interval = setInterval(() => setElapsed(e => e + 1), 1000);
-    } else if (stageIndex === 0) {
-      setElapsed(0);
+    if (!isScanning) {
+      if (stageIndex === 0) setElapsed(0);
+      return;
     }
+    // Reset on every new scan start
+    setElapsed(0);
+    const interval = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(interval);
-  }, [isScanning, stageIndex]);
+  }, [isScanning]);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");

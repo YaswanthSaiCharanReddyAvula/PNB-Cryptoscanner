@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { cbomService, cryptoService, pqcService, reportingService } from "@/services/api";
 import { PQCBadge, determinePQCStatus, hndlRiskFromCrypto, PQCStatus } from "@/components/ui/PQCBadge";
+import { useDomain } from "@/contexts/DomainContext";
 import { CheckCircle } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -123,8 +124,22 @@ function mapCryptoToCbomAsset(r: any) {
 
   const isWeak     = ["RC4","DES","3DES","MD5","NULL","EXPORT","TLS 1.0","TLS 1.1"]
                        .some(p => cipher.includes(p) || tls.includes(p));
-  const pqcStatus  = determinePQCStatus(tls, cipher, klStr);
+
+  // Normalize backend ML pqcStatus to valid PQCStatus enum values.
+  // "partially-safe" / "quantum_safe" etc. → mapped to nearest equivalent.
+  const normalizePqcStatus = (raw: string): PQCStatus => {
+    const s = (raw || "").toLowerCase().replace(/_/g, "-");
+    if (s === "quantum-safe") return "quantum-safe";
+    if (s === "pqc-ready" || s === "partially-safe") return "pqc-ready";
+    if (s === "vulnerable") return "vulnerable";
+    if (s === "hndl-risk") return "hndl-risk";
+    return "unknown";
+  };
+
+  // Use backend result directly — no frontend rule fallback.
+  const pqcStatus: PQCStatus = normalizePqcStatus(r.pqcStatus || "");
   const hndlRisk   = hndlRiskFromCrypto(tls, cipher, klStr);
+
 
   const tlsLc = tls.toLowerCase();
   const cipherLc = cipher.toLowerCase();
@@ -158,13 +173,13 @@ function mapCryptoToCbomAsset(r: any) {
   return {
     assetName:           r.asset || "Unknown",
     url:                 r.asset || "",
-    assetType:           "Server",
+    assetType:           r.asset_type || "Unknown",
     tlsVersion:          tls,
-    keyExchange:         cipher.split("_")[1] || cipher,
+    keyExchange:         r.key_exchange || cipher.split("_")[1] || cipher,
     cipherSuite:         cipher,
     ca:                  r.certificate_authority || "Unknown",
     keyLength:           kl && kl !== "None" ? `${kl}`.includes("-bit") ? kl : `${kl}-bit` : "Unknown",
-    certExpiry:          "—",
+    certExpiry:          r.cert_expiry || "—",
     pqcStatus,
     hndlRisk,
     recommendedMigration: rec,
@@ -179,15 +194,13 @@ function mapCryptoToCbomAsset(r: any) {
 }
 
 export default function CBOM() {
-  const LATEST_DOMAIN = "__latest__";
+  const { selectedDomain } = useDomain();
   const [summary,       setSummary]       = useState<any>(null);
   const [keyLengthData, setKeyLengthData] = useState<any[]>([]);
   const [caData,        setCaData]        = useState<any[]>([]);
   const [protocolData,  setProtocolData]  = useState<any[]>([]);
   const [pqcStats,      setPqcStats]      = useState({ safe: 0, ready: 0, vuln: 0, hndl: 0 });
   const [pqcFilter,     setPqcFilter]     = useState("All");
-  const [domains,       setDomains]       = useState<string[]>([]);
-  const [selectedDomain, setSelectedDomain] = useState<string>(LATEST_DOMAIN);
   const [refreshSeq,    setRefreshSeq]    = useState(0);
 
   // Live data replacing mock arrays
@@ -198,25 +211,7 @@ export default function CBOM() {
 
   useEffect(() => {
     let cancelled = false;
-    reportingService
-      .getDomains()
-      .then((res) => {
-        if (cancelled) return;
-        const rows = Array.isArray(res.data) ? res.data : [];
-        setDomains(rows.map((d: any) => String(d)).filter(Boolean));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setDomains([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const selectedParam = selectedDomain === LATEST_DOMAIN ? undefined : selectedDomain;
+    const selectedParam = selectedDomain ?? undefined;
     setLoading(true);
 
     cbomService
@@ -230,7 +225,7 @@ export default function CBOM() {
         return Promise.all([
           cbomService.getCharts(domain),
           pqcService.getPerAppCbom(domain),
-          cryptoService.getCryptoSecurityData(),
+          cryptoService.getCryptoSecurityData(domain),
         ]).then(([chartsRes, perAppRes, cryptoRes]) => {
           if (cancelled) return;
           const displayDomain = domain ?? "";
@@ -268,8 +263,9 @@ export default function CBOM() {
           setCipherUsage(cu);
 
           const components = Array.isArray(perAppRes.data) ? perAppRes.data : [];
+          console.log("CBOM components data:", perAppRes.data);
           const mapped = components.map((c: any) => ({
-            application:         displayDomain || "—",
+            application:         displayDomain || c.domain || "—",
             keyLength:           c.key_size ? `${c.key_size}-bit` : "N/A",
             cipherSuite:         c.name,
             ca:                  "—",
@@ -280,7 +276,7 @@ export default function CBOM() {
             weak:                c.risk_level === "critical" || c.risk_level === "high",
             pqcStatus:           c.quantum_status,
             assetName:           c.name,
-            url:                 displayDomain || "—",
+            url:                 displayDomain || c.domain || "—",
             assetType:           c.category,
             threatVector:        c.threat_vector ? String(c.threat_vector) : "",
             nistPrimary:         c.nist_primary_recommendation || "",
@@ -516,18 +512,6 @@ export default function CBOM() {
           </div>
         </div>
         <div className="mt-4 flex flex-col sm:mt-0 sm:items-end gap-2">
-          <select
-            className="h-10 min-w-[260px] px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            value={selectedDomain}
-            onChange={(e) => setSelectedDomain(e.target.value)}
-          >
-            <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
-            {domains.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
           <Button
             onClick={() => setRefreshSeq((v) => v + 1)}
             variant="outline"
@@ -779,19 +763,6 @@ export default function CBOM() {
               </div>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <select
-                  className="h-10 min-w-[240px] px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  value={selectedDomain}
-                  onChange={(e) => setSelectedDomain(e.target.value)}
-                  title="Select scanned domain"
-                >
-                  <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
-                  {domains.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-                <select
                   className="h-10 px-3 py-2 bg-secondary border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   value={pqcFilter}
                   onChange={e => setPqcFilter(e.target.value)}
@@ -843,19 +814,6 @@ export default function CBOM() {
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                <select
-                  className="h-9 min-w-[240px] px-3 py-2 bg-secondary border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  value={selectedDomain}
-                  onChange={(e) => setSelectedDomain(e.target.value)}
-                  title="Per-Application CBOM domain"
-                >
-                  <option value={LATEST_DOMAIN}>Latest completed scan (any domain)</option>
-                  {domains.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
                 <Button
                   onClick={() => setRefreshSeq((v) => v + 1)}
                   variant="outline"
