@@ -297,9 +297,15 @@ async def _run_scan_pipeline_gated(scan_id: str, request: ScanRequest) -> None:
 async def _run_custom_scan_pipeline(
     scan_id: str, request: ScanRequest, scan_depth: str = "standard"
 ) -> None:
-    """Execute the new custom scanner engine (zero external binaries)."""
-    from app.scanner.pipeline import PipelineManager, ScanContext
+    """Execute the 15-stage ASPM scanner engine (zero external binaries).
+
+    Track A (runtime/external): Stages 1-12
+    Track B (build/internal):   Stages 13-15 (SAST, SCA, Host Scanner)
+    Track C (unification):      CBOM Unification
+    """
+    from app.scanner.pipeline import DualTrackPipelineManager, ScanContext
     from app.scanner.engines.adaptive import AdaptiveRateController
+    # Track A engines
     from app.scanner.engines.recon import SurfaceReconEngine
     from app.scanner.engines.network import NetworkScanEngine
     from app.scanner.engines.os_fingerprint import OSFingerprintEngine
@@ -312,6 +318,12 @@ async def _run_custom_scan_pipeline(
     from app.scanner.engines.vuln_engine import VulnerabilityEngine
     from app.scanner.engines.correlation import CorrelationRiskEngine
     from app.scanner.engines.reporting import CBOMReportEngine
+    # Track B engines
+    from app.scanner.engines.sast_crypto import SASTCryptoEngine
+    from app.scanner.engines.sca_engine import SCAEngine
+    from app.scanner.engines.host_scanner import HostScannerEngine
+    # Track C engine
+    from app.scanner.engines.cbom_unification import CBOMUnificationEngine
 
     db = get_database()
     collection = db[SCANS_COLLECTION]
@@ -321,7 +333,7 @@ async def _run_custom_scan_pipeline(
         {"$set": {
             "status": ScanStatus.RUNNING.value,
             "started_at": datetime.utcnow(),
-            "current_stage": "Initialising custom engine",
+            "current_stage": "Initialising ASPM engine (15-stage dual-track)",
             "progress": 0,
         }},
     )
@@ -335,6 +347,14 @@ async def _run_custom_scan_pipeline(
         await ws_manager.broadcast(msg, scan_id)
 
     throttle = AdaptiveRateController()
+
+    # Resolve source_code_paths from request or env
+    source_paths = getattr(request, "source_code_paths", None) or []
+    if not source_paths:
+        env_path = getattr(settings, "SCANNER_SOURCE_CODE_PATH", None) or ""
+        if env_path:
+            source_paths = [env_path]
+
     ctx = ScanContext(
         scan_id=scan_id,
         domain=request.domain.strip().lower(),
@@ -343,13 +363,17 @@ async def _run_custom_scan_pipeline(
             "max_subdomains": request.max_subdomains,
             "port_profile": settings.SCANNER_PORT_PROFILE,
             "ai_adaptive": settings.SCANNER_AI_ADAPTIVE,
+            # Track B options
+            "source_code_paths": source_paths,
+            "host_scan_paths": source_paths,
         },
         throttle=throttle,
         broadcast=_broadcast,
         db=db,
     )
 
-    stages = [
+    # ── Track A: Runtime / External (existing 12 stages) ──
+    track_a_stages = [
         SurfaceReconEngine(),
         NetworkScanEngine(),
         OSFingerprintEngine(),
@@ -364,7 +388,23 @@ async def _run_custom_scan_pipeline(
         CBOMReportEngine(),
     ]
 
-    pipeline = PipelineManager(stages=stages)
+    # ── Track B: Build / Internal (3 new stages) ──
+    track_b_stages = [
+        SASTCryptoEngine(),
+        SCAEngine(),
+        HostScannerEngine(),
+    ]
+
+    # ── Track C: Unification (CBOM brain) ──
+    track_c_stages = [
+        CBOMUnificationEngine(),
+    ]
+
+    pipeline = DualTrackPipelineManager(
+        track_a_stages=track_a_stages,
+        track_b_stages=track_b_stages,
+        track_c_stages=track_c_stages,
+    )
 
     try:
         result = await pipeline.run(ctx)
@@ -405,11 +445,16 @@ async def _run_custom_scan_pipeline(
                 for host in normalized_hosts
             ]
 
-        # ── Core scan data ──
+        # ── Core scan data (ensure correct nesting for CBOM compliance view) ──
         if ctx.tls_profiles:
-            update["tls_results"] = [t if isinstance(t, dict) else t for t in ctx.tls_profiles]
+            update["tls_profiles"] = [t if isinstance(t, dict) else t for t in ctx.tls_profiles]
+        if ctx.cbom:
+            update["cbom"] = ctx.cbom if isinstance(ctx.cbom, dict) else ctx.cbom
+            update["cbom_report"] = update["cbom"]  # Dashboard endpoints expect 'cbom_report'
+        if ctx.asset_intelligence:
+            update["asset_intelligence"] = ctx.asset_intelligence
         if ctx.crypto_findings:
-            update["cbom"] = [f if isinstance(f, dict) else f for f in ctx.crypto_findings]
+            update["crypto_findings"] = [f if isinstance(f, dict) else f for f in ctx.crypto_findings]
         if ctx.dns_records:
             update["dns_records"] = [r if isinstance(r, dict) else r for r in ctx.dns_records]
 
@@ -442,8 +487,23 @@ async def _run_custom_scan_pipeline(
             update["estate_tier"] = ctx.estate_tier
         if ctx.executive_summary:
             update["executive_summary"] = ctx.executive_summary
+        if ctx.quantum_score:
+            update["quantum_score"] = ctx.quantum_score if isinstance(ctx.quantum_score, dict) else ctx.quantum_score
 
-        # ── Quantum Risk Scoring via quantum_risk_engine + ML Ensemble ──
+        # ── Track B: SAST / SCA / Host Scanner findings ──
+        if ctx.sast_findings:
+            update["sast_findings"] = ctx.sast_findings
+        if ctx.sca_findings:
+            update["sca_findings"] = ctx.sca_findings
+        if ctx.host_config_findings:
+            update["host_config_findings"] = ctx.host_config_findings
+        if ctx.internal_certificates:
+            update["internal_certificates"] = ctx.internal_certificates
+
+        # ── Track C: Unified CBOM Report (CERT-IN / PNB Annexure-A) ──
+        if ctx.unified_cbom_report:
+            update["unified_cbom_report"] = ctx.unified_cbom_report
+
         # Convert crypto_findings dicts → CryptoComponent objects for the engine
         _COMPONENT_TO_CATEGORY = {
             "cipher_kex": AlgorithmCategory.KEY_EXCHANGE,
@@ -635,13 +695,50 @@ async def _run_custom_scan_pipeline(
                 },
             }, scan_id)
 
+        # ── Track C: Unified CBOM Report card ──
+        unified_cbom = ctx.unified_cbom_report or {}
+        if unified_cbom:
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "unified_cbom",
+                "payload": {
+                    "domain": ctx.domain,
+                    "compliance_standard": (unified_cbom.get("CBOM_Metadata") or {}).get("compliance_standard", ""),
+                    "total_algorithms": len(unified_cbom.get("Algorithms") or []),
+                    "total_certificates": len(unified_cbom.get("Certificates") or []),
+                    "total_keys": len(unified_cbom.get("Keys") or []),
+                    "total_protocols": len(unified_cbom.get("Protocols") or []),
+                },
+            }, scan_id)
+
+        # ── Track B summary card ──
+        if ctx.sast_findings or ctx.sca_findings or ctx.internal_certificates:
+            await ws_manager.broadcast({
+                "type": "result",
+                "result_type": "track_b_summary",
+                "payload": {
+                    "sast_findings_count": len(ctx.sast_findings or []),
+                    "sca_findings_count": len(ctx.sca_findings or []),
+                    "host_config_findings_count": len(ctx.host_config_findings or []),
+                    "internal_certificates_count": len(ctx.internal_certificates or []),
+                    "hardcoded_secrets": sum(
+                        1 for f in (ctx.sast_findings or [])
+                        if isinstance(f, dict) and f.get("finding_type") == "hardcoded_secret"
+                    ),
+                    "vulnerable_deps": sum(
+                        1 for f in (ctx.sca_findings or [])
+                        if isinstance(f, dict) and f.get("is_vulnerable")
+                    ),
+                },
+            }, scan_id)
+
         await ws_manager.broadcast({
             "type": "status",
             "status": "completed",
-            "message": "Custom engine scan completed.",
+            "message": "15-stage ASPM scan completed.",
         }, scan_id)
 
-        logger.info("[%s] Custom engine scan completed.", scan_id)
+        logger.info("[%s] 15-stage ASPM scan completed.", scan_id)
 
     except Exception as exc:
         logger.exception("[%s] Custom engine pipeline failed: %s", scan_id, exc)
@@ -1124,6 +1221,15 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 # ════════════════════════════════════════════════════════════════════
 # Scanner endpoints (original)
 # ════════════════════════════════════════════════════════════════════
+
+@router.get("/fix-stale")
+async def fix_stale_scans():
+    db = get_database()
+    r = await db[SCANS_COLLECTION].update_many(
+        {"status": {"$in": ["running", "pending"]}},
+        {"$set": {"status": "failed", "error": "Cleared stale scan for rescan"}}
+    )
+    return {"cleared": r.modified_count}
 
 @router.post(
     "/scan",
@@ -1807,27 +1913,309 @@ async def get_cbom_per_app(domain: str = None):
     all_components = []
     seen = set()
     for doc in scans:
-        cbom_report = doc.get("cbom_report") or {}
-        components = cbom_report.get("components")
-        
-        # Fallback to raw cbom array if report was not generated
-        if not components:
-            components = doc.get("cbom", [])
-        for c in components:
-            c_dict = dict(c)
-            domain_val = doc.get("domain", "")
+        try:
+            cbom_report = doc.get("cbom_report") or {}
+            components = cbom_report.get("components")
             
-            # Deduplicate
-            sig = (domain_val, c_dict.get("name"), c_dict.get("category"), c_dict.get("key_size"))
-            if sig in seen:
-                continue
-            seen.add(sig)
-            
-            enriched = enrich_cbom_component_dict(c_dict)
-            enriched["domain"] = domain_val
-            all_components.append(enriched)
+            # Fallback to raw cbom array if report was not generated
+            if not components:
+                components = doc.get("cbom", [])
+            for c in components:
+                try:
+                    c_dict = dict(c)
+                except (TypeError, ValueError):
+                    continue
+                domain_val = doc.get("domain", "")
+                
+                # Deduplicate
+                sig = (domain_val, c_dict.get("name"), c_dict.get("category"), c_dict.get("key_size"))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                
+                enriched = enrich_cbom_component_dict(c_dict)
+                enriched["domain"] = domain_val
+                all_components.append(enriched)
+        except Exception as exc:
+            logger.warning("Skipping malformed CBOM doc %s: %s", doc.get("scan_id"), exc)
         
     return all_components
+
+
+@router.get("/cbom/compliance-view", summary="Get CBOM compliance view — 4 asset type tables", tags=["CBOM"])
+async def get_cbom_compliance_view(domain: str = None):
+    """
+    Returns CBOM data structured into 4 strict asset categories:
+    Certificates, Protocols, Keys, Algorithms — matching CERT-IN Annexure-A format.
+    """
+    db = get_database()
+    query: Dict[str, Any] = {"status": "completed"}
+    if domain:
+        query["domain"] = domain
+
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        return {"certificates": [], "protocols": [], "keys": [], "algorithms": []}
+
+    scan_domain = doc.get("domain", "")
+
+    # ── Source 1: TLS results (rich cert + negotiated TLS data) ──
+    tls_results = doc.get("tls_results") or []
+
+    # ── Source 2: CBOM report components (algorithm/cipher detail) ──
+    cbom_report = doc.get("cbom") or doc.get("cbom_report") or {}
+    cbom_components = cbom_report.get("components") or []
+
+    # ── Source 3: Custom engine TLS profiles (cipher detail with new fields) ──
+    custom_assets = doc.get("asset_intelligence") or []
+    tls_profiles_raw: list = []
+    for asset in custom_assets:
+        if isinstance(asset, dict):
+            tls_profiles_raw.extend(asset.get("tls_profiles") or [])
+
+    certificates: list = []
+    protocols: list = []
+    keys: list = []
+    algorithms: list = []
+
+    seen_certs: set = set()
+    seen_protocols: set = set()
+    seen_keys: set = set()
+    seen_algos: set = set()
+
+    # ── Extract from TLS results (V1) and TLS Profiles (V2) ──
+    all_tls = doc.get("tls_results", []) + doc.get("tls_profiles", [])
+    for t in all_tls:
+        host = t.get("host") or scan_domain
+        
+        # Normalize V1 ('certificate') vs V2 ('leaf_cert')
+        cert = t.get("certificate") or t.get("leaf_cert") or {}
+
+        # Certificate
+        subject = cert.get("subject") or host
+        sig = f"{host}|{subject}"
+        if cert and sig not in seen_certs:
+            seen_certs.add(sig)
+            
+            # Normalize field names
+            issuer = cert.get("issuer") or "Unknown"
+            not_before = cert.get("not_before") or cert.get("valid_from") or "—"
+            not_after = cert.get("not_after") or cert.get("valid_to") or "—"
+            sig_alg = cert.get("signature_algorithm") or cert.get("sig_algorithm") or "—"
+            
+            pk_alg = cert.get("public_key_algorithm") or cert.get("key_type") or ""
+            pk_size = cert.get("public_key_size") or cert.get("key_size") or ""
+            pk_ref = pk_alg
+            if pk_size:
+                pk_ref = f"{pk_alg} ({pk_size})"
+                
+            certificates.append({
+                "name": subject,
+                "asset_type": "certificate",
+                "subject_name": subject,
+                "issuer_name": issuer,
+                "not_valid_before": not_before,
+                "not_valid_after": not_after,
+                "sig_algorithm_ref": sig_alg,
+                "subject_public_key_ref": pk_ref,
+                "certificate_format": "X.509",
+                "certificate_extension": ".crt",
+            })
+
+        # Protocol
+        tls_ver = t.get("tls_version") or ""
+        if tls_ver:
+            proto_key = f"{host}|{tls_ver}"
+            if proto_key not in seen_protocols:
+                seen_protocols.add(proto_key)
+                protocols.append({
+                    "name": tls_ver,
+                    "asset_type": "protocol",
+                    "version": tls_ver,
+                    "cipher_suites": t.get("cipher_suite") or "—",
+                    "oid": "—",
+                })
+
+        # Key (derived from certificate public key)
+        if cert:
+            pk_alg = cert.get("public_key_algorithm") or "Unknown"
+            pk_size = cert.get("public_key_size")
+            key_sig = f"{host}|{pk_alg}|{pk_size}"
+            if key_sig not in seen_keys:
+                seen_keys.add(key_sig)
+                days = cert.get("days_until_expiry")
+                state = "Expired" if (days is not None and days < 0) else "Active"
+                keys.append({
+                    "name": f"{pk_alg}-{pk_size}" if pk_size else pk_alg,
+                    "asset_type": "key",
+                    "id": "—",
+                    "state": state,
+                    "size": f"{pk_size}-bit" if pk_size else "—",
+                    "creation_date": cert.get("not_before") or "—",
+                    "activation_date": cert.get("not_before") or "—",
+                })
+
+    # ── Enrich from CBOM report components (custom engine data) ──
+    for comp in cbom_components:
+        asset_type = comp.get("asset_type") or ""
+        host_val = comp.get("host") or scan_domain
+        elements = comp.get("elements") or {}
+
+        if asset_type == "certificate":
+            subject = elements.get("subject") or comp.get("name") or host_val
+            sig = f"{host_val}|{subject}"
+            if sig not in seen_certs:
+                seen_certs.add(sig)
+                certificates.append({
+                    "name": subject,
+                    "asset_type": "certificate",
+                    "subject_name": elements.get("subject") or subject,
+                    "issuer_name": elements.get("issuer") or "Unknown",
+                    "not_valid_before": elements.get("not_valid_before") or "—",
+                    "not_valid_after": elements.get("not_valid_after") or "—",
+                    "sig_algorithm_ref": elements.get("signature_algorithm") or "—",
+                    "subject_public_key_ref": elements.get("subject_public_key_ref") or elements.get("public_key") or "—",
+                    "certificate_format": elements.get("certificate_format") or "X.509",
+                    "certificate_extension": elements.get("certificate_extension") or ".crt",
+                })
+            # Key from certificate
+            key_type = elements.get("key_type")
+            key_size = elements.get("key_size")
+            key_id_val = elements.get("key_id") or "—"
+            key_sig = f"{host_val}|{key_type}|{key_size}"
+            if key_type and key_sig not in seen_keys:
+                seen_keys.add(key_sig)
+                nvb = elements.get("not_valid_before") or "—"
+                nva = elements.get("not_valid_after") or "—"
+                state = "Expired" if comp.get("risk_level") == "critical" and "expir" in str(comp.get("name") or "").lower() else "Active"
+                keys.append({
+                    "name": f"{key_type}-{key_size}" if key_size else (key_type or "—"),
+                    "asset_type": "key",
+                    "id": key_id_val,
+                    "state": state,
+                    "size": f"{key_size}-bit" if key_size else "—",
+                    "creation_date": nvb,
+                    "activation_date": nvb,
+                })
+
+        elif asset_type == "protocol":
+            proto_key = f"{host_val}|{comp.get('name')}"
+            if proto_key not in seen_protocols:
+                seen_protocols.add(proto_key)
+                protocols.append({
+                    "name": comp.get("name") or "—",
+                    "asset_type": "protocol",
+                    "version": comp.get("name") or "—",
+                    "cipher_suites": "—",
+                    "oid": "—",
+                })
+
+        elif asset_type == "algorithm":
+            algo_key = f"{host_val}|{comp.get('name')}"
+            if algo_key not in seen_algos:
+                seen_algos.add(algo_key)
+                algorithms.append({
+                    "name": comp.get("name") or "—",
+                    "asset_type": "algorithm",
+                    "primitive": comp.get("primitive") or "—",
+                    "mode": comp.get("mode") or "—",
+                    "crypto_functions": comp.get("crypto_functions") or "—",
+                    "classical_security_level": f"{comp.get('classical_security_level')}-bit" if comp.get("classical_security_level") else "—",
+                    "oid": comp.get("oid") or "—",
+                    "cipher_name": comp.get("cipher_name") or "—",
+                    "risk_level": comp.get("risk_level") or "low",
+                    "quantum_status": comp.get("quantum_status") or "vulnerable",
+                    "recommendation": comp.get("nist_primary_recommendation") or "—",
+                })
+
+    # ── Enrich from custom-engine TLS profiles (deepest detail) ──
+    for profile in tls_profiles_raw:
+        if not isinstance(profile, dict):
+            continue
+        host_val = profile.get("host") or scan_domain
+
+        # Protocols from supported versions
+        for ver, supported in (profile.get("tls_versions_supported") or {}).items():
+            if not supported:
+                continue
+            clean_name = ver.replace("_", ".")
+            proto_key = f"{host_val}|{clean_name}"
+            if proto_key not in seen_protocols:
+                seen_protocols.add(proto_key)
+                neg = profile.get("negotiated_cipher") or "—"
+                protocols.append({
+                    "name": clean_name,
+                    "asset_type": "protocol",
+                    "version": clean_name,
+                    "cipher_suites": neg,
+                    "oid": "—",
+                })
+
+        # Algorithms from accepted ciphers
+        for cipher in (profile.get("accepted_ciphers") or []):
+            c = cipher if isinstance(cipher, dict) else {}
+            c_name = c.get("name") or c.get("kex") or "—"
+            algo_key = f"{host_val}|{c_name}"
+            if algo_key not in seen_algos:
+                seen_algos.add(algo_key)
+                algorithms.append({
+                    "name": c_name,
+                    "asset_type": "algorithm",
+                    "primitive": c.get("primitive") or "—",
+                    "mode": c.get("mode") or "—",
+                    "crypto_functions": c.get("crypto_functions") or "—",
+                    "classical_security_level": f"{c.get('classical_security_level')}-bit" if c.get("classical_security_level") else "—",
+                    "oid": c.get("oid") or "—",
+                    "cipher_name": c.get("name") or "—",
+                    "risk_level": "medium",
+                    "quantum_status": "vulnerable",
+                    "recommendation": "Upgrade to PQC-ready algorithm",
+                })
+
+        # Certificate + Key from leaf_cert
+        leaf = profile.get("leaf_cert") or {}
+        if leaf:
+            subject = leaf.get("subject") or host_val
+            sig = f"{host_val}|{subject}"
+            if sig not in seen_certs:
+                seen_certs.add(sig)
+                certificates.append({
+                    "name": subject,
+                    "asset_type": "certificate",
+                    "subject_name": subject,
+                    "issuer_name": leaf.get("issuer") or "Unknown",
+                    "not_valid_before": leaf.get("valid_from") or "—",
+                    "not_valid_after": leaf.get("valid_to") or "—",
+                    "sig_algorithm_ref": leaf.get("sig_algorithm") or "—",
+                    "subject_public_key_ref": leaf.get("subject_public_key_ref") or f"{leaf.get('key_type') or ''}-{leaf.get('key_size') or ''}",
+                    "certificate_format": leaf.get("certificate_format") or "X.509",
+                    "certificate_extension": leaf.get("certificate_extension") or ".crt",
+                })
+            key_type = leaf.get("key_type")
+            key_size = leaf.get("key_size")
+            key_sig = f"{host_val}|{key_type}|{key_size}"
+            if key_type and key_sig not in seen_keys:
+                seen_keys.add(key_sig)
+                days = leaf.get("days_until_expiry")
+                state = "Expired" if (days is not None and days < 0) else "Active"
+                keys.append({
+                    "name": f"{key_type}-{key_size}" if key_size else key_type,
+                    "asset_type": "key",
+                    "id": leaf.get("key_id") or "—",
+                    "state": state,
+                    "size": f"{key_size}-bit" if key_size else "—",
+                    "creation_date": leaf.get("valid_from") or "—",
+                    "activation_date": leaf.get("valid_from") or "—",
+                })
+
+    return {
+        "domain": scan_domain,
+        "certificates": certificates,
+        "protocols": protocols,
+        "keys": keys,
+        "algorithms": algorithms,
+    }
+
 
 def _normalize_negotiated_tls_label(raw: str | None) -> str:
     """Bucket negotiated tls_version for distribution (one count per TLS endpoint row)."""
@@ -1864,7 +2252,7 @@ def _encryption_protocol_sort_key(name: str) -> tuple:
 @router.get("/cbom/charts", summary="Get CBOM chart data", tags=["CBOM"])
 async def get_cbom_charts(domain: str = None):
     db = get_database()
-    
+
     if domain:
         query = {"domain": domain, "status": "completed"}
         doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
@@ -1878,42 +2266,114 @@ async def get_cbom_charts(domain: str = None):
     cas: dict = {}
     cipher_usage: dict = {}
 
-    for scan in scans:
-        # Use cbom_report components for better granularity if available
-        cr = scan.get("cbom_report") or {}
-        all_components = cr.get("components", []) or []
-        if not all_components:
-            # Fallback to tls_results if cbom_report missing
-            all_components = []
-            for t in scan.get("tls_results", []):
-                all_components.append({
-                    "name": t.get("cipher_suite", "Unknown"),
-                    "category": "cipher",
-                    "key_size": t.get("cipher_bits") or t.get("key_length"),
-                    "details": t.get("tls_version", "TLS 1.2")
-                })
+    WEAK_MARKERS = ("MD5", "RC4", "DES", "NULL", "EXPORT", "anon")
 
-        for c in all_components:
-            category = c.get("category", "")
-            name = c.get("name", "Unknown")
-            
-            if category == "protocol":
-                tls_versions[name] = tls_versions.get(name, 0) + 1
-            elif category == "cipher":
-                cipher_usage[name] = cipher_usage.get(name, 0) + 1
-                ks = str(c.get("key_size") or "2048")
-                key_lengths[ks] = key_lengths.get(ks, 0) + 1
-        
-        # CAs from tls_results — normalize issuer DN to real-world CA names for charts
-        for t in scan.get("tls_results", []):
+    for scan in scans:
+        # ── Source 1: V2 engine tls_profiles (richest data) ──────────────────
+        for profile in (scan.get("tls_profiles") or []):
+            if not isinstance(profile, dict):
+                continue
+
+            host = profile.get("host", "")
+
+            # Negotiated TLS version
+            neg_cipher = profile.get("negotiated_cipher")
+            versions_map = profile.get("tls_versions_supported") or {}
+
+            # Determine the negotiated TLS version label from the versions map
+            # Prefer highest supported: 1.3 > 1.2 > 1.1 > 1.0
+            bucket = None
+            for vk in ("TLSv1_3", "TLSv1_2", "TLSv1_1", "TLSv1"):
+                if versions_map.get(vk):
+                    bucket = _normalize_negotiated_tls_label(vk.replace("_", "."))
+                    break
+            if bucket:
+                negotiated_tls[bucket] = negotiated_tls.get(bucket, 0) + 1
+
+            # Cipher suites
+            for cipher in (profile.get("accepted_ciphers") or []):
+                if not isinstance(cipher, dict):
+                    continue
+                cname = cipher.get("name") or cipher.get("kex") or ""
+                if not cname:
+                    continue
+                is_weak = any(m in cname for m in WEAK_MARKERS)
+                cipher_usage[cname] = {"count": cipher_usage.get(cname, {}).get("count", 0) + 1, "weak": is_weak}
+
+                # Key length from cipher bits
+                bits = cipher.get("bits") or cipher.get("classical_security_level")
+                if bits:
+                    ks = str(bits)
+                    key_lengths[ks] = key_lengths.get(ks, 0) + 1
+
+            # Leaf cert → CA + key length
+            leaf = profile.get("leaf_cert") or {}
+            if leaf:
+                raw_iss = leaf.get("issuer") or ""
+                ca = normalize_ca_display_name(raw_iss)
+                cas[ca] = cas.get(ca, 0) + 1
+
+                key_size = leaf.get("key_size")
+                if key_size:
+                    ks = str(key_size)
+                    key_lengths[ks] = key_lengths.get(ks, 0) + 1
+
+        # ── Source 2: V1 engine tls_results ──────────────────────────────────
+        for t in (scan.get("tls_results") or []):
+            if not isinstance(t, dict):
+                continue
             raw_iss = extract_issuer_raw_from_tls_row(t)
             ca = normalize_ca_display_name(raw_iss)
             cas[ca] = cas.get(ca, 0) + 1
-            # Negotiated protocol per endpoint — avoids "one count per supported proto" flat bars
+
             if not t.get("error"):
                 bucket = _normalize_negotiated_tls_label(t.get("tls_version"))
                 negotiated_tls[bucket] = negotiated_tls.get(bucket, 0) + 1
 
+            cs = t.get("cipher_suite")
+            if cs:
+                is_weak = any(m in str(cs) for m in WEAK_MARKERS)
+                entry = cipher_usage.get(cs, {"count": 0, "weak": is_weak})
+                entry["count"] += 1
+                cipher_usage[cs] = entry
+
+            cb = t.get("cipher_bits") or t.get("key_length")
+            if cb:
+                ks = str(cb)
+                key_lengths[ks] = key_lengths.get(ks, 0) + 1
+
+        # ── Source 3: cbom_report components ─────────────────────────────────
+        cr = scan.get("cbom_report") or {}
+        for c in (cr.get("components") or []):
+            if not isinstance(c, dict):
+                continue
+            category = c.get("category", "")
+            cname = c.get("name", "Unknown")
+            if category == "protocol":
+                tls_versions[cname] = tls_versions.get(cname, 0) + 1
+            elif category == "cipher":
+                entry = cipher_usage.get(cname, {"count": 0, "weak": False})
+                entry["count"] += 1
+                cipher_usage[cname] = entry
+                ks = str(c.get("key_size") or "2048")
+                key_lengths[ks] = key_lengths.get(ks, 0) + 1
+
+        # ── Source 4: crypto_findings (fallback) ──────────────────────────────
+        for f in (scan.get("crypto_findings") or []):
+            if not isinstance(f, dict):
+                continue
+            comp = f.get("component", "")
+            algo = f.get("algorithm", "")
+            if comp == "protocol" and algo:
+                bucket = _normalize_negotiated_tls_label(algo)
+                negotiated_tls[bucket] = negotiated_tls.get(bucket, 0) + 1
+            elif comp in ("cipher_enc", "cipher_kex") and algo:
+                is_weak = any(m in algo for m in WEAK_MARKERS)
+                entry = cipher_usage.get(algo, {"count": 0, "weak": is_weak})
+                entry["count"] += 1
+                cipher_usage[algo] = entry
+
+    # ── Build sorted output ───────────────────────────────────────────────────
     if negotiated_tls:
         enc_rows = sorted(
             [{"name": k, "value": v} for k, v in negotiated_tls.items()],
@@ -1930,19 +2390,29 @@ async def get_cbom_charts(domain: str = None):
         key=lambda r: (-int(r["value"]), str(r["name"]).lower()),
     )
 
+    # Normalize key_lengths — sort by numeric bit size
+    kl_rows = sorted(
+        [{"name": k, "count": v} for k, v in key_lengths.items()],
+        key=lambda r: int(r["name"]) if str(r["name"]).isdigit() else 0,
+    )
+
+    # Normalize cipher_usage — dict values may be int (old) or dict (new)
+    cu_rows = []
+    for k, v in cipher_usage.items():
+        if isinstance(v, dict):
+            cu_rows.append({"name": k, "count": v.get("count", 1), "weak": v.get("weak", False)})
+        else:
+            is_weak = any(m in str(k) for m in WEAK_MARKERS)
+            cu_rows.append({"name": k, "count": int(v), "weak": is_weak})
+    cu_rows.sort(key=lambda r: -r["count"])
+
     return {
-        "key_length_distribution": [{"name": k, "count": v} for k, v in key_lengths.items()],
+        "key_length_distribution": kl_rows,
         "top_certificate_authorities": ca_chart,
         "encryption_protocols": enc_rows,
-        "cipher_usage": [
-            {
-                "name": k,
-                "value": v,
-                "weak": ("MD5" in str(k) or "RC4" in str(k) or "DES" in str(k) or "TLSv1.0" in str(k)),
-            }
-            for k, v in cipher_usage.items()
-        ],
+        "cipher_usage": cu_rows,
     }
+
 
 
 @router.get("/cbom/{domain}", summary="Get Cryptographic Bill of Materials")
@@ -2530,73 +3000,80 @@ async def get_crypto_security(domain: Optional[str] = None):
     results_dict = {}
     
     for scan in scans:
-        cbom_report = scan.get("cbom_report") or {}
-        components = cbom_report.get("components") or scan.get("cbom", [])
-        ml_pqc_map = {}
-        for c in components:
-            if c.get("category") == "cipher" and c.get("name"):
-                ml_pqc_map[c.get("name")] = c.get("quantum_status", "").replace("_", "-")
-                
-        host_services: dict[str, list[dict]] = {}
-        for svc in (scan.get("services") or []):
-            h = (svc.get("host") or "").lower()
-            if h:
-                host_services.setdefault(h, []).append(svc)
-        
-        for t in scan.get("tls_results", []):
-            host = (t.get("host") or scan.get("domain", "")).lower()
-            port = t.get("port", 443)
-            key = f"{host}:{port}"
+        try:
+            cbom_report = scan.get("cbom_report") or {}
+            components = cbom_report.get("components") or scan.get("cbom", [])
+            ml_pqc_map = {}
+            for c in components:
+                if c.get("category") == "cipher" and c.get("name"):
+                    ml_pqc_map[c.get("name")] = c.get("quantum_status", "").replace("_", "-")
+                    
+            host_services: dict[str, list[dict]] = {}
+            for svc in (scan.get("services") or []):
+                h = (svc.get("host") or "").lower()
+                if h:
+                    host_services.setdefault(h, []).append(svc)
             
-            asset_slug = classify_asset_service(services=host_services.get(host))
-            raw_iss = extract_issuer_raw_from_tls_row(t)
-            cert = t.get("certificate") or {}
-            
-            # Extract fields
-            tls_version = t.get("tls_version", "")
-            cipher_suite = t.get("cipher_suite", "")
-            key_length_val = str(t.get('cipher_bits') or "")
-            key_exchange = t.get("key_exchange", "")
-            if key_exchange == "UNKNOWN":
-                if cipher_suite.startswith("TLS_AES") or cipher_suite.startswith("TLS_CHACHA20"):
-                    key_exchange = "TLSv1.3 Default"
-                else:
-                    key_exchange = "Unknown"
-            elif not key_exchange:
-                key_exchange = "Unknown"
-            ca_val = normalize_ca_display_name(raw_iss)
-            cert_expiry_val = cert.get("days_until_expiry")
-            
-            if key not in results_dict:
-                results_dict[key] = {
-                    "asset": t.get("host", scan.get("domain", "")),
-                    "port": port,
-                    "key_length": key_length_val,
-                    "cipher_suite": cipher_suite,
-                    "tls_version": tls_version,
-                    "key_exchange": key_exchange,
-                    "certificate_authority": ca_val,
-                    "cert_expiry": f"{cert_expiry_val} days" if cert_expiry_val is not None else "—",
-                    "pqcStatus": ml_pqc_map.get(cipher_suite, ""),
-                    "asset_type": asset_type_label(asset_slug),
-                }
-            else:
-                # Merge missing fields from older scans if current is incomplete
-                existing = results_dict[key]
-                if not existing["pqcStatus"] and ml_pqc_map.get(cipher_suite):
-                    existing["pqcStatus"] = ml_pqc_map.get(cipher_suite)
-                if not existing["tls_version"] and tls_version:
-                    existing["tls_version"] = tls_version
-                if not existing["cipher_suite"] and cipher_suite:
-                    existing["cipher_suite"] = cipher_suite
-                if not existing["key_length"] and key_length_val:
-                    existing["key_length"] = key_length_val
-                if not existing["key_exchange"] and key_exchange:
-                    existing["key_exchange"] = key_exchange
-                if existing["certificate_authority"] == "Unknown" and ca_val != "Unknown":
-                    existing["certificate_authority"] = ca_val
-                if existing["cert_expiry"] == "—" and cert_expiry_val is not None:
-                    existing["cert_expiry"] = f"{cert_expiry_val} days"
+            for t in scan.get("tls_results", []):
+                try:
+                    host = (t.get("host") or scan.get("domain", "")).lower()
+                    port = t.get("port", 443)
+                    key = f"{host}:{port}"
+                    
+                    asset_slug = classify_asset_service(services=host_services.get(host))
+                    raw_iss = extract_issuer_raw_from_tls_row(t)
+                    cert = t.get("certificate") or t.get("leaf_cert") or {}
+                    
+                    # Extract fields
+                    tls_version = t.get("tls_version") or "TLS 1.3" if t.get("tls_versions_supported", {}).get("TLSv1_3") else ""
+                    cipher_suite = t.get("cipher_suite") or t.get("negotiated_cipher") or ""
+                    key_length_val = str(t.get('cipher_bits') or cert.get('key_size') or "")
+                    
+                    # Estimate key exchange if not present explicitly
+                    key_exchange = t.get("key_exchange", "")
+                    if key_exchange == "UNKNOWN" or not key_exchange:
+                        if cipher_suite.startswith("TLS_AES") or cipher_suite.startswith("TLS_CHACHA20"):
+                            key_exchange = "TLSv1.3 Default"
+                        else:
+                            key_exchange = "Unknown"
+                            
+                    ca_val = normalize_ca_display_name(raw_iss)
+                    cert_expiry_val = cert.get("days_until_expiry")
+                    
+                    if key not in results_dict:
+                        results_dict[key] = {
+                            "asset": t.get("host", scan.get("domain", "")),
+                            "port": port,
+                            "key_length": key_length_val,
+                            "cipher_suite": cipher_suite,
+                            "tls_version": tls_version,
+                            "key_exchange": key_exchange,
+                            "certificate_authority": ca_val,
+                            "cert_expiry": f"{cert_expiry_val} days" if cert_expiry_val is not None else "—",
+                            "pqcStatus": ml_pqc_map.get(cipher_suite, ""),
+                            "asset_type": asset_type_label(asset_slug),
+                        }
+                    else:
+                        # Merge missing fields from older scans if current is incomplete
+                        existing = results_dict[key]
+                        if not existing["pqcStatus"] and ml_pqc_map.get(cipher_suite):
+                            existing["pqcStatus"] = ml_pqc_map.get(cipher_suite)
+                        if not existing["tls_version"] and tls_version:
+                            existing["tls_version"] = tls_version
+                        if not existing["cipher_suite"] and cipher_suite:
+                            existing["cipher_suite"] = cipher_suite
+                        if not existing["key_length"] and key_length_val:
+                            existing["key_length"] = key_length_val
+                        if not existing["key_exchange"] and key_exchange:
+                            existing["key_exchange"] = key_exchange
+                        if existing["certificate_authority"] == "Unknown" and ca_val != "Unknown":
+                            existing["certificate_authority"] = ca_val
+                        if existing["cert_expiry"] == "—" and cert_expiry_val is not None:
+                            existing["cert_expiry"] = f"{cert_expiry_val} days"
+                except Exception as tls_exc:
+                    logger.warning("Skipping malformed TLS row in scan %s: %s", scan.get("scan_id"), tls_exc)
+        except Exception as scan_exc:
+            logger.warning("Skipping malformed scan doc %s: %s", scan.get("scan_id"), scan_exc)
 
     return list(results_dict.values())
 

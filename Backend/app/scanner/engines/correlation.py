@@ -49,7 +49,7 @@ class CorrelationRiskEngine(ScanStage):
     max_retries = 0
     criticality = StageCriticality.IMPORTANT
     required_fields = ["subdomains"]
-    writes_fields = ["graph", "risk_scores", "all_findings"]
+    writes_fields = ["graph", "risk_scores", "all_findings", "asset_intelligence"]
     merge_strategy = MergeStrategy.OVERWRITE
 
     async def execute(self, ctx: ScanContext) -> StageResult:
@@ -302,7 +302,7 @@ class CorrelationRiskEngine(ScanStage):
             intel.append(AssetIntelligence(
                 hostname=host,
                 ip_addresses=ips,
-                open_ports=[s.get("port") for s in svcs if isinstance(s, dict) and s.get("state") == "open"],
+                open_ports=[{"port": s.get("port"), "state": "open", "protocol": s.get("protocol", "tcp")} for s in svcs if isinstance(s, dict) and s.get("state") == "open"],
                 services=svcs,
                 os_fingerprint=os_list[0] if os_list else None,
                 tls_profiles=tls,

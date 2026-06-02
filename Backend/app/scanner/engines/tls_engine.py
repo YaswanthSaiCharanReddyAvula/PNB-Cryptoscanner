@@ -54,17 +54,86 @@ _VER_DOTTED_TO_KEY: dict[str, str] = {
 }
 
 
+_CIPHER_OID_MAP: dict[str, str] = {
+    "TLS_AES_128_GCM_SHA256": "1.2.840.113549.1.9.16.3.1",
+    "TLS_AES_256_GCM_SHA384": "1.2.840.113549.1.9.16.3.2",
+    "TLS_CHACHA20_POLY1305_SHA256": "1.2.840.113549.1.9.16.3.18",
+    "TLS_AES_128_CCM_SHA256": "1.2.840.113549.1.9.16.3.4",
+}
+
+_PRIMITIVE_MAP: dict[str, tuple[str, str, str]] = {
+    "AES":       ("AES",       "block_cipher", "encryption, decryption, key generation, authentication tag generation"),
+    "CHACHA20":  ("ChaCha20",  "stream_cipher", "encryption, decryption"),
+    "3DES":      ("3DES",      "block_cipher", "encryption, decryption"),
+    "DES":       ("DES",       "block_cipher", "encryption, decryption"),
+    "RC4":       ("RC4",       "stream_cipher", "encryption, decryption"),
+    "CAMELLIA":  ("Camellia",  "block_cipher", "encryption, decryption"),
+    "ARIA":      ("ARIA",      "block_cipher", "encryption, decryption"),
+    "RSA":       ("RSA",       "asymmetric",   "key exchange, digital signature, encryption"),
+    "ECDHE":     ("ECDHE",     "key_agreement","key exchange"),
+    "ECDH":      ("ECDH",      "key_agreement","key exchange"),
+    "DHE":       ("DHE",       "key_agreement","key exchange"),
+    "ECDSA":     ("ECDSA",     "signature",    "digital signature"),
+}
+
+_MODE_TOKENS = ("GCM", "CBC", "CCM", "CTR", "ECB", "CFB", "OFB", "POLY1305")
+
+
+def _parse_cipher_meta(name: str, bits: int | None) -> tuple[str | None, str | None, str | None, int | None, str | None]:
+    """Return (primitive, mode, crypto_functions, classical_security_level, oid)."""
+    upper = name.upper()
+
+    # Primitive
+    primitive = None
+    crypto_fn = None
+    for token, (prim, _cat, fn) in _PRIMITIVE_MAP.items():
+        if token in upper:
+            primitive = prim
+            crypto_fn = fn
+            break
+
+    # Mode
+    mode = None
+    for m in _MODE_TOKENS:
+        if m in upper:
+            mode = m
+            break
+
+    # Classical security level
+    csl = None
+    if bits:
+        if primitive and primitive.upper() in ("AES", "CHACHA20", "CAMELLIA", "ARIA"):
+            csl = bits  # symmetric key = classical level
+        elif primitive and primitive.upper() == "RSA":
+            csl = {1024: 80, 2048: 112, 3072: 128, 4096: 152}.get(bits, 112)
+        elif primitive and primitive.upper() in ("ECDHE", "ECDH", "ECDSA"):
+            csl = {256: 128, 384: 192, 521: 256}.get(bits, 128)
+        else:
+            csl = bits
+
+    oid = _CIPHER_OID_MAP.get(name)
+
+    return primitive, mode, crypto_fn, csl, oid
+
+
 def _build_cipher_detail(name: str, info: dict[str, Any]) -> CipherDetail:
+    bits = info.get("bits")
+    primitive, mode, crypto_fn, csl, oid = _parse_cipher_meta(name, bits)
     return CipherDetail(
         name=name,
         kex=info.get("kex"),
         auth=info.get("auth"),
         encryption=info.get("encryption"),
         mac=info.get("mac"),
-        bits=info.get("bits"),
+        bits=bits,
         pfs=info.get("pfs", False),
         pqc=info.get("pqc", False),
         strength=info.get("strength", "unknown"),
+        primitive=primitive,
+        mode=mode,
+        crypto_functions=crypto_fn,
+        classical_security_level=csl,
+        oid=oid,
     )
 
 
@@ -82,6 +151,42 @@ class TLSCryptoEngine(ScanStage):
     _cipher_cache: dict[str, dict] | None = None
     _TLS_PORTS = frozenset({443, 8443, 465, 993, 995})
     _STARTTLS_PORTS = frozenset({25, 587, 143, 110})
+
+    # ── CBOM compliance helpers ──────────────────────────────────────
+
+    @staticmethod
+    def _safe_extract_pk_oid(cert: x509.Certificate) -> str | None:
+        """Extract public key algorithm OID (e.g. '1.2.840.113549.1.1.1' for RSA)."""
+        try:
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            pub = cert.public_key()
+            if isinstance(pub, rsa.RSAPublicKey):
+                return "1.2.840.113549.1.1.1"  # rsaEncryption
+            elif isinstance(pub, ec.EllipticCurvePublicKey):
+                return "1.2.840.10045.2.1"  # id-ecPublicKey
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_extract_key_id(cert: x509.Certificate) -> str | None:
+        """Extract Subject Key Identifier from the certificate extensions."""
+        try:
+            ext = cert.extensions.get_extension_for_class(
+                x509.SubjectKeyIdentifier,
+            )
+            return ext.value.digest.hex(":")
+        except (x509.ExtensionNotFound, Exception):
+            # Fallback: SHA-256 of the public key bytes
+            try:
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+                pk_bytes = cert.public_key().public_bytes(
+                    Encoding.DER, PublicFormat.SubjectPublicKeyInfo,
+                )
+                import hashlib
+                return hashlib.sha256(pk_bytes).hexdigest()[:40]
+            except Exception:
+                return None
 
     # ── throttle helper ──────────────────────────────────────────────
 
@@ -362,6 +467,10 @@ class TLSCryptoEngine(ScanStage):
                 is_self_signed=(cert.issuer == cert.subject),
                 fingerprint_sha256=cert.fingerprint(hashes.SHA256()).hex(":"),
                 quantum_vulnerable=key_type in ("RSA", "EC"),
+                # ── CBOM compliance fields ──
+                subject_public_key_ref=self._safe_extract_pk_oid(cert),
+                sig_algorithm_oid=cert.signature_algorithm_oid.dotted_string,
+                key_id=self._safe_extract_key_id(cert),
             )
             return detail, negotiated
 
@@ -587,7 +696,7 @@ class TLSCryptoEngine(ScanStage):
                 logger.debug("STARTTLS check failed %s:%d — %s", host, port, exc)
 
         return StageResult(
-            status="ok",
+            status="completed",
             data={"tls_profiles": profiles},
             request_count=request_count,
         )

@@ -148,7 +148,9 @@ class SurfaceReconEngine(ScanStage):
             request_count += len(dns_records) + (2 if ct_hosts else 0) + (1 if cs_hosts else 0)
 
             # ── Phase 2 — Dictionary-based subdomain brute-force ──────
-            dict_hosts = await self._enumerate_subdomains(domain, ctx)
+            dict_hosts = []
+            if settings.SCANNER_ENABLE_BRUTE_FORCE:
+                dict_hosts = await self._enumerate_subdomains(domain, ctx)
             request_count += len(dict_hosts)
 
             # ── Phase 3 — Merge all hostname sources ──────────────────
@@ -258,7 +260,7 @@ class SurfaceReconEngine(ScanStage):
             whois_dict = whois_info.model_dump() if whois_info else None
 
             return StageResult(
-                status="ok",
+                status="completed",
                 data={
                     "subdomains": live_hosts,
                     "ip_map": ip_map,

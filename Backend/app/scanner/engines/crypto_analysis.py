@@ -635,6 +635,6 @@ class CryptoAnalysisEngine(ScanStage):
             all_findings.extend(f.model_dump() for f in findings)
 
         return StageResult(
-            status="ok",
+            status="completed",
             data={"crypto_findings": all_findings},
         )

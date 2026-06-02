@@ -143,6 +143,14 @@ class CBOMReportEngine(ScanStage):
                             "public_key": f"{leaf.get('key_type')}-{leaf.get('key_size')}",
                             "serial": leaf.get("serial"),
                             "sha256": leaf.get("fingerprint_sha256"),
+                            # ── CBOM compliance fields ──
+                            "subject_public_key_ref": leaf.get("subject_public_key_ref"),
+                            "sig_algorithm_oid": leaf.get("sig_algorithm_oid"),
+                            "certificate_format": leaf.get("certificate_format", "X.509"),
+                            "certificate_extension": leaf.get("certificate_extension", ".crt"),
+                            "key_id": leaf.get("key_id"),
+                            "key_type": leaf.get("key_type"),
+                            "key_size": leaf.get("key_size"),
                         },
                         "quantum_safe": not leaf.get("quantum_vulnerable", True),
                         "risk_level": self._cert_risk(leaf),
@@ -175,6 +183,14 @@ class CBOMReportEngine(ScanStage):
                         "host": host,
                         "quantum_safe": c.get("pqc", False),
                         "risk_level": c.get("quantum_risk", "medium") if not c.get("pqc") else "none",
+                        # ── CBOM compliance fields ──
+                        "primitive": c.get("primitive"),
+                        "mode": c.get("mode"),
+                        "crypto_functions": c.get("crypto_functions"),
+                        "classical_security_level": c.get("classical_security_level"),
+                        "oid": c.get("oid"),
+                        "cipher_name": c.get("name"),
+                        "bits": c.get("bits"),
                     })
 
         qs_count = sum(1 for c in components if c.get("quantum_safe"))

@@ -131,6 +131,12 @@ class CipherDetail(BaseModel):
     pfs: bool = False
     pqc: bool = False
     strength: str = "unknown"
+    # ── CBOM compliance fields ──
+    primitive: Optional[str] = None
+    mode: Optional[str] = None
+    crypto_functions: Optional[str] = None
+    classical_security_level: Optional[int] = None
+    oid: Optional[str] = None
 
 
 class CertificateDetail(BaseModel):
@@ -148,6 +154,12 @@ class CertificateDetail(BaseModel):
     is_self_signed: bool = False
     fingerprint_sha256: Optional[str] = None
     quantum_vulnerable: bool = True
+    # ── CBOM compliance fields ──
+    subject_public_key_ref: Optional[str] = None
+    sig_algorithm_oid: Optional[str] = None
+    certificate_format: str = "X.509"
+    certificate_extension: str = ".crt"
+    key_id: Optional[str] = None
 
 
 class TLSProfile(BaseModel):
@@ -571,3 +583,111 @@ class ScopeGuard:
 
     def add_resolved_ip(self, ip: str) -> None:
         self._resolved_ips.add(ip.strip())
+
+
+# ── Track B findings ─────────────────────────────────────────────────
+
+class SASTFinding(BaseModel):
+    """A single cryptographic usage found via static analysis."""
+    file_path: str
+    line_number: int = 0
+    finding_type: str = ""        # import | function_call | hardcoded_secret
+    module: Optional[str] = None  # e.g. "hashlib", "cryptography.fernet"
+    algorithm: Optional[str] = None  # e.g. "sha256", "AES-256-GCM"
+    secret_type: Optional[str] = None  # jwt_secret | api_key | iv | private_key
+    evidence: str = ""
+    severity: str = "medium"
+    confidence: float = 0.8
+
+
+class SCAFinding(BaseModel):
+    """A cryptographic library found in a dependency manifest."""
+    manifest_file: str
+    library_name: str
+    version: Optional[str] = None
+    latest_secure_version: Optional[str] = None
+    is_vulnerable: bool = False
+    vulnerability_id: Optional[str] = None  # CVE or advisory
+    crypto_relevance: str = ""  # e.g. "TLS wrapper", "hashing", "symmetric encryption"
+    severity: str = "info"
+
+
+class HostConfigFinding(BaseModel):
+    """A cipher/protocol extracted from a daemon config file."""
+    config_file: str
+    daemon: str = ""  # sshd | nginx | apache | haproxy
+    setting_name: str = ""  # e.g. Ciphers, KexAlgorithms, MACs
+    setting_value: str = ""
+    algorithms_extracted: list[str] = Field(default_factory=list)
+    risk_level: str = "info"
+
+
+class InternalCertFinding(BaseModel):
+    """A certificate found on the filesystem (.pem, .crt, .jks, .p12)."""
+    file_path: str
+    file_extension: str = ""
+    subject_cn: Optional[str] = None
+    issuer_cn: Optional[str] = None
+    not_valid_before: Optional[str] = None
+    not_valid_after: Optional[str] = None
+    key_type: Optional[str] = None
+    key_size: Optional[int] = None
+    sig_algorithm: Optional[str] = None
+    sig_algorithm_oid: Optional[str] = None
+    fingerprint_sha256: Optional[str] = None
+    expired: bool = False
+    days_until_expiry: Optional[int] = None
+    serial: Optional[str] = None
+
+
+# ── CBOM (CERT-IN / PNB Annexure-A) ─────────────────────────────────
+
+class CBOMMetadata(BaseModel):
+    target: str
+    timestamp: datetime
+    compliance_standard: str = "CERT-IN / PNB Annexure-A"
+
+
+class CBOMAlgorithm(BaseModel):
+    Name: str
+    Asset_Type: str = "algorithm"
+    Primitive: str               # symmetric encryption | signature | hash | key_agreement
+    Mode: Optional[str] = None   # GCM | CBC | CTR | N/A
+    Classical_Security_Level: int
+    Source: str
+
+
+class CBOMCertificate(BaseModel):
+    Name: str
+    Asset_Type: str = "certificate"
+    Subject_Name: str
+    Issuer_Name: str
+    Not_Valid_Before: str
+    Not_Valid_After: str
+    Signature_Algorithm_Reference: str  # OID + human name
+    Subject_Public_Key_Reference: str   # e.g. "RSA 2048-bit"
+    Source: str
+
+
+class CBOMKey(BaseModel):
+    Name: str
+    Asset_Type: str = "key"
+    id: str                     # SHA-256 fingerprint
+    state: str = "Active"
+    size: int
+    Source: str
+
+
+class CBOMProtocol(BaseModel):
+    Name: str
+    Asset_Type: str = "protocol"
+    Version: str
+    Cipher_Suites: list[str] = Field(default_factory=list)
+
+
+class CBOMReport(BaseModel):
+    CBOM_Metadata: CBOMMetadata
+    Algorithms: list[CBOMAlgorithm] = Field(default_factory=list)
+    Certificates: list[CBOMCertificate] = Field(default_factory=list)
+    Keys: list[CBOMKey] = Field(default_factory=list)
+    Protocols: list[CBOMProtocol] = Field(default_factory=list)

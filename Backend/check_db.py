@@ -1,17 +1,30 @@
 import asyncio
-import json
 from motor.motor_asyncio import AsyncIOMotorClient
 
-async def run():
-    client = AsyncIOMotorClient('mongodb://localhost:27017')
-    db = client['quantumshield']
+async def check_db():
+    client = AsyncIOMotorClient("mongodb://localhost:27017")
+    db = client["pnb_crypto_scanner"]
     
-    # Get all scans
-    scans = await db['scans'].find({"status": "completed"}).to_list(length=10)
-    for scan in scans:
-        domain = scan.get("domain")
-        cbom = scan.get("cbom_report", {})
-        components = cbom.get("components", [])
-        print(f"Domain: {domain}, Components: {len(components)}")
+    # Check latest completed scan
+    doc = await db["scans"].find_one({"status": "completed"}, sort=[("completed_at", -1)])
+    if not doc:
+        print("No completed scans found.")
+        return
+    
+    print(f"Latest scan: {doc.get('domain')} at {doc.get('completed_at')}")
+    print(f"Fields available: {list(doc.keys())}")
+    
+    cbom = doc.get("cbom")
+    if cbom:
+        print(f"CBOM components: {len(cbom.get('components', []))}")
+    else:
+        print("CBOM field is missing.")
+        
+    intel = doc.get("asset_intelligence")
+    if intel:
+        print(f"Asset Intelligence records: {len(intel)}")
+    else:
+        print("Asset Intelligence field is missing.")
 
-asyncio.run(run())
+if __name__ == "__main__":
+    asyncio.run(check_db())

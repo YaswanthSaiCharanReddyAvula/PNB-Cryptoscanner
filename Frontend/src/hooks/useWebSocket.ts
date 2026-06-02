@@ -5,6 +5,13 @@ import { getViteApiBaseUrl } from '@/lib/runtimeConfig';
 /** Same host as REST API (HTTPS → wss://). */
 function getBackendWsOrigin(): string {
   const base = getViteApiBaseUrl();
+
+  // Relative path (Vite proxy mode) — derive from current page origin
+  if (base.startsWith('/')) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}`;
+  }
+
   try {
     const u = new URL(base);
     const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';

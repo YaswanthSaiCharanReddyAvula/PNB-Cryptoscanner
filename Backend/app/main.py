@@ -9,6 +9,9 @@ Run with:
 """
 
 import asyncio
+import re as _re
+import socket
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -76,6 +79,15 @@ async def scan_retention_loop(stop: asyncio.Event) -> None:
 async def lifespan(app: FastAPI):
     """Manage startup and shutdown events for MongoDB."""
     logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
+    
+    # Silence asyncio gaierror "Future exception was never retrieved" warnings
+    loop = asyncio.get_running_loop()
+    def _silence_gaierror_handler(loop, context):
+        exc = context.get('exception')
+        if isinstance(exc, socket.gaierror):
+            return
+        loop.default_exception_handler(context)
+    loop.set_exception_handler(_silence_gaierror_handler)
 
     # MongoDB (existing scanner pipeline)
     await connect_db()
@@ -135,6 +147,37 @@ app.add_middleware(
     allow_origin_regex=_CORS_DEV_LAN_REGEX,
 )
 
+# ── Catch-all CORS safety net ────────────────────────────────────
+# Starlette's CORSMiddleware may not inject headers on unhandled
+# exceptions that crash before the response is built.  This low-level
+# middleware guarantees the browser always receives CORS headers so it
+# can display the *real* error instead of a misleading CORS block.
+_CORS_ORIGIN_RE = _re.compile(_CORS_DEV_LAN_REGEX)
+
+@app.middleware("http")
+async def cors_error_safety_net(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error in middleware chain")
+        response = JSONResponse(
+            status_code=500,
+            content={"error": "internal_server_error", "detail": "An unexpected error occurred."},
+        )
+    # If CORSMiddleware already set the header, leave it alone.
+    if "access-control-allow-origin" not in response.headers:
+        origin = request.headers.get("origin", "")
+        if settings.CORS_ORIGINS.strip() == "*":
+            response.headers["access-control-allow-origin"] = "*"
+        elif origin and _CORS_ORIGIN_RE.match(origin):
+            response.headers["access-control-allow-origin"] = origin
+        elif origin and origin in settings.cors_origins_list:
+            response.headers["access-control-allow-origin"] = origin
+        # For preflight-like headers on error responses
+        response.headers.setdefault("access-control-allow-methods", "*")
+        response.headers.setdefault("access-control-allow-headers", "*")
+    return response
+
 
 # ── Global exception handlers ───────────────────────────────────
 
@@ -154,12 +197,16 @@ async def database_unavailable_handler(request: Request, exc: DatabaseUnavailabl
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions and return a structured JSON error."""
-    logger.exception("Unhandled exception on %s %s", request.method, request.url)
+    tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+    logger.error(
+        "Unhandled exception on %s %s:\n%s",
+        request.method, request.url, "".join(tb),
+    )
     return JSONResponse(
         status_code=500,
         content={
             "error": "internal_server_error",
-            "detail": "An unexpected error occurred. Please try again later.",
+            "detail": f"An unexpected error occurred: {type(exc).__name__}: {exc}",
         },
     )
 

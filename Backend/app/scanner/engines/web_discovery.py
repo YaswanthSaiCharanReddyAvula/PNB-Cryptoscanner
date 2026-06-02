@@ -109,13 +109,25 @@ class WebAPIDiscoveryEngine(ScanStage):
     async def _profile_host(self, client: httpx.AsyncClient, host: str, ctx: ScanContext):
         reqs = 0
         url = f"https://{host}/"
+        resp = None
+
         try:
-            resp = await client.get(url)
-            reqs += 1
-        except httpx.ConnectError:
-            url = f"http://{host}/"
-            resp = await client.get(url)
-            reqs += 1
+            try:
+                resp = await client.get(url)
+                reqs += 1
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                url = f"http://{host}/"
+                resp = await client.get(url)
+                reqs += 1
+        except (httpx.ProtocolError, httpx.DecodingError) as exc:
+            logger.debug("Protocol error on %s: %s", url, exc)
+            return self._failed_profile(host, url, f"Protocol/Decoding Error: {exc}"), reqs
+        except Exception as exc:
+            logger.debug("Connection failed for %s: %s", url, exc)
+            return self._failed_profile(host, url, str(exc)), reqs
+
+        if not resp:
+            return self._failed_profile(host, url, "No response"), reqs
 
         hdrs = {k.lower(): v for k, v in resp.headers.items()}
 
@@ -274,3 +286,17 @@ class WebAPIDiscoveryEngine(ScanStage):
             except Exception:
                 results[path] = WellKnownResult(path=path, status_code=0, found=False).model_dump()
         return results
+    def _failed_profile(self, host: str, url: str, error: str) -> dict:
+        """Return a skeleton profile for hosts that fail to respond correctly."""
+        return WebAppProfile(
+            host=host,
+            url=url,
+            status_code=0,
+            security_headers={},
+            header_score=0,
+            cookies=[],
+            cors=CORSAudit(origin_tested="https://evil.example.com").model_dump(),
+            api_schemas_found=[],
+            well_known_results={},
+            info_leaks=[f"Discovery failed: {error}"],
+        ).model_dump()

@@ -209,6 +209,13 @@ export default function CBOM() {
   const [perAppCbom,  setPerAppCbom]  = useState<any[]>([]);
   const [loading,     setLoading]     = useState(true);
 
+  // Compliance view state — 4 asset type tables
+  const [complianceCerts,     setComplianceCerts]     = useState<any[]>([]);
+  const [complianceProtocols, setComplianceProtocols] = useState<any[]>([]);
+  const [complianceKeys,      setComplianceKeys]      = useState<any[]>([]);
+  const [complianceAlgos,     setComplianceAlgos]     = useState<any[]>([]);
+  const [complianceTab,       setComplianceTab]       = useState<"certificates" | "protocols" | "keys" | "algorithms">("certificates");
+
   useEffect(() => {
     let cancelled = false;
     const selectedParam = selectedDomain ?? undefined;
@@ -306,6 +313,21 @@ export default function CBOM() {
         setLoading(false);
       });
 
+    // Parallel: Compliance view data (independent of above chain)
+    cbomService
+      .getComplianceView(selectedParam)
+      .then((res) => {
+        if (cancelled) return;
+        const d = res.data || {};
+        setComplianceCerts(d.certificates || []);
+        setComplianceProtocols(d.protocols || []);
+        setComplianceKeys(d.keys || []);
+        setComplianceAlgos(d.algorithms || []);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("Compliance view load error", err);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -377,96 +399,103 @@ export default function CBOM() {
   const handleExportPDF = () => {
     // Data-based PDF export (not "Print to PDF" screenshot).
     // We generate a CBOM table using jsPDF so the exported PDF is content-first.
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    try {
+      const domain = summary?.domain || "latest";
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
 
-    const domain = summary?.domain || "";
-    const generatedAt = summary?.generated_at ? new Date(summary.generated_at) : new Date();
+      // ── Cover / Header ──
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, doc.internal.pageSize.getWidth(), 100, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(22);
+      doc.text("Cryptographic Bill of Materials (CBOM)", 40, 45);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Domain: ${domain}   |   Standard: CERT-IN / PNB Annexure-A   |   Generated: ${new Date().toLocaleString()}`, 40, 72);
+      doc.setTextColor(0, 0, 0);
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.text("PNB × QSCAS", 40, 50);
+      // --- Section 1: Certificates ---
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("1. Cryptographic Certificates", 40, 130);
+      const certRows = complianceCerts.map((c: any) => [
+        c.name || "—",
+        c.issuer_name || "—",
+        c.not_valid_after || "—",
+        c.sig_algorithm_ref || "—",
+        c.certificate_format || "X.509"
+      ]);
+      autoTable(doc, {
+        startY: 140,
+        head: [["Name / Subject", "Issuer", "Expiry", "Sig Algorithm", "Format"]],
+        body: certRows.length ? certRows : [["No certificate data", "—", "—", "—", "—"]],
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [59, 130, 246] }
+      });
 
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "normal");
-    doc.text("Cryptographic Bill of Materials (CBOM)", 40, 70);
-    doc.setFontSize(10);
-    doc.text(`CBOM Report for: ${domain || "—"}`, 40, 86);
-    doc.text(`Generated: ${generatedAt.toLocaleString()}`, 40, 102);
+      // --- Section 2: Protocols ---
+      const afterCerts = (doc as any).lastAutoTable?.finalY ?? 200;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("2. Encryption Protocols", 40, afterCerts + 30);
+      const protoRows = complianceProtocols.map((p: any) => [
+        p.name || "—",
+        p.version || "—",
+        p.cipher_suites || "—"
+      ]);
+      autoTable(doc, {
+        startY: afterCerts + 40,
+        head: [["Name", "Version", "Cipher Suites"]],
+        body: protoRows.length ? protoRows : [["No protocol data", "—", "—"]],
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [139, 92, 246] }
+      });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("PQC Readiness Summary", 40, 120);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+      // --- Section 3: Keys ---
+      const afterProtos = (doc as any).lastAutoTable?.finalY ?? 300;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("3. Cryptographic Keys", 40, afterProtos + 30);
+      const keyRows = complianceKeys.map((k: any) => [
+        k.name || "—",
+        k.size || "—",
+        k.state || "—",
+        k.creation_date || "—"
+      ]);
+      autoTable(doc, {
+        startY: afterProtos + 40,
+        head: [["Key Type", "Size", "State", "Created"]],
+        body: keyRows.length ? keyRows : [["No key data", "—", "—", "—"]],
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [245, 158, 11] }
+      });
 
-    // Use the same boolean used for the table HNDL column (`hndlRisk`) so header matches exported content.
-    const exportAssets = filteredAssets;
-    const hndlCount = exportAssets.filter((a: any) => Boolean(a?.hndlRisk)).length;
+      // --- Section 4: Algorithms ---
+      doc.addPage();
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("4. Cryptographic Algorithms", 40, 50);
+      const algoRows = complianceAlgos.map((a: any) => [
+        a.name || "—",
+        a.primitive || "—",
+        a.quantum_status || "vulnerable",
+        a.recommendation || "—"
+      ]);
+      autoTable(doc, {
+        startY: 60,
+        head: [["Algorithm", "Primitive", "PQC Status", "NIST Recommendation"]],
+        body: algoRows.length ? algoRows : [["No algorithm data", "—", "—", "—"]],
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [6, 182, 212] }
+      });
 
-    doc.text(
-      `Quantum Safe: ${exportAssets.filter((a: any) => a?.pqcStatus === "quantum-safe").length
-      }   |   PQC Ready: ${exportAssets.filter((a: any) => a?.pqcStatus === "pqc-ready").length
-      }   |   Vulnerable: ${exportAssets.filter((a: any) => a?.pqcStatus === "vulnerable").length
-      }   |   HNDL Risk: ${hndlCount}`,
-      40,
-      134
-    );
-
-    const rows = exportAssets.map((a: any) => [
-      a.assetName ?? "—",
-      a.url ?? "—",
-      a.assetType ?? "—",
-      a.tlsVersion ?? "—",
-      a.keyExchange ?? "—",
-      a.cipherSuite ?? "—",
-      a.ca ?? "—",
-      a.keyLength ?? "—",
-      a.certExpiry ?? "—",
-      a.pqcStatus ?? "—",
-      a.hndlRisk ? "Yes" : "No",
-      a.recommendedMigration ?? "—",
-    ]);
-
-    autoTable(doc, {
-      startY: 160,
-      head: [
-        [
-          "Asset Name",
-          "URL / Endpoint",
-          "Asset Type",
-          "TLS Version",
-          "Key Exchange",
-          "Cipher Suite",
-          "Cert Authority",
-          "Key Length",
-          "Cert Expiry",
-          "PQC Status",
-          "HNDL Risk",
-          "Recommended Migration",
-        ],
-      ],
-      body: rows,
-      styles: { fontSize: 7, cellPadding: 3, overflow: "linebreak" },
-      headStyles: { fillColor: [221, 231, 255], textColor: [0, 0, 0], fontStyle: "bold" },
-      theme: "grid",
-      columnStyles: {
-        1: { cellWidth: 120 },
-        10: { cellWidth: 55 },
-        11: { cellWidth: 170 },
-      },
-    });
-
-    // Footnote
-    const pageCount = doc.getNumberOfPages();
-    doc.setFontSize(8);
-    doc.setTextColor(80);
-    doc.text(
-      "Note: Migration recommendations are indicative and based on scan evidence.",
-      40,
-      820
-    );
-
-    doc.save(`cbom_report_${(domain || "latest").replace(/[^\w.-]+/g, "_")}.pdf`);
+      doc.save(`cbom_grouped_report_${domain.replace(/[^\w.-]+/g, "_")}.pdf`);
+      toast.success("CBOM PDF report downloaded");
+    } catch (err) {
+      console.error("PDF export failed:", err);
+      toast.error("PDF export failed — check console for details.");
+    }
   };
 
   const handleExportServerBundle = async () => {
@@ -486,6 +515,54 @@ export default function CBOM() {
     } catch {
       toast.error("No completed scan to export, or the API is unreachable.");
     }
+  };
+
+  const handleExportComplianceJSON = () => {
+    const report = {
+      generated_at: new Date().toISOString(),
+      domain: summary?.domain || "",
+      certificates: complianceCerts,
+      protocols: complianceProtocols,
+      keys: complianceKeys,
+      algorithms: complianceAlgos,
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cbom_compliance_${(summary?.domain || "latest").replace(/[^\w.-]+/g, "_")}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Compliance view JSON downloaded");
+  };
+
+  const handleExportComplianceCSV = () => {
+    const sheets: string[] = [];
+    // Certificates
+    sheets.push("--- CERTIFICATES ---");
+    sheets.push("Name,Asset Type,Subject Name,Issuer Name,Not Valid Before,Not Valid After,Sig Algorithm Ref,Subject PK Ref,Format,Extension");
+    complianceCerts.forEach((c: any) => sheets.push([c.name,c.asset_type,c.subject_name,c.issuer_name,c.not_valid_before,c.not_valid_after,c.sig_algorithm_ref,c.subject_public_key_ref,c.certificate_format,c.certificate_extension].map(s => `"${String(s||"").replace(/"/g,'""')}"`).join(",")));
+    // Protocols
+    sheets.push("\n--- PROTOCOLS ---");
+    sheets.push("Name,Asset Type,Version,Cipher Suites,OID");
+    complianceProtocols.forEach((p: any) => sheets.push([p.name,p.asset_type,p.version,p.cipher_suites,p.oid].map(s => `"${String(s||"").replace(/"/g,'""')}"`).join(",")));
+    // Keys
+    sheets.push("\n--- KEYS ---");
+    sheets.push("Name,Asset Type,ID,State,Size,Creation Date,Activation Date");
+    complianceKeys.forEach((k: any) => sheets.push([k.name,k.asset_type,k.id,k.state,k.size,k.creation_date,k.activation_date].map(s => `"${String(s||"").replace(/"/g,'""')}"`).join(",")));
+    // Algorithms
+    sheets.push("\n--- ALGORITHMS ---");
+    sheets.push("Name,Asset Type,Primitive,Mode,Crypto Functions,Classical Security Level,OID");
+    complianceAlgos.forEach((a: any) => sheets.push([a.name,a.asset_type,a.primitive,a.mode,a.crypto_functions,a.classical_security_level,a.oid].map(s => `"${String(s||"").replace(/"/g,'""')}"`).join(",")));
+
+    const blob = new Blob([sheets.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cbom_compliance_${(summary?.domain || "latest").replace(/[^\w.-]+/g, "_")}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Compliance view CSV downloaded");
   };
 
   // Empty state
@@ -772,12 +849,14 @@ export default function CBOM() {
                   <option value="PQC Ready">PQC Ready Only</option>
                   <option value="Vulnerable">Vulnerable Only</option>
                 </select>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 mt-3 sm:mt-0">
                   <Button onClick={handleExportServerBundle} variant="outline" className="gap-2 border-primary/40" title="Raw JSON from latest completed scan (server)">
                     <Download className="w-4 h-4" /> Server bundle
                   </Button>
-                  <Button onClick={handleExportJSON} variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export JSON</Button>
-                  <Button onClick={handleExportCSV}  variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export CSV</Button>
+                  <Button onClick={handleExportJSON} variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export Basic JSON</Button>
+                  <Button onClick={handleExportCSV}  variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export Basic CSV</Button>
+                  <Button onClick={handleExportComplianceJSON} variant="outline" className="gap-2 border-primary/40"><Download className="w-4 h-4 text-primary" /> Compliance JSON</Button>
+                  <Button onClick={handleExportComplianceCSV} variant="outline" className="gap-2 border-primary/40"><Download className="w-4 h-4 text-primary" /> Compliance CSV</Button>
                   <Button onClick={handleExportPDF}  className="gap-2 bg-primary"><Download className="w-4 h-4" /> Export PDF</Button>
                 </div>
               </div>
@@ -802,6 +881,188 @@ export default function CBOM() {
                 { key: "recommendedMigration", header: "Recommended Migration" },
               ]}
             />
+
+          {/* ═══════════════════════════════════════════════════════════
+              CBOM COMPLIANCE VIEW — 4 Asset Type Tables
+              ═══════════════════════════════════════════════════════════ */}
+          <div className="rounded-xl border border-border/50 bg-card mt-6">
+            <div className="px-5 pt-5 pb-3">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-primary" />
+                Crypto Asset Compliance View
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Structured inventory of all cryptographic assets categorized by type — CERT-IN Annexure-A compliant format
+              </p>
+            </div>
+
+            {/* Tab bar */}
+            <div className="flex gap-1 px-5 pb-2 border-b border-border/40">
+              {([
+                { key: "certificates" as const, label: "Certificates", count: complianceCerts.length },
+                { key: "protocols" as const,    label: "Protocols",    count: complianceProtocols.length },
+                { key: "keys" as const,         label: "Keys",         count: complianceKeys.length },
+                { key: "algorithms" as const,   label: "Algorithms",   count: complianceAlgos.length },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setComplianceTab(tab.key)}
+                  className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition-all ${
+                    complianceTab === tab.key
+                      ? "bg-primary/10 text-primary border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  {tab.label}
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    complianceTab === tab.key ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                  }`}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Table content */}
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto scrollbar-thin">
+              {complianceTab === "certificates" && (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-muted/50 text-muted-foreground text-left">
+                      <th className="px-4 py-2.5 font-semibold">Name</th>
+                      <th className="px-4 py-2.5 font-semibold">Asset Type</th>
+                      <th className="px-4 py-2.5 font-semibold">Subject Name</th>
+                      <th className="px-4 py-2.5 font-semibold">Issuer Name</th>
+                      <th className="px-4 py-2.5 font-semibold">Not Valid Before</th>
+                      <th className="px-4 py-2.5 font-semibold">Not Valid After</th>
+                      <th className="px-4 py-2.5 font-semibold">Sig Algorithm Ref</th>
+                      <th className="px-4 py-2.5 font-semibold">Subject PK Ref</th>
+                      <th className="px-4 py-2.5 font-semibold">Format</th>
+                      <th className="px-4 py-2.5 font-semibold">Extension</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {complianceCerts.length === 0 ? (
+                      <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground italic">No certificate data available — run a scan first</td></tr>
+                    ) : complianceCerts.map((c: any, i: number) => (
+                      <tr key={i} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 font-medium max-w-[200px] truncate" title={c.name}>{c.name || "—"}</td>
+                        <td className="px-4 py-2.5"><span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 text-[10px] font-semibold uppercase">certificate</span></td>
+                        <td className="px-4 py-2.5 font-mono max-w-[200px] truncate" title={c.subject_name}>{c.subject_name || "—"}</td>
+                        <td className="px-4 py-2.5 max-w-[180px] truncate" title={c.issuer_name}>{c.issuer_name || "—"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{c.not_valid_before || "—"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{c.not_valid_after || "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-muted-foreground">{c.sig_algorithm_ref || "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-muted-foreground">{c.subject_public_key_ref || "—"}</td>
+                        <td className="px-4 py-2.5">{c.certificate_format || "X.509"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{c.certificate_extension || ".crt"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {complianceTab === "protocols" && (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-muted/50 text-muted-foreground text-left">
+                      <th className="px-4 py-2.5 font-semibold">Name</th>
+                      <th className="px-4 py-2.5 font-semibold">Asset Type</th>
+                      <th className="px-4 py-2.5 font-semibold">Version</th>
+                      <th className="px-4 py-2.5 font-semibold">Cipher Suites</th>
+                      <th className="px-4 py-2.5 font-semibold">OID</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {complianceProtocols.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground italic">No protocol data available — run a scan first</td></tr>
+                    ) : complianceProtocols.map((p: any, i: number) => (
+                      <tr key={i} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 font-medium">{p.name || "—"}</td>
+                        <td className="px-4 py-2.5"><span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-400 text-[10px] font-semibold uppercase">protocol</span></td>
+                        <td className="px-4 py-2.5 font-mono">{p.version || "—"}</td>
+                        <td className="px-4 py-2.5 font-mono max-w-[300px] truncate" title={p.cipher_suites}>{p.cipher_suites || "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-muted-foreground">{p.oid || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {complianceTab === "keys" && (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-muted/50 text-muted-foreground text-left">
+                      <th className="px-4 py-2.5 font-semibold">Name</th>
+                      <th className="px-4 py-2.5 font-semibold">Asset Type</th>
+                      <th className="px-4 py-2.5 font-semibold">ID</th>
+                      <th className="px-4 py-2.5 font-semibold">State</th>
+                      <th className="px-4 py-2.5 font-semibold">Size</th>
+                      <th className="px-4 py-2.5 font-semibold">Creation Date</th>
+                      <th className="px-4 py-2.5 font-semibold">Activation Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {complianceKeys.length === 0 ? (
+                      <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground italic">No key data available — run a scan first</td></tr>
+                    ) : complianceKeys.map((k: any, i: number) => (
+                      <tr key={i} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 font-medium font-mono">{k.name || "—"}</td>
+                        <td className="px-4 py-2.5"><span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-semibold uppercase">key</span></td>
+                        <td className="px-4 py-2.5 font-mono max-w-[200px] truncate" title={k.id}>{k.id || "—"}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            k.state === "Active" ? "bg-green-500/15 text-green-400"
+                            : k.state === "Expired" ? "bg-destructive/15 text-destructive"
+                            : "bg-yellow-500/15 text-yellow-400"
+                          }`}>{k.state || "—"}</span>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono">{k.size || "—"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{k.creation_date || "—"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{k.activation_date || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {complianceTab === "algorithms" && (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-muted/50 text-muted-foreground text-left">
+                      <th className="px-4 py-2.5 font-semibold">Algorithm</th>
+                      <th className="px-4 py-2.5 font-semibold">Asset Type</th>
+                      <th className="px-4 py-2.5 font-semibold">Primitive</th>
+                      <th className="px-4 py-2.5 font-semibold">Risk Level</th>
+                      <th className="px-4 py-2.5 font-semibold">Quantum Status</th>
+                      <th className="px-4 py-2.5 font-semibold">Guidance / NIST Recommendation</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {complianceAlgos.length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground italic">No algorithm data available — run a scan first</td></tr>
+                    ) : complianceAlgos.map((a: any, i: number) => (
+                      <tr key={i} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 font-medium font-mono">{a.name || "—"}</td>
+                        <td className="px-4 py-2.5"><span className="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 text-[10px] font-semibold uppercase">algorithm</span></td>
+                        <td className="px-4 py-2.5">{a.primitive || "—"}</td>
+                        <td className="px-4 py-2.5">
+                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            a.risk_level === "critical" || a.risk_level === "high" ? "bg-destructive/15 text-destructive" : "bg-yellow-500/15 text-yellow-400"
+                          }`}>{a.risk_level || "low"}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                           <PQCBadge status={a.quantum_status || "vulnerable"} />
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground italic">{a.recommendation || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
           </div>
 
           {/* Per-Application CBOM Table */}
@@ -915,6 +1176,7 @@ export default function CBOM() {
               </div>
             )}
           </div>
+
         </>
       )}
     </div>

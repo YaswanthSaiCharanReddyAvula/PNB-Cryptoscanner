@@ -7,6 +7,7 @@ criticality-based cascading failures, result merging, and AI hooks.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 import uuid
@@ -52,6 +53,12 @@ STAGE_TIMEOUTS: dict[str, int] = {
     "attack_surface": 180,
     "behavioral": 60,
     "browser_engine": 120,
+    # Track B — SAST / SCA / Host
+    "sast_crypto": 60,
+    "sca_engine": 30,
+    "host_scanner": 45,
+    # Track C — CBOM Unification
+    "cbom_unification": 30,
 }
 
 
@@ -117,11 +124,19 @@ class ScanContext:
         self.all_findings: list[dict] = []
         self.graph: Optional[dict] = None
         self.risk_scores: list[dict] = []
+        self.asset_intelligence: list[dict] = []
         self.cbom: dict = {}
         self.recommendations: list[dict] = []
         self.executive_summary: str = ""
         self.quantum_score: dict = {}
         self.estate_tier: str = "Unknown"
+
+        # --- Track B: SAST / SCA / Host state ---
+        self.sast_findings: list[dict] = []
+        self.sca_findings: list[dict] = []
+        self.host_config_findings: list[dict] = []
+        self.internal_certificates: list[dict] = []
+        self.unified_cbom_report: dict = {}
 
         # --- Adaptive state (AI-driven prioritisation) ---
         self.extra_hidden_paths: list[str] = []
@@ -395,11 +410,18 @@ class PipelineManager:
             "all_findings": ctx.all_findings,
             "graph": ctx.graph,
             "risk_scores": ctx.risk_scores,
+            "asset_intelligence": ctx.asset_intelligence,
             "cbom": ctx.cbom,
             "recommendations": ctx.recommendations,
             "executive_summary": ctx.executive_summary,
             "quantum_score": ctx.quantum_score,
             "estate_tier": ctx.estate_tier,
+            # Track B
+            "sast_findings": ctx.sast_findings,
+            "sca_findings": ctx.sca_findings,
+            "host_config_findings": ctx.host_config_findings,
+            "internal_certificates": ctx.internal_certificates,
+            "unified_cbom_report": ctx.unified_cbom_report,
             "stage_metrics": [m.model_dump() for m in self.metrics],
         }
 
@@ -665,3 +687,101 @@ class PipelineManager:
             "data_keys": self._safe_preview_list(list(data.keys()), preview_limit),
         }
         return fallback_summary, fallback_preview
+
+
+# ---------------------------------------------------------------------------
+# DualTrackPipelineManager — parallel Track A + Track B, then Track C
+# ---------------------------------------------------------------------------
+
+class DualTrackPipelineManager:
+    """Orchestrates the 15-stage ASPM pipeline across three tracks.
+
+    Track A (runtime/external):  Recon → Network → TLS → CryptoAnalysis → …
+    Track B (build/internal):    SAST → SCA → HostScanner
+    Track C (unification):       CBOM Unification (runs after A + B complete)
+    """
+
+    def __init__(
+        self,
+        track_a_stages: list[ScanStage],
+        track_b_stages: list[ScanStage],
+        track_c_stages: list[ScanStage],
+        ai_adaptive: Any = None,
+        scheduler: Any = None,
+    ):
+        self.track_a = PipelineManager(stages=track_a_stages, ai_adaptive=ai_adaptive, scheduler=scheduler)
+        self.track_b = PipelineManager(stages=track_b_stages)
+        self.track_c = PipelineManager(stages=track_c_stages)
+        self.metrics: list[StageMetrics] = []
+
+    async def run(self, ctx: ScanContext) -> dict:
+        """Run Track A and Track B in parallel, then Track C sequentially."""
+        logger.info(
+            "[%s] DualTrackPipelineManager: starting parallel execution "
+            "(Track A=%d stages, Track B=%d stages, Track C=%d stages)",
+            ctx.scan_id,
+            len(self.track_a.stages),
+            len(self.track_b.stages),
+            len(self.track_c.stages),
+        )
+
+        # Broadcast parallel-start event
+        maybe = ctx.broadcast("scan_progress", {
+            "scan_id": ctx.scan_id,
+            "stage": "dual_track_start",
+            "status": "running",
+            "message": "Starting parallel Track A (Runtime) + Track B (Build) execution…",
+        })
+        if inspect.isawaitable(maybe):
+            await maybe
+
+        # ── Run Track A and Track B concurrently ──
+        # Both tracks share the same ScanContext.  Since each track writes
+        # to distinct fields (Track A → tls_profiles, crypto_findings, etc.
+        # Track B → sast_findings, sca_findings, etc.), there are no races.
+        async def _run_track_a():
+            try:
+                await self.track_a.run(ctx)
+            except Exception:
+                logger.exception("[%s] Track A failed", ctx.scan_id)
+
+        async def _run_track_b():
+            try:
+                await self.track_b.run(ctx)
+            except Exception:
+                logger.exception("[%s] Track B failed", ctx.scan_id)
+
+        await asyncio.gather(_run_track_a(), _run_track_b())
+
+        # Collect metrics from both tracks
+        self.metrics.extend(self.track_a.metrics)
+        self.metrics.extend(self.track_b.metrics)
+
+        # Broadcast Track C start
+        maybe = ctx.broadcast("scan_progress", {
+            "scan_id": ctx.scan_id,
+            "stage": "unification_start",
+            "status": "running",
+            "message": "Both tracks complete. Starting Track C (CBOM Unification)…",
+        })
+        if inspect.isawaitable(maybe):
+            await maybe
+
+        # ── Run Track C sequentially (needs data from both A and B) ──
+        await self.track_c.run(ctx)
+        self.metrics.extend(self.track_c.metrics)
+
+        logger.info("[%s] DualTrackPipelineManager: all tracks completed", ctx.scan_id)
+        return self._build_final(ctx)
+
+    def _build_final(self, ctx: ScanContext) -> dict:
+        """Unified final report merging all three tracks."""
+        base = self.track_a._build_final(ctx)
+        # Overlay Track B + C data
+        base["sast_findings"] = ctx.sast_findings
+        base["sca_findings"] = ctx.sca_findings
+        base["host_config_findings"] = ctx.host_config_findings
+        base["internal_certificates"] = ctx.internal_certificates
+        base["unified_cbom_report"] = ctx.unified_cbom_report
+        base["stage_metrics"] = [m.model_dump() for m in self.metrics]
+        return base

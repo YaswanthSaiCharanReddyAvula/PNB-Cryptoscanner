@@ -1,9 +1,14 @@
 import axios from "axios";
 import { getViteApiBaseUrl } from "@/lib/runtimeConfig";
 
-/** Origin hosting the FastAPI app (e.g. http://localhost:8000) — for /health and root routes. */
+/** Origin hosting the FastAPI app (e.g. http://localhost:8000) — for /health and root routes.
+ *  When using a Vite dev proxy (VITE_API_BASE_URL=/api/v1), returns "" so requests
+ *  stay on the same origin and go through the proxy.
+ */
 export function getApiOrigin(): string {
   const base = getViteApiBaseUrl();
+  // Relative path (/api/v1) → same origin, no prefix needed
+  if (base.startsWith("/")) return "";
   return base.replace(/\/api\/v1\/?$/, "") || "http://localhost:8000";
 }
 
@@ -127,6 +132,7 @@ export const discoveryService = {
 export const cbomService = {
   getSummary: (domain?: string) => api.get("/cbom/summary", { params: domain ? { domain } : {} }),
   getCharts:  (domain?: string) => api.get("/cbom/charts", { params: domain ? { domain } : {} }),
+  getComplianceView: (domain?: string) => api.get("/cbom/compliance-view", { params: domain ? { domain } : {} }),
 };
 
 // ── PQC ───────────────────────────────────────────────────────────

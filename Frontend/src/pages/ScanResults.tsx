@@ -142,7 +142,8 @@ export default function ScanResults() {
   const subdomains: string[] = data.subdomains || recon.subdomains || [];
   const dnsRecords: any[] = data.dns_records || recon.dns_records || [];
   const tlsResults: any[] = data.tls_results || [];
-  const cbom: any[] = data.cbom || [];
+  const cbomRaw = data.cbom || [];
+  const cbom: any[] = Array.isArray(cbomRaw) ? cbomRaw : (cbomRaw.components || []);
   const cdnWaf: any[] = data.cdn_waf_intel || [];
   const techFp: any[] = data.tech_fingerprints || [];
   const webProfiles: any[] = data.web_profiles || [];

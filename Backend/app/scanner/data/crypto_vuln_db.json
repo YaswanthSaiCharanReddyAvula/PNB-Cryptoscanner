@@ -1,0 +1,110 @@
+{
+  "cryptography": [
+    {
+      "id": "CVE-2023-49083",
+      "severity": "high",
+      "description": "NULL-pointer dereference in PKCS7 parsing",
+      "affected_versions": ["41.0.0", "41.0.1", "41.0.2", "41.0.3", "41.0.4", "41.0.5"],
+      "max_affected_version": "41.0.5",
+      "fixed_version": "41.0.6"
+    },
+    {
+      "id": "CVE-2024-26130",
+      "severity": "high",
+      "description": "NULL pointer dereference in PKCS12 key parsing",
+      "affected_versions": ["42.0.0", "42.0.1", "42.0.2", "42.0.3", "42.0.4"],
+      "max_affected_version": "42.0.4",
+      "fixed_version": "42.0.5"
+    }
+  ],
+  "pyopenssl": [
+    {
+      "id": "CVE-2024-5535",
+      "severity": "critical",
+      "description": "OpenSSL SSL_select_next_proto buffer overread",
+      "affected_versions": [],
+      "max_affected_version": "24.1.0",
+      "fixed_version": "24.2.0"
+    }
+  ],
+  "pyjwt": [
+    {
+      "id": "CVE-2022-29217",
+      "severity": "high",
+      "description": "Key confusion when using HMAC with PEM-formatted public keys",
+      "affected_versions": [],
+      "max_affected_version": "2.4.0",
+      "fixed_version": "2.4.1"
+    }
+  ],
+  "python-jose": [
+    {
+      "id": "CVE-2024-33663",
+      "severity": "high",
+      "description": "Algorithm confusion via ECDSA P-521 and P-256 key reuse",
+      "affected_versions": [],
+      "max_affected_version": "3.3.0",
+      "fixed_version": "3.4.0"
+    }
+  ],
+  "paramiko": [
+    {
+      "id": "CVE-2023-48795",
+      "severity": "medium",
+      "description": "Terrapin attack — SSH prefix truncation (ChaCha20-Poly1305)",
+      "affected_versions": [],
+      "max_affected_version": "3.3.1",
+      "fixed_version": "3.4.0"
+    }
+  ],
+  "bcryptjs": [
+    {
+      "id": "GHSA-bcrypt-timing-2024",
+      "severity": "medium",
+      "description": "Timing side-channel in compare function",
+      "affected_versions": [],
+      "max_affected_version": "2.4.3",
+      "fixed_version": "3.0.0"
+    }
+  ],
+  "node-forge": [
+    {
+      "id": "CVE-2022-24771",
+      "severity": "high",
+      "description": "Signature verification bypass via crafted RSA signatures",
+      "affected_versions": [],
+      "max_affected_version": "1.2.1",
+      "fixed_version": "1.3.0"
+    }
+  ],
+  "jsonwebtoken": [
+    {
+      "id": "CVE-2022-23529",
+      "severity": "high",
+      "description": "Insecure key retrieval via secretOrPublicKey parameter injection",
+      "affected_versions": [],
+      "max_affected_version": "8.5.1",
+      "fixed_version": "9.0.0"
+    }
+  ],
+  "elliptic": [
+    {
+      "id": "CVE-2024-48949",
+      "severity": "critical",
+      "description": "ECDSA signature verification bypass",
+      "affected_versions": [],
+      "max_affected_version": "6.5.6",
+      "fixed_version": "6.5.7"
+    }
+  ],
+  "crypto-js": [
+    {
+      "id": "CVE-2023-46233",
+      "severity": "critical",
+      "description": "PBKDF2 uses 1 iteration by default, weak key derivation",
+      "affected_versions": [],
+      "max_affected_version": "4.1.1",
+      "fixed_version": "4.2.0"
+    }
+  ]
+}
