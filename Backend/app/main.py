@@ -232,35 +232,18 @@ except Exception as _ml_import_exc:
 # ── Health check ─────────────────────────────────────────────────
 
 @app.get("/health", tags=["System"])
-async def health_check(wipe: bool = False):
-    """Simple health check endpoint. If wipe=true, clear MongoDB."""
-    mongo_status = "N/A"
+async def health_check():
+    """Health check — reports service and database connectivity only."""
     try:
         get_database()
         mongodb = "connected"
     except DatabaseUnavailableError:
         mongodb = "disconnected"
 
-    if wipe:
-        logger.warning("🚨 SYSTEM WIPE TRIGGERED VIA HEALTH CHECK")
-        try:
-            db = get_database()
-            collections = await db.list_collection_names()
-            for coll in collections:
-                await db[coll].delete_many({})
-            mongo_status = "Success"
-        except DatabaseUnavailableError as e:
-            mongo_status = f"Error: {e}"
-        except Exception as e:
-            mongo_status = f"Error: {e}"
-
     return {
         "status": "healthy" if mongodb == "connected" else "degraded",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "mongodb": mongodb,
-        "wipe_status": {
-            "mongodb": mongo_status
-        }
     }
 

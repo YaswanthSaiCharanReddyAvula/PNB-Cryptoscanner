@@ -12,6 +12,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.core.security import decode_access_token
+from app.config import settings
 from app.db.connection import get_database
 from app.db.models import User
 
@@ -29,8 +30,9 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Demo tokens are not JWTs — must run before decode_access_token (which always fails on them)
-    if token.startswith("demo-token-"):
+    # Demo tokens are only accepted in DEBUG mode (never in production).
+    # In production DEBUG=false, all callers must use a real JWT.
+    if token.startswith("demo-token-") and settings.DEBUG:
         parts = token.split("-")
         uname = parts[2] if len(parts) > 2 else "user"
         if uname == "scanner":

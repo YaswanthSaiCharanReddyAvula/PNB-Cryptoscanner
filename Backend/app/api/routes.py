@@ -171,19 +171,19 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
 
-@router.delete("/reset-db", summary="Development endpoint to drop the entire database")
-async def drop_database_dev():
-    """Drops the entire quantumshield database. Use only for development!"""
+@router.delete("/reset-db", summary="Drop the entire database (admin only)")
+async def drop_database_dev(_admin: User = Depends(require_admin)):
+    """Drops the entire quantumshield database. Requires admin JWT token."""
     db = get_database()
     await db.client.drop_database(db.name)
+    logger.warning("[ADMIN] Database %s dropped by admin: %s", db.name, _admin.email)
     return {"status": "success", "message": f"Database {db.name} dropped completely."}
 
 
-@router.post("/system/wipe", summary="WIPE ALL MONGODB DATA")
-async def wipe_all_data():
-    """Clears all MongoDB collections in the current database."""
-    print("--- SYSTEM WIPE INITIATED ---")
-    
+@router.post("/system/wipe", summary="Wipe all MongoDB data (admin only)")
+async def wipe_all_data(_admin: User = Depends(require_admin)):
+    """Clears all MongoDB collections. Requires admin JWT token."""
+    logger.warning("[ADMIN] System wipe initiated by admin: %s", _admin.email)
     try:
         db = get_database()
         collections = await db.list_collection_names()
