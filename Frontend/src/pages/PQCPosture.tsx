@@ -200,8 +200,8 @@ export default function PQCPosture() {
       <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl overflow-hidden" style={{ backgroundColor: NAVY, border: `1px solid ${BRAND}33` }}>
         <div className="px-6 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
-            <h1 className="text-lg font-bold text-white tracking-wide">PQC Compliance Dashboard</h1>
-            <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Readiness Assessment</p>
+            <h1 className="text-lg font-bold text-white tracking-wide">PQC Readiness Assessment</h1>
+            <p className="text-xs text-blue-300 mt-0.5">Post-Quantum Cryptography Compliance Dashboard</p>
             <p className="text-[11px] text-white/55 mt-2 max-w-2xl leading-relaxed">
               &quot;Elite&quot; includes TLS 1.3-class endpoints; &quot;PQC / hybrid signal&quot; means Kyber-like strings in
               cipher/KEX names from the scanner — verify in your environment. Asset values below are posture heuristics and
@@ -221,13 +221,31 @@ export default function PQCPosture() {
         </div>
       </motion.div>
 
+      {/* Methodology Disclaimer Banner */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+        className="flex items-start gap-3 rounded-xl border border-blue-200/80 bg-blue-50/70 px-4 py-3 ring-1 ring-blue-100/50"
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0 text-blue-600 mt-0.5" />
+        <div>
+          <p className="text-[11px] font-semibold text-blue-900/90 uppercase tracking-wide">Scoring Methodology</p>
+          <p className="text-[11px] text-blue-800/80 leading-relaxed mt-0.5">
+            Scores are derived from <strong>classical heuristic and ML-based analysis</strong> (ONNX LightGBM ensemble model) of your
+            cryptographic posture, evaluating readiness against post-quantum cryptographic standards (NIST IR 8547).
+            This is not quantum computation — &quot;Quantum Score&quot; refers to readiness against future quantum-computer-enabled attacks.
+          </p>
+        </div>
+      </motion.div>
+
       {posture?.quantum_readiness != null && typeof posture.quantum_readiness.score === "number" && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm ring-1 ring-slate-100"
         >
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Quantum readiness (engine)</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">PQC Readiness Score (engine)</h3>
           <p className="text-xs text-muted-foreground mt-1 max-w-3xl leading-relaxed">
             From the latest scan&apos;s CBOM + catalog. Confidence reflects TLS scan certainty; drivers list the weakest categories.
           </p>

@@ -197,7 +197,7 @@ export default function CyberRating() {
           <p className="text-sm text-muted-foreground max-w-2xl">
             Enterprise-style score (0–1000) from the latest completed scan, plus historical scores for every scanned domain. Start or refresh scans from{" "}
             <Link to="/" className="font-medium text-primary hover:underline">Overview</Link>
-            . This is a composite rating, not proof of deployed NIST PQC algorithms.
+            . This is a composite rating derived from <strong>classical heuristic and ML-based analysis</strong>, not quantum computation.
           </p>
           {latestDomain && (
             <p className="mt-1 text-xs text-muted-foreground">

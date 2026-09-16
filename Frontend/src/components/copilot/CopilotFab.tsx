@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { Loader2, Send, X, Sparkles } from "lucide-react";
+import { Loader2, Send, X, Sparkles, WifiOff, Wifi } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { aiService } from "@/services/api";
+import { aiService, llmService } from "@/services/api";
 import { getLastScannedDomain } from "@/lib/lastScanDomain";
 import { formatCopilotRequestError } from "@/lib/copilotError";
 import { cn } from "@/lib/utils";
@@ -23,10 +23,33 @@ export function CopilotFab() {
   /** Read on send so the API always gets the current input value (avoids stale React state). */
   const domainInputRef = useRef<HTMLInputElement>(null);
 
+  // ── LLM availability status ───────────────────────────────────
+  const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
+  const [llmChecking, setLlmChecking] = useState(false);
+
+  const checkLlmStatus = async () => {
+    setLlmChecking(true);
+    try {
+      const res = await llmService.getStatus();
+      setLlmAvailable(res.data?.available ?? false);
+    } catch {
+      setLlmAvailable(false);
+    } finally {
+      setLlmChecking(false);
+    }
+  };
+
   useEffect(() => {
     const d = getLastScannedDomain();
     if (d) setDomain(d);
   }, []);
+
+  // Check LLM status when copilot opens
+  useEffect(() => {
+    if (open) {
+      void checkLlmStatus();
+    }
+  }, [open]);
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -85,7 +108,7 @@ export function CopilotFab() {
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wide text-primary">Copilot</p>
                   <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                    QuantumShield scan context only. Off-topic questions are declined.
+                    Powered by your local, privacy-preserving AI. No data leaves your network.
                   </p>
                 </div>
                 <Button
@@ -99,6 +122,18 @@ export function CopilotFab() {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
+
+              {/* LLM availability banner */}
+              {llmAvailable === false && !llmChecking && (
+                <div className="border-b border-red-500/20 bg-red-500/8 px-4 py-2.5 dark:bg-red-500/12">
+                  <div className="flex items-center gap-2">
+                    <WifiOff className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                    <p className="text-[11px] font-medium leading-relaxed text-red-900/90 dark:text-red-100/90">
+                      Local AI model is offline. Start LM Studio and load a model to enable AI-assisted analysis.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="border-b border-border/80 bg-amber-500/8 px-4 py-2.5 dark:bg-amber-500/12">
                 <p className="text-[11px] leading-relaxed text-amber-950/90 dark:text-amber-100/90">
@@ -182,7 +217,7 @@ export function CopilotFab() {
         layout
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "pointer-events-auto flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg transition-all md:h-[3.75rem] md:w-[3.75rem]",
+          "pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg transition-all md:h-[3.75rem] md:w-[3.75rem]",
           "bg-gradient-to-br from-primary to-primary/85 text-primary-foreground",
           "ring-2 ring-primary/30 hover:ring-primary/50 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           open && "ring-primary",
@@ -194,6 +229,16 @@ export function CopilotFab() {
           <Sparkles className="h-6 w-6 md:h-7 md:w-7" strokeWidth={2} />
           <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] leading-none">AI</span>
         </span>
+        {/* LLM status indicator dot */}
+        {llmAvailable !== null && (
+          <span
+            className={cn(
+              "absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white shadow-sm",
+              llmAvailable ? "bg-emerald-500" : "bg-red-500",
+            )}
+            title={llmAvailable ? "Local AI model online" : "Local AI model offline"}
+          />
+        )}
       </motion.button>
     </div>
   );

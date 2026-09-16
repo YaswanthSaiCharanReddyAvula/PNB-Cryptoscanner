@@ -172,11 +172,11 @@ export default function Login() {
               )}
             </div>
             <h1 className="text-xl font-bold text-foreground">
-              {step === "login" ? "QSCAS" : "Two-Step Verification"}
+              {step === "login" ? "Crypto Scanner" : "Two-Step Verification"}
             </h1>
             <p className="text-xs text-muted-foreground mt-2">
               {step === "login" 
-                ? "PSB Hackathon Series — In collaboration with IIT Kanpur"
+                ? ""
                 : `We sent a 6-digit code to ${otpEmail}`
               }
             </p>

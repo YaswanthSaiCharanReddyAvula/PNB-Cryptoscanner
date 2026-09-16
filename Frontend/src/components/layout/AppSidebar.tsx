@@ -102,7 +102,7 @@ export function AppSidebar() {
                 QuantumShield
               </p>
               <p className="text-[11px] text-sidebar-foreground/65 leading-tight">
-                Quantum‑safe migration platform
+                PQC Readiness &amp; Migration Platform
               </p>
             </div>
           )}

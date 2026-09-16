@@ -28,7 +28,7 @@ from app.db.connection import (
     disconnect_db,
     get_database,
 )
-from app.api.routes import router as scanner_router          # v1 scanner & all dashboard endpoints
+from app.api.main_router import main_router as scanner_router          # v1 scanner & all dashboard endpoints
 from app.api.v1.ws import router as ws_router               # real-time scan updates
 from app.utils.logger import get_logger
 from app.modules.report_scheduler import scheduler_loop
@@ -233,17 +233,26 @@ except Exception as _ml_import_exc:
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check — reports service and database connectivity only."""
+    """Health check — reports service, database, and LLM connectivity."""
     try:
         get_database()
         mongodb = "connected"
     except DatabaseUnavailableError:
         mongodb = "disconnected"
 
+    # LLM status (non-blocking, fast timeout)
+    try:
+        from app.modules.lm_studio_client import check_llm_health
+        llm_info = await check_llm_health()
+        llm_status = "connected" if llm_info.get("available") else "unavailable"
+    except Exception:
+        llm_status = "unavailable"
+
     return {
         "status": "healthy" if mongodb == "connected" else "degraded",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "mongodb": mongodb,
+        "llm": llm_status,
     }
 

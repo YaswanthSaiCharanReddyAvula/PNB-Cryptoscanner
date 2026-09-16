@@ -180,7 +180,20 @@ async def build_copilot_context(db, scans_collection: str, domain: Optional[str]
             }
             for t in (tls[:8] if isinstance(tls, list) else [])
         ],
-        "notes": "Answer only using this context. Do not invent scan results.",
+        "scoring_methodology": "classical_heuristic_ml",
+        "methodology_disclaimer": (
+            "Quantum scores are produced by classical heuristic rules and "
+            "an ONNX LightGBM ML ensemble model. No quantum circuits, qubits, "
+            "or quantum hardware are involved. 'Quantum Score' refers to "
+            "readiness against future quantum-computer-enabled attacks, not to "
+            "the use of quantum computation in the scoring process."
+        ),
+        "notes": (
+            "Answer only using this context. Do not invent scan results. "
+            "When discussing the Quantum Score or PQC Readiness, always clarify "
+            "that the assessment uses classical heuristic and ML-based analysis, "
+            "not quantum computation."
+        ),
     }
 
 

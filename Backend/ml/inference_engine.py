@@ -27,6 +27,8 @@ NUM_CLASSES = 3
 
 
 class MLAssessment(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     p_safe: float = 0.0
     p_partial: float = 0.0
     p_vulnerable: float = 0.0

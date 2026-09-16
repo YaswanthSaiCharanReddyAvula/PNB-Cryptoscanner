@@ -1,9 +1,16 @@
 """
-QuantumShield — Quantum Risk Engine
+QuantumShield — PQC Readiness Assessment Engine
 
-Evaluates cryptographic components against PQC transition heuristics (see
-NIST IR 8547 for organizational framing; this module is observational, not a
-formal certification).
+Evaluates cryptographic components against Post-Quantum Cryptography (PQC)
+transition heuristics.  See NIST IR 8547 for organizational framing; this
+module is observational, not a formal certification.
+
+**Methodology disclaimer:**
+Scores are produced by *classical* heuristic rules and a LightGBM ML
+ensemble model (ONNX).  No quantum circuits, qubits, or quantum hardware
+are involved.  The term "Quantum Score" refers to readiness against future
+quantum-computer-enabled attacks, not to the use of quantum computation in
+the scoring process itself.
 
 Scoring (v2)
 ------------
@@ -15,6 +22,12 @@ Scoring (v2)
 """
 
 from __future__ import annotations
+
+METHODOLOGY_DISCLAIMER = (
+    "Scores are derived from classical heuristic and ML-based analysis of "
+    "your cryptographic posture, evaluating readiness against post-quantum "
+    "cryptographic standards (NIST IR 8547). This is not quantum computation."
+)
 
 from collections import defaultdict
 from typing import Dict, List, Literal, Optional, Tuple

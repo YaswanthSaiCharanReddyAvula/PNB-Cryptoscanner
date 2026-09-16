@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # ── MongoDB (existing scanner pipeline) ──────────────────────
     MONGO_URI: str = "mongodb://localhost:27017"
-    MONGO_DB_NAME: str = "quantumshield"
+    MONGO_DB_NAME: str = "pnb_crypto_scanner"
 
     # ── JWT Auth ─────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_SECRET"
@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     # If True, httpx uses HTTP_PROXY/HTTPS_PROXY from the environment (can break local LM Studio).
     # Keep False unless your LLM is only reachable via a proxy.
     LLM_TRUST_ENV: bool = False
+    # SSRF guard: comma-separated allowlist of LLM target hosts.
+    # Requests to hosts outside this list are blocked.  Use "*" to disable.
+    LLM_ALLOWED_HOSTS: str = "127.0.0.1,localhost,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
 
     @computed_field
     @property

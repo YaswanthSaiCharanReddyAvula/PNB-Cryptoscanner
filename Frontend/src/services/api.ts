@@ -238,6 +238,14 @@ export const aiService = {
     api.post("/ai/copilot/chat", body),
 };
 
+// ── LLM Status (local AI model availability) ─────────────────────
+
+export const llmService = {
+  /** Check if the local AI model (LM Studio / OpenAI-compatible) is reachable. */
+  getStatus: () =>
+    api.get<{ available: boolean; model: string; url: string; error?: string }>("/llm/status"),
+};
+
 // ── Reports & threat-model (exports, bundles, roadmap) ──────────
 
 export const reportingService = {

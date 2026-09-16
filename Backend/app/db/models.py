@@ -178,7 +178,12 @@ class QuantumScoreBreakdown(BaseModel):
 
 
 class QuantumScore(BaseModel):
-    """Overall Quantum Readiness Score."""
+    """Overall PQC Readiness Score.
+
+    Scores are derived from classical heuristic and ML-based analysis,
+    evaluating cryptographic posture against post-quantum standards
+    (NIST IR 8547).  This is *not* quantum computation.
+    """
     score: float = Field(ge=0, le=100)
     risk_level: RiskLevel
     breakdown: QuantumScoreBreakdown
@@ -188,6 +193,13 @@ class QuantumScore(BaseModel):
     catalog_version: str = ""
     drivers: List[str] = Field(default_factory=list)
     aggregation: str = "estate_weakest"
+    methodology: str = Field(
+        default="classical_heuristic_ml",
+        description=(
+            "Scoring methodology: classical heuristic rules combined with an "
+            "ONNX LightGBM ensemble model. Not quantum computation."
+        ),
+    )
 
 
 class Recommendation(BaseModel):
