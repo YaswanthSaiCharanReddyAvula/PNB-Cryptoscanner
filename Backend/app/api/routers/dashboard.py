@@ -171,6 +171,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
 from .common import *
+from .common import _compute_dashboard_kpis_from_completed_scans, _DEFAULT_ORG_POLICY
 
 
 

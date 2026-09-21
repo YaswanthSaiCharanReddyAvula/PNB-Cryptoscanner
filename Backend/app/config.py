@@ -166,6 +166,20 @@ class Settings(BaseSettings):
     SCANNER_STAGE_PREVIEW_LIMIT: int = 3
     SCANNER_STAGE_MESSAGE_MAX_LEN: int = 300
 
+    # ── Network Scan Engine Hardening ─────────────────────────────
+    NETWORK_DEFAULT_PROFILE: str = "standard"
+    NETWORK_BATCH_SIZE: int = 50
+    NETWORK_MAX_CONCURRENCY: int = 100
+    NETWORK_TCP_TIMEOUT: float = 2.0
+    NETWORK_BANNER_CONNECT_TIMEOUT: float = 3.0
+    NETWORK_BANNER_READ_TIMEOUT: float = 2.0
+    NETWORK_MAX_BANNER_SIZE: int = 4096
+    NETWORK_RETRY_COUNT: int = 1
+    NETWORK_RETRY_BACKOFF: float = 1.0
+    NETWORK_ADAPTIVE_THRESHOLD: int = 40
+    NETWORK_ALLOW_PRIVATE_TARGETS: bool = False
+    NETWORK_ALLOW_IPV6: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -171,6 +171,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
 from .common import *
+from .common import _normalize_negotiated_tls_label, _encryption_protocol_sort_key, _build_cyber_rating_payload
 
 
 

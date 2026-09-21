@@ -171,6 +171,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
 from .common import *
+from .common import _run_scan_pipeline_gated, _asset_host_set, _tls_by_host
 
 
 

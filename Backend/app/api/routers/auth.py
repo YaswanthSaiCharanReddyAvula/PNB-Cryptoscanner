@@ -171,6 +171,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Scanner"])
 from .common import *
+from .common import _get_otp_html
 
 
 

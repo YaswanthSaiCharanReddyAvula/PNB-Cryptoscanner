@@ -1,10 +1,14 @@
 """
 QuantumShield — Advanced OS Fingerprint Engine (Stage 13)
 
-Two-tier OS fingerprinting:
-  Tier 1 (userspace): TCP window size, MSS, connection behaviour — always runs.
-  Tier 2 (privileged): raw SYN probe with TCP option analysis — graceful skip
-  if not running as root/admin.
+Userspace TCP OS fingerprinting via socket option observation:
+  Tier 1 (userspace): TCP window size, MSS, TTL — always runs.
+
+Tier 2 (privileged raw SYN probe): PLANNED / NOT IMPLEMENTED.
+  - Requires root/admin privileges.
+  - Requires raw-socket crafting (scapy or equivalent).
+  - Security implications: must be explicitly authorized.
+  - Deferred to a future iteration with a separate privilege model.
 """
 
 from __future__ import annotations

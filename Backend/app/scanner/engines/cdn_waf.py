@@ -72,7 +72,7 @@ CLOUD_ASN_MAP: dict[str, str] = {
 
 class CDNWAFEngine(ScanStage):
     name = "cdn_waf"
-    order = 6
+    order = 3
     timeout_seconds = 45
     max_retries = 0
     criticality = StageCriticality.OPTIONAL

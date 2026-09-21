@@ -63,12 +63,54 @@ class ReconResult(BaseModel):
     dmarc_record: Optional[str] = None
 
 
-# ── Port scanning ─────────────────────────────────────────────────────
+# ── Port scanning & Evidence ──────────────────────────────────────────
+
+from enum import Enum
+
+class PortState(str, Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    FILTERED = "filtered"
+    ERROR = "error"
+    UNKNOWN = "unknown"
+
+class TargetAuthorization(BaseModel):
+    allowed: bool
+    reason: str
+
+class NormalizedTarget(BaseModel):
+    hostname: Optional[str] = None
+    ip: str
+    ip_version: int = 4
+    source: str = "network_scan"
+    authorization: TargetAuthorization
+
+class NetworkObservation(BaseModel):
+    evidence_id: str
+    scanner: str = "network_scan"
+    asset_id: Optional[str] = None
+    observation_type: str
+    target: str
+    port: Optional[int] = None
+    transport: str = "tcp"
+    observed_at: datetime = Field(default_factory=datetime.utcnow)
+    confidence: float = 1.0
 
 class PortResult(BaseModel):
     ip: str
     port: int
-    state: str  # open / filtered / closed / error
+    state: PortState
+    service: Optional[ServiceFingerprint] = None
+    evidence_ids: list[str] = Field(default_factory=list)
+
+class NetworkResult(BaseModel):
+    scan_id: str
+    asset_id: Optional[str] = None
+    target: dict[str, str] = Field(default_factory=dict)
+    ports: list[PortResult] = Field(default_factory=list)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    status: str = "completed"
 
 
 # ── Service & OS fingerprinting ───────────────────────────────────────
@@ -212,6 +254,7 @@ class TechFingerprint(BaseModel):
     version: Optional[str] = None
     confidence: str = "medium"
     evidence: Optional[str] = None
+    evidence_sources: list[str] = Field(default_factory=list)
     cpe: Optional[str] = None
 
 

@@ -209,7 +209,17 @@ async def run_httpx(subdomains: List[str]) -> List[str]:
 
 
 async def scan_ports(target: str, ports: str | None = None) -> List[int]:
-    """Scan ports with nmap."""
+    """
+    DEPRECATED: Use the canonical NetworkScanEngine in `app/scanner/engines/network.py` instead.
+    Scan ports with nmap.
+    """
+    import warnings
+    warnings.warn(
+        "asset_discovery.scan_ports() is deprecated and will be removed. "
+        "Use NetworkScanEngine instead.", 
+        DeprecationWarning, stacklevel=2
+    )
+    
     ports = ports or settings.DEFAULT_PORTS
     output = await _run_command([
         "nmap", "-Pn", "-sT", "-p", ports, "--open", "-oG", "-", target
@@ -217,14 +227,14 @@ async def scan_ports(target: str, ports: str | None = None) -> List[int]:
 
     open_ports: List[int] = []
     if not output or "Failed to resolve" in output:
-        logger.warning(f"Nmap failed to resolve or scan {target}. Attempting default ports.")
-        return [443]
+        logger.error(f"Nmap failed to resolve or scan {target}.")
+        return []
 
     for line in output.splitlines():
         port_matches = re.findall(r"(\d+)/open", line)
         open_ports.extend(int(p) for p in port_matches)
 
-    return open_ports if open_ports else [443]
+    return open_ports
 
 
 async def get_ns_records(domain: str) -> List[NameServerInfo]:

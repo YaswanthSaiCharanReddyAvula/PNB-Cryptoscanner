@@ -1,8 +1,12 @@
 """
-QuantumShield — OS Fingerprint Engine (Stage 3)
+QuantumShield — OS Fingerprint Engine (Stage 4)
 
 Passive OS detection from SSH banners, HTTP headers, TTL hints, and
 container indicators.  No raw-socket crafting — userspace only.
+
+HTTP Server header evidence is downgraded when CDN/WAF is detected
+upstream (CDNWAFEngine at Stage 3) to prevent edge-infrastructure
+misattribution.
 """
 
 from __future__ import annotations
@@ -48,31 +52,26 @@ SERVER_OS_MAP: list[tuple[str, str, str]] = [
     (r"Apache",                       "Linux",   "Linux (Apache)"),
 ]
 
-RUNTIME_PATTERNS: list[tuple[str, str]] = [
-    (r"PHP/([\d.]+)",          "PHP {0}"),
-    (r"Express",               "Node.js (Express)"),
-    (r"ASP\.NET",              ".NET"),
-    (r"Werkzeug|gunicorn|uvicorn", "Python"),
-    (r"Servlet",               "Java (Servlet)"),
-]
-
 CONTAINER_HOSTNAME_RE = re.compile(
     r"^[0-9a-f]{12}$|[0-9a-f]{8}-[0-9a-f]{4}-|deployment-|statefulset-|daemonset-"
 )
 
+# Weights for different evidence sources (origin context).
+# When a CDN/WAF is detected, HTTP Server header weight is reduced
+# to EDGE_HTTP_SERVER_WEIGHT because the header likely reflects
+# edge infrastructure rather than the origin server.
 OS_EVIDENCE_WEIGHTS = {
     "ssh_banner":       0.9,
     "http_server_os":   0.7,
-    "x_powered_by":     0.5,
-    "cookie_name":      0.3,
-    "ttl_guess":        0.2,
     "hostname_pattern": 0.3,
 }
+
+EDGE_HTTP_SERVER_WEIGHT = 0.15
 
 
 class OSFingerprintEngine(ScanStage):
     name = "os_fingerprint"
-    order = 3
+    order = 4
     timeout_seconds = 45
     max_retries = 1
     criticality = StageCriticality.IMPORTANT
@@ -84,6 +83,9 @@ class OSFingerprintEngine(ScanStage):
         fps: list[dict] = []
         hosts_done: set[str] = set()
 
+        # Build CDN/WAF lookup from upstream CDNWAFEngine results
+        cdn_waf_hosts = self._build_cdn_waf_lookup(ctx)
+
         for svc in (ctx.services or []):
             s = svc if isinstance(svc, dict) else {}
             host = s.get("host", "")
@@ -94,9 +96,9 @@ class OSFingerprintEngine(ScanStage):
             votes: dict[str, float] = {}
             evidence: list[str] = []
             os_version: Optional[str] = None
-            runtime: Optional[str] = None
             container = False
             container_ev: list[str] = []
+            host_behind_edge = host in cdn_waf_hosts
 
             host_services = [
                 sv if isinstance(sv, dict) else {}
@@ -108,6 +110,7 @@ class OSFingerprintEngine(ScanStage):
                 banner = sv.get("raw_banner") or ""
                 sname = sv.get("service_name") or ""
 
+                # SSH banners are direct origin evidence — CDN does not proxy SSH
                 if "ssh" in sname.lower() or sv.get("port") == 22:
                     family, version = self._parse_ssh(banner)
                     if family:
@@ -115,18 +118,21 @@ class OSFingerprintEngine(ScanStage):
                         os_version = version
                         evidence.append("ssh_banner")
 
+                # HTTP Server header — downgrade weight when behind CDN/WAF
                 if sv.get("port") in (80, 443, 8080, 8443) or sname.lower() in ("http", "https"):
                     family, version = self._parse_server(banner)
                     if family:
-                        votes[family] = votes.get(family, 0) + OS_EVIDENCE_WEIGHTS["http_server_os"]
+                        weight = (
+                            EDGE_HTTP_SERVER_WEIGHT
+                            if host_behind_edge
+                            else OS_EVIDENCE_WEIGHTS["http_server_os"]
+                        )
+                        votes[family] = votes.get(family, 0) + weight
                         if not os_version:
                             os_version = version
-                        evidence.append("http_server_os")
-
-                    rt = self._parse_runtime(banner)
-                    if rt:
-                        runtime = rt
-                        evidence.append("x_powered_by")
+                        evidence.append(
+                            "http_server_os_edge" if host_behind_edge else "http_server_os"
+                        )
 
             if CONTAINER_HOSTNAME_RE.search(host):
                 container = True
@@ -142,7 +148,6 @@ class OSFingerprintEngine(ScanStage):
                 os_family=best_family,
                 os_version=os_version,
                 os_confidence=conf,
-                runtime=runtime,
                 container_likely=container,
                 container_evidence=container_ev,
                 evidence_sources=evidence,
@@ -152,6 +157,23 @@ class OSFingerprintEngine(ScanStage):
             status="completed",
             data={"os_fingerprints": fps},
         )
+
+    # ── CDN/WAF correlation ───────────────────────────────────────────
+
+    @staticmethod
+    def _build_cdn_waf_lookup(ctx: ScanContext) -> set[str]:
+        """Return set of hostnames that are behind a CDN, WAF, or reverse proxy."""
+        edge_hosts: set[str] = set()
+        for intel in (ctx.cdn_waf_intel or []):
+            i = intel if isinstance(intel, dict) else {}
+            host = i.get("host", "")
+            if not host:
+                continue
+            if i.get("cdn_provider") or i.get("waf_detected") or i.get("reverse_proxy"):
+                edge_hosts.add(host)
+        return edge_hosts
+
+    # ── Banner parsing ────────────────────────────────────────────────
 
     @staticmethod
     def _parse_ssh(banner: str):
@@ -170,11 +192,3 @@ class OSFingerprintEngine(ScanStage):
                 ver = ver_tpl.format(*m.groups()) if m.groups() else ver_tpl
                 return family, ver
         return None, None
-
-    @staticmethod
-    def _parse_runtime(banner: str) -> Optional[str]:
-        for pattern, tpl in RUNTIME_PATTERNS:
-            m = re.search(pattern, banner, re.IGNORECASE)
-            if m:
-                return tpl.format(*m.groups()) if m.groups() else tpl
-        return None

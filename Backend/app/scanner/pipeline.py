@@ -120,6 +120,9 @@ class ScanContext:
         self.hidden_findings: list[dict] = []
         self.vuln_findings: list[dict] = []
 
+        # --- HTTP evidence cache (shared across tech/web engines) ---
+        self.http_cache: dict[str, Any] = {}
+
         # --- Aggregated ---
         self.all_findings: list[dict] = []
         self.graph: Optional[dict] = None
@@ -614,8 +617,8 @@ class PipelineManager:
         if stage_name == "tech_fingerprint":
             techs = ctx.tech_fingerprints if isinstance(ctx.tech_fingerprints, list) else []
             unique_tech = {
-                str(t.get("technology", "")).lower()
-                for t in techs if isinstance(t, dict) and t.get("technology")
+                str(t.get("name", "")).lower()
+                for t in techs if isinstance(t, dict) and t.get("name")
             }
             return {
                 "tech_hits": len(techs),
