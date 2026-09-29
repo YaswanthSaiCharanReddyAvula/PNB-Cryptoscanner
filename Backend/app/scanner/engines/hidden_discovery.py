@@ -4,14 +4,19 @@ QuantumShield — Hidden Endpoint Discovery Engine (Stage 9)
 Discovers robots.txt paths, sitemap URLs, common hidden paths via
 dictionary probing, backup files, admin panels, sensitive files, and
 JS-extracted routes.  All confidence-scored.
+
+Hardening changes (v2):
+  WEB-04: Bounded streaming reads — avoids full-body OOM on large files
+  WEB-05: JS-extracted paths are DiscoveredReferences, not verified live findings
+  WEB-03: JS URL fetches are scope-validated before downloading
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -25,6 +30,11 @@ from app.scanner.pipeline import (
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# WEB-04: Response body limits for hidden discovery
+_MAX_BODY_BYTES = 256 * 1024   # 256 KB for path-fuzz response bodies
+_MAX_JS_BYTES   = 512 * 1024   # 512 KB for JavaScript files
+_MAX_CONFIDENCE_BODY = 2000    # chars used for confidence scoring body check
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -92,14 +102,33 @@ class HiddenDiscoveryEngine(ScanStage):
     @staticmethod
     def _web_hosts(ctx: ScanContext) -> list[str]:
         hosts: list[str] = []
+        web_ports = {80, 443, 8080, 8443, 8000, 8008, 8888, 3000, 5000, 4443, 9443}
         for svc in (ctx.services or []):
-            s = svc if isinstance(svc, dict) else {}
-            if s.get("protocol_category") == "web" or s.get("port") in (80, 443, 8080, 8443):
-                h = s.get("host", "")
+            s = svc if isinstance(svc, dict) else (
+                svc.model_dump() if hasattr(svc, "model_dump") else {}
+            )
+            proto = s.get("protocol_category", "").lower()
+            port = s.get("port")
+            try:
+                port_int = int(port) if port is not None else 0
+            except (TypeError, ValueError):
+                port_int = 0
+            is_web = proto in ("web", "http", "https") or port_int in web_ports
+            if is_web:
+                h = s.get("host", "").strip()
                 if h and h not in hosts:
                     hosts.append(h)
         if not hosts:
-            hosts = list(ctx.subdomains or [])
+            for sub in ctx.subdomains or []:
+                if isinstance(sub, dict):
+                    h = sub.get("hostname") or sub.get("host") or sub.get("subdomain") or ""
+                elif isinstance(sub, str):
+                    h = sub
+                else:
+                    h = ""
+                h = h.strip()
+                if h and h not in hosts:
+                    hosts.append(h)
         return hosts
 
     async def _probe_host(self, client: httpx.AsyncClient, host: str, ctx: ScanContext):
@@ -144,7 +173,13 @@ class HiddenDiscoveryEngine(ScanStage):
                     else:
                         consecutive_429 = 0
 
-                    confidence = self._confidence(resp.status_code, path, resp.text[:2000])
+                    # WEB-04: Read bounded body for confidence scoring — avoid OOM
+                    try:
+                        body_text = resp.text[:_MAX_CONFIDENCE_BODY]
+                    except Exception:
+                        body_text = ""
+
+                    confidence = self._confidence(resp.status_code, path, body_text)
                     if confidence >= 0.3:
                         findings.append(HiddenFinding(
                             host=host,
@@ -179,16 +214,21 @@ class HiddenDiscoveryEngine(ScanStage):
             except Exception:
                 pass
 
+        # WEB-05: JS routes are DiscoveredReferences, NOT verified live findings.
+        # They are logged with finding_type="js_reference" and confidence=0.4
+        # (below the confidence threshold used by downstream risk engines for live findings).
         js_routes = await self._extract_js_routes(client, host, ctx)
         reqs += 1
         for route in js_routes:
             findings.append(HiddenFinding(
-                host=host, path=route, status_code=0,
+                host=host,
+                path=route,
+                status_code=0,                 # Not yet verified — no HTTP request made
                 discovery_source="js_extraction",
-                finding_type="api_leak",
-                risk="medium",
-                confidence=0.5,
-                evidence=f"Route found in JavaScript: {route}",
+                finding_type="js_reference",   # WEB-05: was "api_leak"
+                risk="info",                   # WEB-05: not a confirmed issue
+                confidence=0.4,                # WEB-05: below verified-finding threshold
+                evidence=f"Path string extracted from JavaScript source (unverified reference): {route}",
             ).model_dump())
 
         return findings, reqs
@@ -225,17 +265,57 @@ class HiddenDiscoveryEngine(ScanStage):
         return paths
 
     async def _extract_js_routes(self, client, host, ctx) -> list[str]:
+        """
+        Extract API-like path strings from JavaScript files.
+        WEB-03: Only fetches JS files whose URL is same-host.
+        WEB-04: Reads JS file body up to _MAX_JS_BYTES to avoid OOM.
+        WEB-05: Returns raw string matches — caller labels them as js_reference.
+        """
         routes: set[str] = set()
         try:
             async with ctx.throttle.acquire("http_probe"):
-                resp = await client.get(f"https://{host}/", follow_redirects=True)
-                js_urls = re.findall(r'<script[^>]+src=["\']([^"\']+\.js[^"\']*)["\']', resp.text)
+                resp = await client.get(f"https://{host}/", follow_redirects=False)
+                html_text = resp.text[:16384]   # Only parse script tags from first 16KB of HTML
+                js_urls = re.findall(r'<script[^>]+src=["\']([^"\']+\.js[^"\']*)["\']', html_text)
+
                 for js_url in js_urls:
-                    full = js_url if js_url.startswith("http") else f"https://{host}{js_url}" if js_url.startswith("/") else f"https://{host}/{js_url}"
+                    # WEB-03: Normalize and scope-check the JS URL before fetching
+                    if js_url.startswith("http"):
+                        full = js_url
+                        try:
+                            parsed = urlparse(js_url)
+                            if parsed.hostname and parsed.hostname.lower() != host.lower():
+                                logger.debug(
+                                    "Skipping cross-origin JS: %s (origin: %s)", js_url, host
+                                )
+                                continue
+                        except Exception:
+                            continue
+                    elif js_url.startswith("/"):
+                        full = f"https://{host}{js_url}"
+                    else:
+                        full = f"https://{host}/{js_url}"
+
                     try:
                         async with ctx.throttle.acquire("http_probe"):
-                            jr = await client.get(full, timeout=8.0)
-                            found = re.findall(r'["\`](/(?:api|v\d+|rest|graphql)[^"\`\s?#]{2,60})["\`]', jr.text)
+                            # WEB-04: Stream JS with bounded read
+                            async with client.stream("GET", full, timeout=8.0) as stream:
+                                body, truncated = b"", False
+                                chunks = []
+                                total = 0
+                                async for chunk in stream.aiter_bytes(8192):
+                                    if total + len(chunk) > _MAX_JS_BYTES:
+                                        chunks.append(chunk[: _MAX_JS_BYTES - total])
+                                        truncated = True
+                                        break
+                                    chunks.append(chunk)
+                                    total += len(chunk)
+                                body = b"".join(chunks)
+                            js_text = body.decode("utf-8", errors="replace")
+                            found = re.findall(
+                                r'["\`](/(?:api|v\d+|rest|graphql)[^"\`\s?#]{2,60})["\`]',
+                                js_text,
+                            )
                             routes.update(found)
                     except Exception:
                         pass

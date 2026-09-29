@@ -204,6 +204,18 @@ class CertificateDetail(BaseModel):
     key_id: Optional[str] = None
 
 
+class TLSValidation(BaseModel):
+    chain_present: bool = False
+    chain_valid: Optional[bool] = None
+    trusted: Optional[bool] = None
+    hostname_valid: Optional[bool] = None
+
+
+class TLSAlpn(BaseModel):
+    offered: list[str] = Field(default_factory=list)
+    negotiated: Optional[str] = None
+
+
 class TLSProfile(BaseModel):
     host: str
     port: int
@@ -216,6 +228,8 @@ class TLSProfile(BaseModel):
     ocsp_stapling: Optional[bool] = None
     starttls_protocol: Optional[str] = None
     pqc_signals: list[str] = Field(default_factory=list)
+    validation: Optional[TLSValidation] = None
+    alpn: Optional[TLSAlpn] = None
     confidence: str = "high"
 
 

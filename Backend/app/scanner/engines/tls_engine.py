@@ -25,6 +25,8 @@ from app.scanner.models import (
     CipherDetail,
     StageResult,
     TLSProfile,
+    TLSAlpn,
+    TLSValidation,
 )
 from app.scanner.pipeline import MergeStrategy, ScanContext, ScanStage, StageCriticality
 from app.utils.logger import get_logger
@@ -378,46 +380,11 @@ class TLSCryptoEngine(ScanStage):
 
     # ── 4. extract leaf certificate (+ negotiated cipher) ────────────
 
-    async def _extract_cert(
-        self, host: str, port: int, ctx: ScanContext,
-    ) -> tuple[CertificateDetail | None, str | None]:
-        """Return *(CertificateDetail, negotiated_cipher_name)*.
-
-        Both elements may be ``None`` on failure.
-        """
-        sc = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        sc.check_hostname = False
-        sc.verify_mode = ssl.CERT_NONE
-
+    def _parse_cert(self, der: bytes) -> CertificateDetail | None:
         try:
-            async with self._throttled(ctx):
-                _, writer = await asyncio.wait_for(
-                    asyncio.open_connection(
-                        host, port, ssl=sc, server_hostname=host,
-                    ),
-                    timeout=_PROBE_TIMEOUT,
-                )
-        except (ssl.SSLError, TimeoutError, OSError, ConnectionError):
-            return None, None
-
-        try:
-            ssl_obj = writer.get_extra_info("ssl_object")
-            if ssl_obj is None:
-                return None, None
-
-            negotiated: str | None = None
-            ci = ssl_obj.cipher()
-            if ci:
-                negotiated = ci[0]
-
-            der = ssl_obj.getpeercert(binary_form=True)
-            if der is None:
-                return None, negotiated
-
             cert = x509.load_der_x509_certificate(der)
             now = datetime.now(timezone.utc)
-
-            # Key type / size
+            
             pub = cert.public_key()
             if isinstance(pub, rsa.RSAPublicKey):
                 key_type, key_size = "RSA", pub.key_size
@@ -426,23 +393,18 @@ class TLSCryptoEngine(ScanStage):
             else:
                 key_type, key_size = "unknown", None
 
-            # Signature algorithm
             try:
                 sig_alg: str = cert.signature_algorithm_oid._name  # type: ignore[attr-defined]
             except AttributeError:
                 sig_alg = cert.signature_algorithm_oid.dotted_string
 
-            # Subject Alternative Names
             sans: list[str] = []
             try:
-                ext = cert.extensions.get_extension_for_class(
-                    x509.SubjectAlternativeName,
-                )
+                ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
                 sans = ext.value.get_values_for_type(x509.DNSName)
             except (x509.ExtensionNotFound, Exception):
                 pass
 
-            # Validity window (compat shim for older cryptography builds)
             try:
                 not_before = cert.not_valid_before_utc
                 not_after = cert.not_valid_after_utc
@@ -452,7 +414,7 @@ class TLSCryptoEngine(ScanStage):
 
             days_left = (not_after - now).days
 
-            detail = CertificateDetail(
+            return CertificateDetail(
                 subject=cert.subject.rfc4514_string(),
                 issuer=cert.issuer.rfc4514_string(),
                 serial=str(cert.serial_number),
@@ -467,19 +429,119 @@ class TLSCryptoEngine(ScanStage):
                 is_self_signed=(cert.issuer == cert.subject),
                 fingerprint_sha256=cert.fingerprint(hashes.SHA256()).hex(":"),
                 quantum_vulnerable=key_type in ("RSA", "EC"),
-                # ── CBOM compliance fields ──
                 subject_public_key_ref=self._safe_extract_pk_oid(cert),
                 sig_algorithm_oid=cert.signature_algorithm_oid.dotted_string,
                 key_id=self._safe_extract_key_id(cert),
             )
-            return detail, negotiated
+        except Exception as exc:
+            return None
+
+    # ── 4. extract tls data (chain, negotiated cipher, alpn, validation) ──
+
+    async def _extract_tls_data(
+        self, host: str, port: int, ctx: ScanContext,
+    ) -> tuple[list[CertificateDetail], str | None, TLSAlpn | None, TLSValidation | None]:
+        """Return *(cert_chain, negotiated_cipher_name, alpn, validation)*."""
+        sc = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        sc.check_hostname = False
+        sc.verify_mode = ssl.CERT_NONE
+        
+        try:
+            sc.set_alpn_protocols(["h2", "http/1.1"])
+        except Exception:
+            pass
+
+        try:
+            async with self._throttled(ctx):
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host, port, ssl=sc, server_hostname=host,
+                    ),
+                    timeout=_PROBE_TIMEOUT,
+                )
+        except (ssl.SSLError, TimeoutError, OSError, ConnectionError):
+            return [], None, None, None
+
+        cert_chain: list[CertificateDetail] = []
+        negotiated: str | None = None
+        alpn: TLSAlpn | None = None
+        validation: TLSValidation = TLSValidation()
+
+        try:
+            ssl_obj = writer.get_extra_info("ssl_object")
+            if ssl_obj is None:
+                return [], None, None, None
+
+            ci = ssl_obj.cipher()
+            if ci:
+                negotiated = ci[0]
+
+            alpn_neg = ssl_obj.selected_alpn_protocol()
+            alpn = TLSAlpn(offered=["h2", "http/1.1"], negotiated=alpn_neg)
+
+            try:
+                raw_chain = ssl_obj.get_unverified_chain()
+            except Exception:
+                raw_chain = []
+                der = ssl_obj.getpeercert(binary_form=True)
+                if der:
+                    raw_chain.append(der)
+            
+            if raw_chain:
+                for der in raw_chain:
+                    parsed = self._parse_cert(der)
+                    if parsed:
+                        cert_chain.append(parsed)
+
+            validation.chain_present = bool(cert_chain)
+            
+            if cert_chain:
+                leaf = cert_chain[0]
+                host_match = False
+                for s in leaf.sans:
+                    if host == s or (s.startswith("*.") and host.endswith(s[1:])):
+                        host_match = True
+                        break
+                if not host_match and leaf.subject:
+                    # Extract CN crude check if no SANs matched
+                    import re
+                    m = re.search(r'CN=([^,]+)', leaf.subject)
+                    if m:
+                        cn = m.group(1)
+                        if host == cn or (cn.startswith("*.") and host.endswith(cn[1:])):
+                            host_match = True
+                validation.hostname_valid = host_match
 
         except Exception as exc:
             logger.warning("cert parse error %s:%d — %s", host, port, exc)
-            return None, None
         finally:
-            writer.close()
-            await writer.wait_closed()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+                
+        # Perform trust validation
+        if cert_chain:
+            try:
+                v_sc = ssl.create_default_context()
+                v_sc.check_hostname = False
+                async with self._throttled(ctx):
+                    _, v_writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port, ssl=v_sc, server_hostname=host),
+                        timeout=_PROBE_TIMEOUT,
+                    )
+                v_writer.close()
+                await v_writer.wait_closed()
+                validation.chain_valid = True
+                validation.trusted = True
+            except ssl.SSLCertVerificationError:
+                validation.chain_valid = False
+                validation.trusted = False
+            except Exception:
+                pass
+
+        return cert_chain, negotiated, alpn, validation
 
     # ── 5. STARTTLS upgrade ──────────────────────────────────────────
 
@@ -661,7 +723,7 @@ class TLSCryptoEngine(ScanStage):
                 ciphers = await self._enumerate_ciphers(host, port, ctx)
                 request_count += min(len(self._load_cipher_registry()), 30)
 
-                cert_detail, negotiated = await self._extract_cert(host, port, ctx)
+                cert_chain, negotiated, alpn, validation = await self._extract_tls_data(host, port, ctx)
                 request_count += 1
 
                 pqc = self._detect_pqc_signals(negotiated, ciphers)
@@ -673,10 +735,12 @@ class TLSCryptoEngine(ScanStage):
                         tls_versions_supported=versions,
                         accepted_ciphers=ciphers,
                         negotiated_cipher=negotiated,
-                        leaf_cert=cert_detail,
-                        cert_chain=[cert_detail] if cert_detail else [],
+                        leaf_cert=cert_chain[0] if cert_chain else None,
+                        cert_chain=cert_chain,
                         forward_secrecy=any(c.pfs for c in ciphers),
                         pqc_signals=pqc,
+                        validation=validation,
+                        alpn=alpn,
                         confidence="high",
                     ).model_dump()
                 )

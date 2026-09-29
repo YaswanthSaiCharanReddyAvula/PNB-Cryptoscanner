@@ -496,18 +496,6 @@ async def _run_custom_scan_pipeline(
             update["unified_cbom_report"] = ctx.unified_cbom_report
 
         # Convert crypto_findings dicts → CryptoComponent objects for the engine
-        _COMPONENT_TO_CATEGORY = {
-            "cipher_kex": AlgorithmCategory.KEY_EXCHANGE,
-            "cipher_enc": AlgorithmCategory.CIPHER,
-            "cipher_mac": AlgorithmCategory.HASH,
-            "certificate_key": AlgorithmCategory.SIGNATURE,
-            "cert_signature": AlgorithmCategory.HASH,
-            "certificate_validity": AlgorithmCategory.SIGNATURE,
-            "certificate_trust": AlgorithmCategory.SIGNATURE,
-            "protocol": AlgorithmCategory.PROTOCOL,
-            "hndl_risk": AlgorithmCategory.KEY_EXCHANGE,
-            "crypto_score": AlgorithmCategory.CIPHER,  # composite
-        }
         _RISK_TO_QSTATUS = {
             "critical": QuantumStatus.VULNERABLE,
             "high": QuantumStatus.VULNERABLE,
@@ -516,6 +504,21 @@ async def _run_custom_scan_pipeline(
             "none": QuantumStatus.QUANTUM_SAFE,
             "info": QuantumStatus.QUANTUM_SAFE,
         }
+
+        def _get_category(comp_type: str) -> AlgorithmCategory:
+            if comp_type == "cipher_kex" or comp_type == "hndl_risk" or comp_type == "forward_secrecy":
+                return AlgorithmCategory.KEY_EXCHANGE
+            elif comp_type == "cipher_enc" or comp_type == "crypto_score":
+                return AlgorithmCategory.CIPHER
+            elif comp_type == "cipher_mac":
+                return AlgorithmCategory.HASH
+            elif comp_type.startswith("certificate_key") or comp_type.startswith("certificate_validity") or comp_type.startswith("certificate_trust"):
+                return AlgorithmCategory.SIGNATURE
+            elif comp_type.startswith("cert_signature"):
+                return AlgorithmCategory.HASH
+            elif comp_type == "protocol":
+                return AlgorithmCategory.PROTOCOL
+            return AlgorithmCategory.CIPHER
 
         all_components: list[CryptoComponent] = []
         for fd in (ctx.crypto_findings or []):
@@ -528,7 +531,7 @@ async def _run_custom_scan_pipeline(
             if comp_type == "crypto_score":
                 continue
 
-            cat = _COMPONENT_TO_CATEGORY.get(comp_type, AlgorithmCategory.CIPHER)
+            cat = _get_category(comp_type)
             qs_status = _RISK_TO_QSTATUS.get(qr, QuantumStatus.VULNERABLE)
 
             # Extract key_size from algorithm name if present (e.g. "RSA-2048" → 2048)

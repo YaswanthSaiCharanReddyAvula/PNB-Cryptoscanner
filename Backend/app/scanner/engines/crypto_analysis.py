@@ -8,6 +8,7 @@ Now Decrypt Later (HNDL) exposure.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.scanner.models import (
@@ -63,11 +64,49 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "hndl_risk": True,
         "recommendation": "ML-KEM (FIPS 203)",
     },
+    
+    # Generic EC Key type when usage (ECDSA vs ECDH) cannot be resolved strictly from "EC" label
+    "EC": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm solves ECDLP",
+        "hndl_risk": False,  # We don't assume HNDL for a generic cert key, HNDL comes from KEX
+        "recommendation": "ML-DSA / ML-KEM",
+    },
 
     # Authentication
     "ECDSA": {
         "quantum_risk": "high",
         "threat": "Shor's algorithm solves ECDLP",
+        "hndl_risk": False,
+        "recommendation": "ML-DSA (FIPS 204)",
+    },
+    "DSA": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm solves DLP",
+        "hndl_risk": False,
+        "recommendation": "ML-DSA (FIPS 204)",
+    },
+    "EDDSA": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm solves ECDLP",
+        "hndl_risk": False,
+        "recommendation": "ML-DSA (FIPS 204)",
+    },
+    "ED25519": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm solves ECDLP",
+        "hndl_risk": False,
+        "recommendation": "ML-DSA (FIPS 204)",
+    },
+    "ED448": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm solves ECDLP",
+        "hndl_risk": False,
+        "recommendation": "ML-DSA (FIPS 204)",
+    },
+    "RSA-PSS": {
+        "quantum_risk": "high",
+        "threat": "Shor's algorithm factors RSA moduli in polynomial time",
         "hndl_risk": False,
         "recommendation": "ML-DSA (FIPS 204)",
     },
@@ -85,7 +124,7 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "hndl_risk": False,
         "recommendation": "Sufficient post-quantum strength",
     },
-    "ChaCha20": {
+    "CHACHA20": {
         "quantum_risk": "low",
         "threat": "Grover reduces to 128-bit — still secure",
         "hndl_risk": False,
@@ -123,23 +162,11 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "hndl_risk": False,
         "recommendation": "SHA-256 or SHA-384",
     },
-    "SHA1": {
-        "quantum_risk": "high",
-        "threat": "Classical collision attacks + Grover",
-        "hndl_risk": False,
-        "recommendation": "SHA-256 or SHA-384",
-    },
     "SHA-1": {
         "quantum_risk": "high",
         "threat": "Classical collision attacks + Grover",
         "hndl_risk": False,
         "recommendation": "SHA-256 or SHA-384",
-    },
-    "SHA256": {
-        "quantum_risk": "medium",
-        "threat": "Grover halves preimage resistance",
-        "hndl_risk": False,
-        "recommendation": "SHA-384 for long-term security",
     },
     "SHA-256": {
         "quantum_risk": "medium",
@@ -147,15 +174,21 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "hndl_risk": False,
         "recommendation": "SHA-384 for long-term security",
     },
-    "SHA384": {
+    "SHA-384": {
         "quantum_risk": "low",
         "threat": "Grover (mitigated by 384-bit output)",
         "hndl_risk": False,
         "recommendation": "Sufficient post-quantum strength",
     },
-    "SHA-384": {
+    "SHA-512": {
         "quantum_risk": "low",
-        "threat": "Grover (mitigated by 384-bit output)",
+        "threat": "Grover (mitigated by 512-bit output)",
+        "hndl_risk": False,
+        "recommendation": "Sufficient post-quantum strength",
+    },
+    "SHA-3": {
+        "quantum_risk": "low",
+        "threat": "Grover (mitigated by output size)",
         "hndl_risk": False,
         "recommendation": "Sufficient post-quantum strength",
     },
@@ -168,7 +201,7 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "recommendation": "FIPS 203 approved",
         "pqc": True,
     },
-    "Kyber": {
+    "KYBER": {
         "quantum_risk": "none",
         "threat": "none",
         "hndl_risk": False,
@@ -182,21 +215,21 @@ ALGORITHM_RISK_MAP: dict[str, dict[str, Any]] = {
         "recommendation": "FIPS 204 approved",
         "pqc": True,
     },
-    "Dilithium": {
+    "DILITHIUM": {
         "quantum_risk": "none",
         "threat": "none",
         "hndl_risk": False,
         "recommendation": "FIPS 204 approved",
         "pqc": True,
     },
-    "X25519Kyber": {
+    "X25519KYBER": {
         "quantum_risk": "none",
         "threat": "none",
         "hndl_risk": False,
         "recommendation": "Hybrid PQC key exchange",
         "pqc": True,
     },
-    "SecP256r1MLKEM": {
+    "SECP256R1MLKEM": {
         "quantum_risk": "none",
         "threat": "none",
         "hndl_risk": False,
@@ -230,34 +263,27 @@ class CryptoAnalysisEngine(ScanStage):
     # ── risk-map lookup ──────────────────────────────────────────────
 
     @staticmethod
+    def _canonicalize_alg(algorithm: str) -> str:
+        """Deterministically canonicalize algorithm identifiers."""
+        alg = algorithm.upper().strip()
+        # Explicit aliases
+        aliases = {
+            "SHA1": "SHA-1",
+            "SHA256": "SHA-256",
+            "SHA384": "SHA-384",
+            "SHA512": "SHA-512",
+            "SHA3": "SHA-3",
+        }
+        return aliases.get(alg, alg)
+
+    @staticmethod
     def _match_risk(algorithm: str) -> dict[str, Any] | None:
-        """Progressive lookup: exact → case-insensitive → normalized → prefix → substring."""
+        """Exact matching using canonical identifiers to prevent substring false-positives."""
         if not algorithm:
             return None
-        alg = algorithm.strip()
-
-        if alg in ALGORITHM_RISK_MAP:
-            return ALGORITHM_RISK_MAP[alg]
-
-        upper = alg.upper()
-        for key, val in ALGORITHM_RISK_MAP.items():
-            if key.upper() == upper:
-                return val
-
-        norm = upper.replace("-", "").replace("_", "")
-        for key, val in ALGORITHM_RISK_MAP.items():
-            if key.upper().replace("-", "").replace("_", "") == norm:
-                return val
-
-        for key in sorted(ALGORITHM_RISK_MAP, key=len, reverse=True):
-            if upper.startswith(key.upper()):
-                return ALGORITHM_RISK_MAP[key]
-
-        lower = alg.lower()
-        for key in sorted(ALGORITHM_RISK_MAP, key=len, reverse=True):
-            if key.lower() in lower:
-                return ALGORITHM_RISK_MAP[key]
-
+        canon = CryptoAnalysisEngine._canonicalize_alg(algorithm)
+        if canon in ALGORITHM_RISK_MAP:
+            return ALGORITHM_RISK_MAP[canon]
         return None
 
     @staticmethod
@@ -339,12 +365,28 @@ class CryptoAnalysisEngine(ScanStage):
                     confidence="high",
                 ))
 
+        # Forward Secrecy Explicit Finding
+        if cipher.pfs is not None:
+            if not cipher.pfs:
+                findings.append(CryptoFinding(
+                    host=host,
+                    port=port,
+                    component="forward_secrecy",
+                    algorithm="no_pfs",
+                    quantum_risk="high",
+                    threat_vector="Classically vulnerable to key compromise; HNDL exposure",
+                    hndl_risk="yes",
+                    nist_recommendation="Enable ECDHE or DHE for Perfect Forward Secrecy",
+                    evidence=f"Cipher {cipher.name} does not provide Perfect Forward Secrecy",
+                    confidence="high",
+                ))
+
         return findings
 
     # ── 2. classify certificate crypto ───────────────────────────────
 
     def _classify_cert(
-        self, host: str, port: int, cert: CertificateDetail,
+        self, host: str, port: int, cert: CertificateDetail, position: str = "leaf"
     ) -> list[CryptoFinding]:
         findings: list[CryptoFinding] = []
 
@@ -360,14 +402,14 @@ class CryptoAnalysisEngine(ScanStage):
                 findings.append(CryptoFinding(
                     host=host,
                     port=port,
-                    component="certificate_key",
+                    component=f"certificate_key_{position}",
                     algorithm=label,
                     quantum_risk=risk["quantum_risk"],
                     threat_vector=risk["threat"],
                     hndl_risk="no",
                     nist_recommendation=risk.get("recommendation", ""),
                     evidence=(
-                        f"Certificate uses {cert.key_type} "
+                        f"{position.capitalize()} certificate uses {cert.key_type} "
                         f"{cert.key_size or '?'}-bit key"
                     ),
                     confidence="high",
@@ -378,7 +420,7 @@ class CryptoAnalysisEngine(ScanStage):
             findings.append(CryptoFinding(
                 host=host,
                 port=port,
-                component="certificate_key",
+                component=f"certificate_key_{position}",
                 algorithm=f"RSA-{cert.key_size}",
                 quantum_risk="critical",
                 threat_vector=(
@@ -388,7 +430,7 @@ class CryptoAnalysisEngine(ScanStage):
                 hndl_risk="yes",
                 nist_recommendation="Minimum 2048-bit RSA or migrate to ML-DSA",
                 evidence=(
-                    f"RSA key size {cert.key_size} bits "
+                    f"RSA key size {cert.key_size} bits in {position} certificate "
                     f"is below the 2048-bit minimum"
                 ),
                 confidence="high",
@@ -403,64 +445,64 @@ class CryptoAnalysisEngine(ScanStage):
                     findings.append(CryptoFinding(
                         host=host,
                         port=port,
-                        component="cert_signature",
+                        component=f"cert_signature_{position}",
                         algorithm=hash_name,
                         quantum_risk=risk["quantum_risk"],
                         threat_vector=risk["threat"],
                         hndl_risk="no",
                         nist_recommendation=risk.get("recommendation", ""),
                         evidence=(
-                            f"Certificate signed with {cert.sig_algorithm} "
+                            f"{position.capitalize()} certificate signed with {cert.sig_algorithm} "
                             f"(hash: {hash_name})"
                         ),
                         confidence="high",
                     ))
 
-        # Expired
-        if cert.expired:
-            findings.append(CryptoFinding(
-                host=host,
-                port=port,
-                component="certificate_validity",
-                algorithm="expired",
-                quantum_risk="critical",
-                threat_vector="Expired certificate — trust chain broken",
-                hndl_risk="no",
-                nist_recommendation="Renew certificate immediately",
-                evidence=(
-                    f"Certificate expired "
-                    f"{abs(cert.days_until_expiry or 0)} days ago"
-                ),
-                confidence="high",
-            ))
-        elif cert.days_until_expiry is not None and cert.days_until_expiry < 30:
-            findings.append(CryptoFinding(
-                host=host,
-                port=port,
-                component="certificate_validity",
-                algorithm="expiring_soon",
-                quantum_risk="low",
-                threat_vector="Certificate approaching expiry",
-                hndl_risk="no",
-                nist_recommendation="Renew certificate before expiry",
-                evidence=f"Certificate expires in {cert.days_until_expiry} days",
-                confidence="high",
-            ))
+        # Validity / Trust evaluation on the leaf certificate explicitly
+        if position == "leaf":
+            if cert.expired:
+                findings.append(CryptoFinding(
+                    host=host,
+                    port=port,
+                    component="certificate_validity",
+                    algorithm="expired",
+                    quantum_risk="critical",
+                    threat_vector="Expired certificate — trust chain broken",
+                    hndl_risk="no",
+                    nist_recommendation="Renew certificate immediately",
+                    evidence=(
+                        f"Certificate expired "
+                        f"{abs(cert.days_until_expiry or 0)} days ago"
+                    ),
+                    confidence="high",
+                ))
+            elif cert.days_until_expiry is not None and cert.days_until_expiry < 30:
+                findings.append(CryptoFinding(
+                    host=host,
+                    port=port,
+                    component="certificate_validity",
+                    algorithm="expiring_soon",
+                    quantum_risk="low",
+                    threat_vector="Certificate approaching expiry",
+                    hndl_risk="no",
+                    nist_recommendation="Renew certificate before expiry",
+                    evidence=f"Certificate expires in {cert.days_until_expiry} days",
+                    confidence="high",
+                ))
 
-        # Self-signed
-        if cert.is_self_signed:
-            findings.append(CryptoFinding(
-                host=host,
-                port=port,
-                component="certificate_trust",
-                algorithm="self_signed",
-                quantum_risk="medium",
-                threat_vector="Self-signed — no third-party CA trust chain",
-                hndl_risk="no",
-                nist_recommendation="Use a CA-signed certificate",
-                evidence="Certificate is self-signed",
-                confidence="high",
-            ))
+            if cert.is_self_signed:
+                findings.append(CryptoFinding(
+                    host=host,
+                    port=port,
+                    component="certificate_trust",
+                    algorithm="self_signed",
+                    quantum_risk="medium",
+                    threat_vector="Self-signed — no third-party CA trust chain",
+                    hndl_risk="no",
+                    nist_recommendation="Use a CA-signed certificate",
+                    evidence="Certificate is self-signed",
+                    confidence="high",
+                ))
 
         return findings
 
@@ -537,17 +579,42 @@ class CryptoAnalysisEngine(ScanStage):
     def _assess_hndl(
         self, host: str, port: int, profile: TLSProfile,
     ) -> list[CryptoFinding]:
+        # Identify KEX that were ACTUALLY negotiated (not merely advertised supported ciphers)
+        # If no negotiated KEX is present, we must rely on accepted ciphers.
+        
+        negotiated_kex = None
+        if profile.negotiated_cipher:
+            for c in profile.accepted_ciphers:
+                if c.name == profile.negotiated_cipher:
+                    negotiated_kex = c.kex
+                    break
+                    
+        # Check PQC Signals: Distinguish "negotiated" from "advertised"
+        # We only suppress HNDL if a PQC algorithm was truly NEGOTIATED.
+        pqc_negotiated = False
+        
+        # Check if any negotiated cipher indicates PQC
+        if profile.negotiated_cipher and any(ind in profile.negotiated_cipher.upper() for ind in ["KYBER", "MLKEM", "ML-KEM"]):
+            pqc_negotiated = True
+            
+        # Check explicit pqc_signals flag for the prefix "negotiated:"
         if profile.pqc_signals:
+            for sig in profile.pqc_signals:
+                if sig.startswith("negotiated:"):
+                    pqc_negotiated = True
+                    break
+        
+        # If PQC key exchange was successfully negotiated, there is no HNDL risk for the active connection.
+        if pqc_negotiated:
             return []
-
-        if any(c.pqc for c in profile.accepted_ciphers):
-            return []
-
-        has_classical_kex = any(
-            (c.kex or "").upper() in _CLASSICAL_KEX
-            for c in profile.accepted_ciphers
-        )
-
+            
+        # Determine if classical algorithms are used
+        has_classical_kex = False
+        if negotiated_kex and negotiated_kex.upper() in _CLASSICAL_KEX:
+            has_classical_kex = True
+        elif not negotiated_kex and any((c.kex or "").upper() in _CLASSICAL_KEX for c in profile.accepted_ciphers):
+            has_classical_kex = True
+            
         if not has_classical_kex and not profile.negotiated_cipher:
             return []
 
@@ -569,8 +636,8 @@ class CryptoAnalysisEngine(ScanStage):
                 "Deploy hybrid PQC key exchange (ML-KEM + classical)"
             ),
             evidence=(
-                f"No PQC key exchange detected for {host}:{port}; "
-                f"all sessions use quantum-vulnerable classical algorithms"
+                f"No PQC key exchange negotiated for {host}:{port}; "
+                f"session uses quantum-vulnerable classical algorithms"
             ),
             confidence="high",
         )]
@@ -610,10 +677,14 @@ class CryptoAnalysisEngine(ScanStage):
             for cipher in profile.accepted_ciphers:
                 findings.extend(self._classify_cipher(host, port, cipher))
 
-            if profile.leaf_cert:
-                findings.extend(
-                    self._classify_cert(host, port, profile.leaf_cert),
-                )
+            # Analyze full certificate chain (C-01 Fix)
+            if profile.cert_chain:
+                for i, cert in enumerate(profile.cert_chain):
+                    pos = "leaf" if i == 0 else f"intermediate_{i}"
+                    findings.extend(self._classify_cert(host, port, cert, position=pos))
+            elif profile.leaf_cert:
+                # Fallback if only leaf is populated
+                findings.extend(self._classify_cert(host, port, profile.leaf_cert, position="leaf"))
 
             findings.extend(
                 self._classify_protocol(host, port, profile.tls_versions_supported),
