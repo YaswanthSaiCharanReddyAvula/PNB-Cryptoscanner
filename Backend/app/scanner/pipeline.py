@@ -644,8 +644,8 @@ class PipelineManager:
             hidden = ctx.hidden_findings if isinstance(ctx.hidden_findings, list) else []
             return {
                 "hidden_paths": len(hidden),
-                "sensitive_files": sum(1 for h in hidden if isinstance(h, dict) and str(h.get("category", "")).lower() == "sensitive"),
-                "admin_panels": sum(1 for h in hidden if isinstance(h, dict) and str(h.get("category", "")).lower() == "admin"),
+                "sensitive_files": sum(1 for h in hidden if isinstance(h, dict) and str(h.get("finding_type", "")).lower() in ("config_exposure", "git_exposure", "sensitive_file", "backup_file")),
+                "admin_panels": sum(1 for h in hidden if isinstance(h, dict) and str(h.get("finding_type", "")).lower() == "admin_panel"),
             }, {"hidden_findings": self._safe_preview_list(hidden, preview_limit)}
 
         if stage_name == "vuln_engine":

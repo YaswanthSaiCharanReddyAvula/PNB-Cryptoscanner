@@ -1,0 +1,20 @@
+{
+  "_metadata": {
+    "source": "NVD",
+    "last_updated": "2026-10-01T07:25:27.282581Z",
+    "schema_version": "1.0",
+    "record_count": 1
+  },
+  "records": [
+    {
+      "cve_id": "CVE-2021-23017",
+      "cpe_prefix": "cpe:2.3:a:f5:nginx",
+      "affected_ranges": [
+        "<1.20.1"
+      ],
+      "name": "Nginx Off-By-One",
+      "severity": "high",
+      "remediation": "Update"
+    }
+  ]
+}

@@ -119,9 +119,7 @@ from app.modules import (
     recommendation_engine,
 )
 from app.modules.headers_scanner import scan_headers
-from app.modules.cve_mapper import map_cves
 from app.modules.asset_classification import enrich_discovered_assets
-from app.modules.vuln_scanner import run_nuclei_scan
 from app.modules.threat_nist_mapping import (
     NIST_PQC_REFERENCES,
     build_prioritized_backlog,

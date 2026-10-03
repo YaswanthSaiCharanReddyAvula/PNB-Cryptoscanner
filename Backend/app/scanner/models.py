@@ -352,6 +352,20 @@ class VulnFinding(BaseModel):
     cve_ids: list[str] = Field(default_factory=list)
     affected_component: Optional[str] = None
     quantum_relevance: bool = False
+    
+    # New fields for provenance & evidence tracking
+    verification_status: str = "POTENTIAL"  # CONFIRMED, POTENTIAL, INFERRED
+    evidence_source: Optional[str] = None
+    version: Optional[str] = None
+    version_source: Optional[str] = None
+    cpe: Optional[str] = None
+    cvss_score: Optional[float] = None
+    cvss_vector: Optional[str] = None
+    cwe: Optional[str] = None
+    references: list[str] = Field(default_factory=list)
+    database_source: Optional[str] = None
+    database_timestamp: Optional[str] = None
+    match_basis: Optional[str] = None
 
 
 # ── Risk scoring ──────────────────────────────────────────────────────
@@ -646,15 +660,39 @@ class ScopeGuard:
 
 class SASTFinding(BaseModel):
     """A single cryptographic usage found via static analysis."""
+    # Source context
+    repository: Optional[str] = None
+    commit: Optional[str] = None
+    branch: Optional[str] = None
+    scope: Optional[str] = None
     file_path: str
     line_number: int = 0
-    finding_type: str = ""        # import | function_call | hardcoded_secret
-    module: Optional[str] = None  # e.g. "hashlib", "cryptography.fernet"
+    column_number: Optional[int] = None
+    function: Optional[str] = None
+    language: Optional[str] = None
+    
+    # Observation categorization
+    finding_type: str = ""        # import | function_call | POSSIBLE_HARDCODED_SECRET
+    evidence_type: Optional[str] = None # e.g. AST_CALL, CONFIGURATION, REGEX
+    
+    # Crypto Semantics
+    module: Optional[str] = None  # e.g. "hashlib", "cryptography.fernet" (Library)
+    api: Optional[str] = None     # e.g. "Cipher", "SHA256"
+    operation: Optional[str] = None # ENCRYPT | DECRYPT | HASH | SIGN | etc.
     algorithm: Optional[str] = None  # e.g. "sha256", "AES-256-GCM"
+    mode: Optional[str] = None
+    padding: Optional[str] = None
+    key_size: Optional[int] = None
+    curve: Optional[str] = None
+    
+    # Secrets context
     secret_type: Optional[str] = None  # jwt_secret | api_key | iv | private_key
+    
+    # Base observation
     evidence: str = ""
-    severity: str = "medium"
+    severity: str = "info"  # SAST just reports facts. RiskEngine decides severity.
     confidence: float = 0.8
+    observed_at: Optional[str] = None
 
 
 class SCAFinding(BaseModel):

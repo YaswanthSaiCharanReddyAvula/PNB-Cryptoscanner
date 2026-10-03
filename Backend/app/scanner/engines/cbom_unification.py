@@ -67,89 +67,7 @@ _SIG_ALG_HUMAN: dict[str, str] = {
     "1.2.840.10045.4.3.4":   "ecdsaWithSHA512",
 }
 
-# ── Primitive classification ─────────────────────────────────────────
-
-_PRIMITIVE_MAP: dict[str, str] = {
-    "AES":       "symmetric encryption",
-    "CHACHA20":  "symmetric encryption",
-    "CAMELLIA":  "symmetric encryption",
-    "3DES":      "symmetric encryption",
-    "DES":       "symmetric encryption",
-    "RC4":       "symmetric encryption",
-    "ARIA":      "symmetric encryption",
-    "RSA":       "signature",
-    "ECDSA":     "signature",
-    "ECDHE":     "key_agreement",
-    "ECDH":      "key_agreement",
-    "DHE":       "key_agreement",
-    "DH":        "key_agreement",
-    "SHA256":    "hash",
-    "SHA-256":   "hash",
-    "SHA384":    "hash",
-    "SHA-384":   "hash",
-    "SHA512":    "hash",
-    "SHA-512":   "hash",
-    "SHA1":      "hash",
-    "SHA-1":     "hash",
-    "MD5":       "hash",
-    "BCRYPT":    "hash",
-    "ARGON2":    "hash",
-    "PBKDF2":    "hash",
-    "SCRYPT":    "hash",
-    "BLAKE2":    "hash",
-    "ML-KEM":    "key_agreement",
-    "KYBER":     "key_agreement",
-    "ML-DSA":    "signature",
-    "DILITHIUM": "signature",
-}
-
-# ── Mode tokens ──────────────────────────────────────────────────────
-
-_MODE_TOKENS = ("GCM", "CBC", "CCM", "CTR", "ECB", "CFB", "OFB", "POLY1305", "XTS")
-
-
-def _classify_primitive(name: str) -> str:
-    """Map an algorithm name to its primitive type."""
-    upper = name.upper().replace("-", "").replace("_", "")
-    for token, prim in _PRIMITIVE_MAP.items():
-        if token.upper().replace("-", "") in upper:
-            return prim
-    return "unknown"
-
-
-def _extract_mode(name: str) -> str:
-    """Extract the operational mode from an algorithm/cipher name."""
-    upper = name.upper()
-    for mode in _MODE_TOKENS:
-        if mode in upper:
-            return mode
-    return "N/A"
-
-
-def _extract_bits(name: str) -> int | None:
-    """Pull bit-size from a name like 'AES-256-GCM' or 'RSA-2048'."""
-    nums = re.findall(r"\d+", name)
-    for n in nums:
-        val = int(n)
-        if val in (64, 128, 192, 256, 384, 512, 1024, 2048, 3072, 4096, 521):
-            return val
-    return None
-
-
-def _classical_security_level(primitive: str, bits: int) -> int:
-    """Compute classical security level in bits per the architecture spec."""
-    prim_lower = primitive.lower()
-    if "symmetric" in prim_lower:
-        return bits
-    if "hash" in prim_lower:
-        return bits
-    if "rsa" in prim_lower or "signature" in prim_lower:
-        rsa_map = {1024: 80, 2048: 112, 3072: 128, 4096: 152, 7680: 192}
-        return rsa_map.get(bits, 112)
-    if "key_agreement" in prim_lower or "ecc" in prim_lower:
-        ecc_map = {256: 128, 384: 192, 521: 256}
-        return ecc_map.get(bits, bits // 2)
-    return bits
+from app.scanner.engines.crypto_normalization import CryptoNormalization
 
 
 def _resolve_sig_oid(sig_alg: str | None) -> str:
@@ -399,12 +317,12 @@ class CBOMUnificationEngine(ScanStage):
                 if not name or name in algo_map:
                     continue
 
-                bits = cipher.get("bits") or _extract_bits(name) or 128
-                primitive = cipher.get("primitive") or _classify_primitive(name)
-                mode = cipher.get("mode") or _extract_mode(name)
+                bits = cipher.get("bits") or CryptoNormalization.extract_bits(name) or 128
+                primitive = cipher.get("primitive") or CryptoNormalization.classify_primitive(name)
+                mode = cipher.get("mode") or CryptoNormalization.extract_mode(name)
                 csl = cipher.get("classical_security_level")
                 if csl is None:
-                    csl = _classical_security_level(primitive, bits)
+                    csl = CryptoNormalization.classical_security_level(primitive, bits)
 
                 algo_map[name] = CBOMAlgorithm(
                     Name=name,
@@ -426,10 +344,10 @@ class CBOMUnificationEngine(ScanStage):
             if comp in ("crypto_score", "certificate_validity", "certificate_trust"):
                 continue
 
-            bits = _extract_bits(algo) or 128
-            primitive = _classify_primitive(algo)
-            mode = _extract_mode(algo)
-            csl = _classical_security_level(primitive, bits)
+            bits = CryptoNormalization.extract_bits(algo) or 128
+            primitive = CryptoNormalization.classify_primitive(algo)
+            mode = CryptoNormalization.extract_mode(algo)
+            csl = CryptoNormalization.classical_security_level(primitive, bits)
 
             algo_map[algo] = CBOMAlgorithm(
                 Name=algo,
@@ -458,10 +376,10 @@ class CBOMUnificationEngine(ScanStage):
                     )
                 continue
 
-            bits = _extract_bits(algo) or 256
-            primitive = _classify_primitive(algo)
-            mode = _extract_mode(algo)
-            csl = _classical_security_level(primitive, bits)
+            bits = CryptoNormalization.extract_bits(algo) or 256
+            primitive = CryptoNormalization.classify_primitive(algo)
+            mode = CryptoNormalization.extract_mode(algo)
+            csl = CryptoNormalization.classical_security_level(primitive, bits)
 
             file_path = sast.get("file_path", "")
             file_short = file_path.split("/")[-1] if "/" in file_path else file_path.split("\\")[-1] if "\\" in file_path else file_path
@@ -481,10 +399,10 @@ class CBOMUnificationEngine(ScanStage):
             for algo_name in (cfg.get("algorithms_extracted") or []):
                 if not algo_name or algo_name in algo_map:
                     continue
-                bits = _extract_bits(algo_name) or 128
-                primitive = _classify_primitive(algo_name)
-                mode = _extract_mode(algo_name)
-                csl = _classical_security_level(primitive, bits)
+                bits = CryptoNormalization.extract_bits(algo_name) or 128
+                primitive = CryptoNormalization.classify_primitive(algo_name)
+                mode = CryptoNormalization.extract_mode(algo_name)
+                csl = CryptoNormalization.classical_security_level(primitive, bits)
 
                 daemon = cfg.get("daemon", "host")
                 algo_map[algo_name] = CBOMAlgorithm(
@@ -512,7 +430,7 @@ class CBOMUnificationEngine(ScanStage):
             seen_ids.add(key_id)
 
             # Extract bit size from reference like "RSA 2048-bit"
-            bits = _extract_bits(cert.Subject_Public_Key_Reference) or 0
+            bits = CryptoNormalization.extract_bits(cert.Subject_Public_Key_Reference) or 0
 
             keys.append(CBOMKey(
                 Name=cert.Name,

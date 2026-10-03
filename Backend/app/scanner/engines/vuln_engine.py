@@ -12,6 +12,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Optional
+from packaging.version import Version, InvalidVersion
 
 from app.scanner.models import StageResult, VulnFinding
 from app.scanner.pipeline import (
@@ -211,7 +212,11 @@ class VulnerabilityEngine(ScanStage):
         )
 
     def _correlate_cves(self, ctx: ScanContext) -> list[dict]:
-        cve_cache = self._load_cve_cache()
+        cache_data = self._load_cve_cache()
+        cve_cache = cache_data.get("records", []) if isinstance(cache_data, dict) else (cache_data if isinstance(cache_data, list) else [])
+        db_source = cache_data.get("_metadata", {}).get("source", "Unknown") if isinstance(cache_data, dict) else "Unknown"
+        db_ts = cache_data.get("_metadata", {}).get("last_updated", "Unknown") if isinstance(cache_data, dict) else "Unknown"
+
         if not cve_cache:
             return []
 
@@ -223,39 +228,131 @@ class VulnerabilityEngine(ScanStage):
             cpe = t.get("cpe") or ""
             version = t.get("version") or ""
             host = t.get("host", "")
+            
+            # Skip missing version mapping
             if not cpe or not version:
                 continue
 
+            # Determine OS context for backport awareness
+            enterprise_linux = False
+            for os_fp in (ctx.os_fingerprints or []):
+                if isinstance(os_fp, dict) and os_fp.get("host") == host:
+                    os_family = (os_fp.get("os_family") or "").lower()
+                    os_version = (os_fp.get("os_version") or "").lower()
+                    if any(x in os_version for x in ["ubuntu", "debian", "centos", "red hat", "rhel", "suse", "alpine"]) or "linux" in os_family:
+                        enterprise_linux = True
+                        break
+
+            # Provenance checking
+            ev_sources = t.get("evidence_sources", [])
+            is_banner_based = "banner" in str(ev_sources).lower() or "headers" in str(ev_sources).lower()
+
             for cve_entry in cve_cache:
                 if cpe.startswith(cve_entry.get("cpe_prefix", "___")):
-                    affected = cve_entry.get("affected_versions", [])
-                    if version in affected or "*" in affected:
-                        key = f"{host}|{cve_entry['cve_id']}"
+                    
+                    # Match version ranges
+                    affected_ranges = cve_entry.get("affected_ranges", cve_entry.get("affected_versions", []))
+                    matched_range = None
+                    for rng in affected_ranges:
+                        if self._match_version(version, rng):
+                            matched_range = rng
+                            break
+                    
+                    if matched_range:
+                        key = f"{host}|{cve_entry.get('cve_id')}"
                         if key in seen:
                             continue
                         seen.add(key)
+                        
+                        # Evaluate confidence and status
+                        confidence = 0.85
+                        status = "CONFIRMED"
+                        match_basis = "semantic_version_match"
+                        evidence_str = f"Observed component: {t.get('name')}\nObserved version: {version}\nCPE: {cpe}\nMatching CVE: {cve_entry.get('cve_id')}\nAffected range: {matched_range}"
+                        
+                        if enterprise_linux and is_banner_based:
+                            confidence = 0.40
+                            status = "POTENTIAL"
+                            match_basis = "banner_match_unverified_backport"
+                            evidence_str += "\nVerification status: POTENTIAL (Enterprise Linux backport risk)"
+                        elif is_banner_based:
+                            confidence = 0.65
+                            status = "INFERRED"
+                            match_basis = "banner_match"
+                            evidence_str += "\nVerification status: INFERRED (Banner-based)"
+
                         findings.append(VulnFinding(
                             host=host,
-                            vuln_id=cve_entry["cve_id"],
-                            name=cve_entry.get("name", cve_entry["cve_id"]),
+                            vuln_id=cve_entry.get("cve_id", ""),
+                            name=cve_entry.get("name", cve_entry.get("cve_id", "")),
                             severity=cve_entry.get("severity", "high"),
                             category="cve",
-                            evidence=f"{t.get('name')} {version} matches {cve_entry['cve_id']}",
-                            confidence=0.75,
+                            evidence=evidence_str,
+                            confidence=confidence,
                             remediation=cve_entry.get("remediation", "Update to the latest version."),
-                            cve_ids=[cve_entry["cve_id"]],
+                            cve_ids=[cve_entry.get("cve_id", "")],
                             affected_component=t.get("name"),
                             quantum_relevance=False,
+                            # New fields
+                            verification_status=status,
+                            evidence_source=str(ev_sources),
+                            version=version,
+                            version_source="tech_fingerprint",
+                            cpe=cpe,
+                            cvss_score=cve_entry.get("cvss_score"),
+                            cvss_vector=cve_entry.get("cvss_vector"),
+                            cwe=cve_entry.get("cwe"),
+                            references=cve_entry.get("references", []),
+                            database_source=db_source,
+                            database_timestamp=db_ts,
+                            match_basis=match_basis
                         ).model_dump())
 
         return findings
 
     @staticmethod
-    def _load_cve_cache() -> list[dict]:
+    def _match_version(target_version: str, range_expr: str) -> bool:
+        if range_expr == "*": return True
+        try:
+            t_ver = Version(target_version)
+        except InvalidVersion:
+            # Fallback to exact string match if version is unparseable
+            return target_version == range_expr
+
+        ranges = [r.strip() for r in range_expr.split(",")]
+        for r in ranges:
+            if r.startswith("<="):
+                try:
+                    if t_ver > Version(r[2:].strip()): return False
+                except: return False
+            elif r.startswith(">="):
+                try:
+                    if t_ver < Version(r[2:].strip()): return False
+                except: return False
+            elif r.startswith("<"):
+                try:
+                    if t_ver >= Version(r[1:].strip()): return False
+                except: return False
+            elif r.startswith(">"):
+                try:
+                    if t_ver <= Version(r[1:].strip()): return False
+                except: return False
+            elif r.startswith("="):
+                try:
+                    if t_ver != Version(r[1:].strip()): return False
+                except: return False
+            else:
+                try:
+                    if t_ver != Version(r.strip()): return False
+                except: return False
+        return True
+
+    @staticmethod
+    def _load_cve_cache() -> Any:
         path = _DATA_DIR / "cve_cache.json"
         if path.is_file():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        return []
+        return {}

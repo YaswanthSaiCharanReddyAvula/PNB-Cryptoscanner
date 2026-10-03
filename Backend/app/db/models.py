@@ -271,6 +271,20 @@ class ScanRequest(BaseModel):
         description="Per subprocess cap for discovery tools and TLS helpers (sslscan/openssl/zgrab/testssl)",
     )
 
+    # ── Track B: SAST Source Acquisition ─────────────────────────────
+    source_code_paths: Optional[List[str]] = Field(
+        default=None,
+        description="List of local absolute paths to directories/files to scan.",
+    )
+    repository_urls: Optional[List[str]] = Field(
+        default=None,
+        description="List of GitHub repository/branch/tree URLs to acquire and scan.",
+    )
+    source_scope: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional configuration for source acquisition and discovery (e.g., exclusions, depth).",
+    )
+
 
 class BatchScanRequest(BaseModel):
     """Trigger multiple domain scans (portfolio / org sweep)."""

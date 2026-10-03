@@ -368,7 +368,7 @@ class CorrelationRiskEngine(ScanStage):
                 unified.append(d)
         unified.sort(
             key=lambda f: (
-                {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(f.get("severity", "info"), 5),
+                {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(str(f.get("severity") or f.get("risk") or f.get("hndl_risk") or "info").lower(), 5),
                 -(f.get("confidence", 0) if isinstance(f.get("confidence"), (int, float)) else 0),
             )
         )

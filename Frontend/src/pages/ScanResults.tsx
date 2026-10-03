@@ -147,6 +147,7 @@ export default function ScanResults() {
   const cdnWaf: any[] = data.cdn_waf_intel || [];
   const techFp: any[] = data.tech_fingerprints || [];
   const webProfiles: any[] = data.web_profiles || [];
+  const hiddenFindings: any[] = data.hidden_findings || [];
   const vuln: any[] = data.vuln_findings || [];
   const cve: any[] = data.cve_findings || [];
   const qs = data.quantum_score || {};
@@ -589,6 +590,40 @@ export default function ScanResults() {
         </Section>
       )}
 
+      {/* ── 8.5. Hidden Findings ── */}
+      {hiddenFindings.length > 0 && (
+        <Section title="Hidden Discoveries" icon={FileText} count={hiddenFindings.length}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500">
+                  <th className="py-2 pr-4 font-semibold">Host</th>
+                  <th className="py-2 pr-4 font-semibold">Path</th>
+                  <th className="py-2 pr-4 font-semibold">Status</th>
+                  <th className="py-2 pr-4 font-semibold">Risk</th>
+                  <th className="py-2 font-semibold">Type</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {hiddenFindings.map((h: any, i: number) => (
+                  <tr key={i} className="hover:bg-slate-50/50">
+                    <td className="py-2 pr-4 font-mono font-medium text-slate-800">{h.host}</td>
+                    <td className="py-2 pr-4 font-mono text-slate-600 max-w-[300px] truncate" title={h.path}>{h.path}</td>
+                    <td className="py-2 pr-4 text-slate-600">{h.status_code || "—"}</td>
+                    <td className="py-2 pr-4">
+                      <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${riskColor(h.risk || "info")}`}>
+                        {(h.risk || "info").toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="py-2 text-slate-600">{h.finding_type || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {/* ── 9. WHOIS ── */}
       {whois && Object.keys(whois).length > 0 && (
         <Section title="WHOIS Information" icon={FileText}>
@@ -611,11 +646,18 @@ export default function ScanResults() {
             <div key={i} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
                 <XCircle className="h-4 w-4 text-red-500 shrink-0" />
-                <span className="font-mono font-bold text-red-800 text-sm">{f.cve_id || f.template_id || "Finding"}</span>
+                <span className="font-mono font-bold text-red-800 text-sm">{f.vuln_id || f.cve_id || f.template_id || "Finding"}</span>
                 {f.severity && <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${riskColor(f.severity)}`}>{f.severity}</span>}
               </div>
-              {f.description && <p className="text-xs text-slate-600 mt-1 ml-6">{f.description}</p>}
-              {f.host && <p className="text-xs text-slate-400 mt-0.5 ml-6 font-mono">{f.host}</p>}
+              {(f.name || f.description) && <p className="text-xs text-slate-800 font-semibold mt-1 ml-6">{f.name || f.description}</p>}
+              {f.evidence && <p className="text-xs text-slate-500 mt-1 ml-6 whitespace-pre-wrap font-mono">{f.evidence}</p>}
+              {f.host && <p className="text-xs text-slate-400 mt-0.5 ml-6 font-mono">Host: {f.host}</p>}
+              {f.verification_status && (
+                <p className="text-xs text-slate-500 mt-1 ml-6">
+                  Status: <span className="font-semibold">{f.verification_status}</span> 
+                  {f.confidence !== undefined && ` (Confidence: ${(f.confidence * 100).toFixed(0)}%)`}
+                </p>
+              )}
             </div>
           ))}
         </Section>

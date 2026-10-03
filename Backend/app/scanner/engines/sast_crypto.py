@@ -20,6 +20,8 @@ import os
 import re
 from typing import Any
 
+from app.scanner.acquisition.repository_intake import SourceAcquisitionManager
+from app.scanner.discovery.source_files import SourceDiscoveryManager, SourceFile
 from app.scanner.models import SASTFinding, StageResult
 from app.scanner.pipeline import (
     MergeStrategy,
@@ -131,33 +133,75 @@ class SASTCryptoEngine(ScanStage):
 
     async def execute(self, ctx: ScanContext) -> StageResult:
         source_paths: list[str] = []
+        repo_urls: list[str] = []
+        
+        # Accept paths and urls from scan options
+        raw_paths = ctx.options.get("source_code_paths") or ctx.options.get("source_code_path")
+        if isinstance(raw_paths, str):
+            source_paths = [raw_paths]
+        elif isinstance(raw_paths, list):
+            source_paths = [str(p) for p in raw_paths]
+            
+        raw_urls = ctx.options.get("repository_urls")
+        if isinstance(raw_urls, str):
+            repo_urls = [raw_urls]
+        elif isinstance(raw_urls, list):
+            repo_urls = [str(u) for u in raw_urls]
 
-        # Accept paths from scan options
-        raw = ctx.options.get("source_code_paths") or ctx.options.get("source_code_path")
-        if isinstance(raw, str):
-            source_paths = [raw]
-        elif isinstance(raw, list):
-            source_paths = [str(p) for p in raw]
-
-        if not source_paths:
-            logger.info("[%s] SAST: no source_code_paths configured — skipping", ctx.scan_id)
+        if not source_paths and not repo_urls:
+            logger.info("[%s] SAST: no source inputs configured — skipping", ctx.scan_id)
             return StageResult(
                 status="skipped",
                 data={"sast_findings": []},
-                error="No source_code_paths provided in scan options",
+                error="No source_code_paths or repository_urls provided",
             )
 
         all_findings: list[dict] = []
+        acquisition = SourceAcquisitionManager()
+        discovery = SourceDiscoveryManager()
+        acquired_sources = []
+        
+        try:
+            # Acquire Local Paths
+            for local_path in source_paths:
+                try:
+                    src = await acquisition.acquire(ctx.scan_id, local_path=local_path)
+                    acquired_sources.append(src)
+                except Exception as e:
+                    logger.warning("[%s] SAST: Failed to acquire local %s: %s", ctx.scan_id, local_path, e)
 
-        for base_path in source_paths:
-            if not os.path.isdir(base_path):
-                logger.warning("[%s] SAST: path %s is not a directory", ctx.scan_id, base_path)
-                continue
-            all_findings.extend(self._scan_directory(base_path))
+            # Acquire GitHub URLs
+            for url in repo_urls:
+                try:
+                    src = await acquisition.acquire(ctx.scan_id, github_url=url)
+                    acquired_sources.append(src)
+                except Exception as e:
+                    logger.warning("[%s] SAST: Failed to acquire URL %s: %s", ctx.scan_id, url, e)
+
+            # Discover and Scan
+            for src in acquired_sources:
+                logger.info("[%s] SAST: Discovering files in %s (scope: %s)", ctx.scan_id, src.local_root, src.selected_scope)
+                try:
+                    source_files, skipped = discovery.discover(src.local_root, src.selected_scope)
+                    
+                    for sf in source_files:
+                        findings = self._analyze_file(sf)
+                        # Decorate with acquisition context
+                        for f in findings:
+                            f["repository"] = src.repository
+                            f["commit"] = src.commit_sha
+                            f["branch"] = src.branch
+                            f["scope"] = src.selected_scope
+                            all_findings.append(f)
+                except Exception as e:
+                    logger.error("[%s] SAST: Error scanning source %s: %s", ctx.scan_id, src.original_url, e)
+
+        finally:
+            acquisition.cleanup(ctx.scan_id)
 
         logger.info(
-            "[%s] SAST: completed — %d findings across %d path(s)",
-            ctx.scan_id, len(all_findings), len(source_paths),
+            "[%s] SAST: completed — %d findings across %d source(s)",
+            ctx.scan_id, len(all_findings), len(acquired_sources),
         )
 
         return StageResult(
@@ -165,265 +209,36 @@ class SASTCryptoEngine(ScanStage):
             data={"sast_findings": all_findings},
         )
 
-    # ── directory walker ─────────────────────────────────────────────
-
-    def _scan_directory(self, base_path: str) -> list[dict]:
+    def _analyze_file(self, sf: SourceFile) -> list[dict]:
         findings: list[dict] = []
-
-        for root, dirs, files in os.walk(base_path, topdown=True):
-            # Prune skippable directories in-place
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
-
-            for filename in files:
-                filepath = os.path.join(root, filename)
-                _, ext = os.path.splitext(filename)
-                ext = ext.lower()
-
-                # Size guard
-                try:
-                    if os.path.getsize(filepath) > _MAX_FILE_SIZE:
-                        continue
-                except OSError:
-                    continue
-
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
-                        source = fh.read()
-                except (OSError, UnicodeDecodeError):
-                    continue
-
-                if ext in _PYTHON_EXTS:
-                    findings.extend(self._analyze_python(filepath, source))
-                elif ext in _JAVA_EXTS:
-                    findings.extend(self._analyze_java(filepath, source))
-                elif ext in _JS_EXTS:
-                    findings.extend(self._analyze_js(filepath, source))
-                elif ext in _GO_EXTS:
-                    findings.extend(self._analyze_go(filepath, source))
-
-                # Hardcoded secrets scan (all languages)
-                findings.extend(self._scan_hardcoded_secrets(filepath, source))
-
-        return findings
-
-    # ── Python AST analysis ──────────────────────────────────────────
-
-    def _analyze_python(self, filepath: str, source: str) -> list[dict]:
-        findings: list[dict] = []
-
+        
         try:
-            tree = ast.parse(source, filename=filepath)
-        except SyntaxError:
+            with open(sf.file_path, "r", encoding="utf-8", errors="ignore") as fh:
+                source = fh.read()
+        except (OSError, UnicodeDecodeError):
             return findings
 
-        for node in ast.walk(tree):
-            # 1. Import detection
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    base = alias.name.split(".")[0]
-                    if base in _PYTHON_CRYPTO_MODULES:
-                        findings.append(SASTFinding(
-                            file_path=filepath,
-                            line_number=node.lineno,
-                            finding_type="import",
-                            module=alias.name,
-                            evidence=f"import {alias.name}",
-                            severity="info",
-                            confidence=0.95,
-                        ).model_dump())
-
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    base = node.module.split(".")[0]
-                    if base in _PYTHON_CRYPTO_MODULES:
-                        imported = ", ".join(a.name for a in node.names)
-                        findings.append(SASTFinding(
-                            file_path=filepath,
-                            line_number=node.lineno,
-                            finding_type="import",
-                            module=f"{node.module}.{node.names[0].name}",
-                            evidence=f"from {node.module} import {imported}",
-                            severity="info",
-                            confidence=0.95,
-                        ).model_dump())
-
-            # 2. Function call detection (hashlib.sha256, bcrypt.hashpw, etc.)
-            elif isinstance(node, ast.Call):
-                func_name = self._extract_call_name(node)
-                if not func_name:
-                    continue
-
-                # Direct hash function calls
-                parts = func_name.split(".")
-                if parts[-1] in _HASH_FUNCTIONS:
-                    algo = parts[-1]
-                    # Special case: hashlib.new("sha256") → extract algo from args
-                    if algo == "new" and node.args:
-                        if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                            algo = node.args[0].value
-
-                    findings.append(SASTFinding(
-                        file_path=filepath,
-                        line_number=node.lineno,
-                        finding_type="function_call",
-                        module=".".join(parts[:-1]) if len(parts) > 1 else None,
-                        algorithm=algo,
-                        evidence=f"Call to {func_name}()",
-                        severity="medium",
-                        confidence=0.90,
-                    ).model_dump())
-
-                # Password hashing calls
-                if func_name in _PASSWORD_HASH_CALLS or any(
-                    func_name.endswith(ph.split(".")[-1]) for ph in _PASSWORD_HASH_CALLS
-                ):
-                    findings.append(SASTFinding(
-                        file_path=filepath,
-                        line_number=node.lineno,
-                        finding_type="function_call",
-                        module=".".join(parts[:-1]) if len(parts) > 1 else None,
-                        algorithm=parts[-1],
-                        evidence=f"Password hashing: {func_name}()",
-                        severity="info",
-                        confidence=0.90,
-                    ).model_dump())
-
-                # Fernet / AES construction
-                if "Fernet" in func_name or "AESGCM" in func_name or "ChaCha20" in func_name:
-                    findings.append(SASTFinding(
-                        file_path=filepath,
-                        line_number=node.lineno,
-                        finding_type="function_call",
-                        algorithm=parts[-1],
-                        evidence=f"Symmetric encryption: {func_name}()",
-                        severity="info",
-                        confidence=0.90,
-                    ).model_dump())
+        if sf.language == "python":
+            from app.scanner.engines.python_analyzer import PythonASTAnalyzer
+            analyzer = PythonASTAnalyzer()
+            findings.extend(analyzer.analyze(sf, source))
+            
+            from app.scanner.engines.syntax_regex_analyzer import SyntaxRegexAnalyzer
+            sra = SyntaxRegexAnalyzer()
+            findings.extend(sra.scan_hardcoded_secrets(sf, source))
+        else:
+            from app.scanner.engines.syntax_regex_analyzer import SyntaxRegexAnalyzer
+            sra = SyntaxRegexAnalyzer()
+            
+            if sf.language == "java":
+                findings.extend(sra.analyze_java(sf, source))
+            elif sf.language in ("javascript", "typescript"):
+                findings.extend(sra.analyze_js(sf, source))
+            elif sf.language == "go":
+                findings.extend(sra.analyze_go(sf, source))
+                
+            findings.extend(sra.scan_hardcoded_secrets(sf, source))
 
         return findings
 
-    @staticmethod
-    def _extract_call_name(node: ast.Call) -> str | None:
-        """Recursively extract the dotted name from a Call node."""
-        func = node.func
-        parts: list[str] = []
-        while isinstance(func, ast.Attribute):
-            parts.append(func.attr)
-            func = func.value
-        if isinstance(func, ast.Name):
-            parts.append(func.id)
-        elif isinstance(func, ast.Attribute):
-            parts.append(func.attr)
-        if not parts:
-            return None
-        parts.reverse()
-        return ".".join(parts)
 
-    # ── Java regex analysis ──────────────────────────────────────────
-
-    def _analyze_java(self, filepath: str, source: str) -> list[dict]:
-        findings: list[dict] = []
-        for pattern in _JAVA_CRYPTO_PATTERNS:
-            for m in pattern.finditer(source):
-                line_num = source[:m.start()].count("\n") + 1
-                findings.append(SASTFinding(
-                    file_path=filepath,
-                    line_number=line_num,
-                    finding_type="import",
-                    module=m.group(1),
-                    evidence=m.group(0).strip(),
-                    severity="info",
-                    confidence=0.90,
-                ).model_dump())
-
-        # Detect getInstance("AES/GCM/...") patterns
-        cipher_pattern = re.compile(
-            r'Cipher\.getInstance\s*\(\s*["\']([^"\']+)["\']\s*\)', re.MULTILINE
-        )
-        for m in cipher_pattern.finditer(source):
-            line_num = source[:m.start()].count("\n") + 1
-            algo_str = m.group(1)
-            algo_parts = algo_str.split("/")
-            findings.append(SASTFinding(
-                file_path=filepath,
-                line_number=line_num,
-                finding_type="function_call",
-                algorithm=algo_parts[0] if algo_parts else algo_str,
-                evidence=f"Cipher.getInstance(\"{algo_str}\")",
-                severity="medium",
-                confidence=0.90,
-            ).model_dump())
-
-        return findings
-
-    # ── JavaScript / TypeScript regex analysis ───────────────────────
-
-    def _analyze_js(self, filepath: str, source: str) -> list[dict]:
-        findings: list[dict] = []
-        for pattern in _JS_CRYPTO_PATTERNS:
-            for m in pattern.finditer(source):
-                line_num = source[:m.start()].count("\n") + 1
-                findings.append(SASTFinding(
-                    file_path=filepath,
-                    line_number=line_num,
-                    finding_type="import",
-                    module=m.group(0).strip(),
-                    evidence=m.group(0).strip(),
-                    severity="info",
-                    confidence=0.85,
-                ).model_dump())
-
-        # crypto.createHash / createCipher / createSign patterns
-        node_crypto = re.compile(
-            r"(?:crypto|createHash|createCipheriv|createSign|createHmac)\s*\(\s*['\"]([a-zA-Z0-9\-]+)['\"]",
-        )
-        for m in node_crypto.finditer(source):
-            line_num = source[:m.start()].count("\n") + 1
-            findings.append(SASTFinding(
-                file_path=filepath,
-                line_number=line_num,
-                finding_type="function_call",
-                algorithm=m.group(1),
-                evidence=m.group(0).strip(),
-                severity="medium",
-                confidence=0.85,
-            ).model_dump())
-
-        return findings
-
-    # ── Go regex analysis ────────────────────────────────────────────
-
-    def _analyze_go(self, filepath: str, source: str) -> list[dict]:
-        findings: list[dict] = []
-        for pattern in _GO_CRYPTO_PATTERNS:
-            for m in pattern.finditer(source):
-                line_num = source[:m.start()].count("\n") + 1
-                findings.append(SASTFinding(
-                    file_path=filepath,
-                    line_number=line_num,
-                    finding_type="import",
-                    module=m.group(0).strip().strip('"'),
-                    evidence=m.group(0).strip(),
-                    severity="info",
-                    confidence=0.85,
-                ).model_dump())
-        return findings
-
-    # ── Hardcoded secrets scanner ────────────────────────────────────
-
-    def _scan_hardcoded_secrets(self, filepath: str, source: str) -> list[dict]:
-        findings: list[dict] = []
-        for pattern, secret_type in _SECRET_PATTERNS:
-            for m in pattern.finditer(source):
-                line_num = source[:m.start()].count("\n") + 1
-                evidence = m.group(0)[:80]  # Truncate to avoid leaking full secrets
-                findings.append(SASTFinding(
-                    file_path=filepath,
-                    line_number=line_num,
-                    finding_type="hardcoded_secret",
-                    secret_type=secret_type,
-                    evidence=f"Hardcoded {secret_type}: {evidence}…",
-                    severity="critical" if secret_type == "private_key" else "high",
-                    confidence=0.75,
-                ).model_dump())
-        return findings

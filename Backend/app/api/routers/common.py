@@ -119,9 +119,7 @@ from app.modules import (
     recommendation_engine,
 )
 from app.modules.headers_scanner import scan_headers
-from app.modules.cve_mapper import map_cves
 from app.modules.asset_classification import enrich_discovered_assets
-from app.modules.vuln_scanner import run_nuclei_scan
 from app.modules.threat_nist_mapping import (
     NIST_PQC_REFERENCES,
     build_prioritized_backlog,
@@ -345,6 +343,9 @@ async def _run_custom_scan_pipeline(
         env_path = getattr(settings, "SCANNER_SOURCE_CODE_PATH", None) or ""
         if env_path:
             source_paths = [env_path]
+            
+    repo_urls = getattr(request, "repository_urls", None) or []
+    src_scope = getattr(request, "source_scope", None) or {}
 
     ctx = ScanContext(
         scan_id=scan_id,
@@ -356,6 +357,8 @@ async def _run_custom_scan_pipeline(
             "ai_adaptive": settings.SCANNER_AI_ADAPTIVE,
             # Track B options
             "source_code_paths": source_paths,
+            "repository_urls": repo_urls,
+            "source_scope": src_scope,
             "host_scan_paths": source_paths,
         },
         throttle=throttle,
@@ -1144,27 +1147,28 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         except Exception as cls_exc:
             logger.warning("[%s] Asset classification failed (continuing): %s", scan_id, cls_exc)
 
-        vuln_findings = await run_nuclei_scan(assets, request.execution_time_limit_seconds)
+        # Removed legacy run_nuclei_scan bypass
+        vuln_findings = []
 
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
                 "headers_results": [h.model_dump(mode="json") for h in headers_results],
                 "assets": [a.model_dump(mode="json") for a in assets],
-                "vuln_findings": [v.model_dump(mode="json") for v in vuln_findings],
+                "vuln_findings": vuln_findings,
                 "current_stage": "HTTP Headers",
                 "progress": 95,
             }},
         )
 
         # ── Stage 8: CVE / Known-Attack Mapping ──────────────────
-        logger.info("[%s] Stage 8/8: CVE / Known-Attack Mapping", scan_id)
-        cve_findings = map_cves(tls_results)
+        logger.info("[%s] Stage 8/8: CVE / Known-Attack Mapping (Legacy step removed)", scan_id)
+        cve_findings = []
 
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
-                "cve_findings": [c.model_dump(mode="json") for c in cve_findings],
+                "cve_findings": cve_findings,
                 "current_stage": "CVE Mapping",
                 "progress": 100,
                 "status": ScanStatus.COMPLETED.value,
