@@ -392,6 +392,40 @@ class CBOMUnificationEngine(ScanStage):
                 Source=f"Track B (SAST: {file_short})",
             )
 
+        # Track B: SCA findings (dependency-level crypto algorithms)
+        for sca in (ctx.sca_findings or []):
+            if not isinstance(sca, dict):
+                continue
+            primitives = sca.get("crypto_primitives") or []
+            if not primitives:
+                continue
+
+            for prim in primitives:
+                normalized = prim.upper().replace("_", "-")
+                if normalized in algo_map:
+                    existing = algo_map[normalized]
+                    if "SCA" not in existing.Source:
+                        algo_map[normalized] = existing.model_copy(
+                            update={"Source": existing.Source + " + Track B (SCA)"},
+                        )
+                    continue
+
+                bits = CryptoNormalization.extract_bits(normalized) or 256
+                primitive = CryptoNormalization.classify_primitive(normalized)
+                mode = CryptoNormalization.extract_mode(normalized)
+                csl = CryptoNormalization.classical_security_level(primitive, bits)
+
+                pkg = sca.get("package", {})
+                pkg_name = pkg.get("name", "dependency")
+                
+                algo_map[normalized] = CBOMAlgorithm(
+                    Name=normalized,
+                    Primitive=primitive,
+                    Mode=mode,
+                    Classical_Security_Level=csl,
+                    Source=f"Track B (SCA: {pkg_name})",
+                )
+
         # Track B: Host config algorithms (SSH ciphers, nginx ciphers)
         for cfg in (ctx.host_config_findings or []):
             if not isinstance(cfg, dict):
