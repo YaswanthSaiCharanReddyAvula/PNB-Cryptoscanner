@@ -134,11 +134,15 @@ class ScanContext:
         self.quantum_score: dict = {}
         self.estate_tier: str = "Unknown"
 
-        # --- Track B: SAST / SCA / Host state ---
+        # --- Track B: SAST / SCA / Host / Container state ---
         self.sast_findings: list[dict] = []
         self.sca_findings: list[dict] = []
         self.host_config_findings: list[dict] = []
         self.internal_certificates: list[dict] = []
+        self.crypto_observations: list[dict] = []
+        self.container_findings: list[dict] = []
+        self.package_findings: list[dict] = []
+        self.inspection_metrics: dict = {}
         self.unified_cbom_report: dict = {}
 
         # --- Adaptive state (AI-driven prioritisation) ---
@@ -785,6 +789,9 @@ class DualTrackPipelineManager:
         base["sca_findings"] = ctx.sca_findings
         base["host_config_findings"] = ctx.host_config_findings
         base["internal_certificates"] = ctx.internal_certificates
+        base["crypto_observations"] = getattr(ctx, "crypto_observations", [])
+        base["container_findings"] = getattr(ctx, "container_findings", [])
+        base["package_findings"] = getattr(ctx, "package_findings", [])
         base["unified_cbom_report"] = ctx.unified_cbom_report
         base["stage_metrics"] = [m.model_dump() for m in self.metrics]
         return base

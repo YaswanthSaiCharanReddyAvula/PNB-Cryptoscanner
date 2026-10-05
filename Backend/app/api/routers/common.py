@@ -346,6 +346,9 @@ async def _run_custom_scan_pipeline(
             
     repo_urls = getattr(request, "repository_urls", None) or []
     src_scope = getattr(request, "source_scope", None) or {}
+    container_imgs = getattr(request, "container_images", None) or []
+    fs_paths = getattr(request, "filesystem_paths", None) or []
+    insp_targets = getattr(request, "inspection_targets", None) or []
 
     ctx = ScanContext(
         scan_id=scan_id,
@@ -359,7 +362,10 @@ async def _run_custom_scan_pipeline(
             "source_code_paths": source_paths,
             "repository_urls": repo_urls,
             "source_scope": src_scope,
-            "host_scan_paths": source_paths,
+            "host_scan_paths": fs_paths or source_paths,
+            "container_images": container_imgs,
+            "filesystem_paths": fs_paths or source_paths,
+            "inspection_targets": insp_targets,
         },
         throttle=throttle,
         broadcast=_broadcast,
@@ -484,7 +490,7 @@ async def _run_custom_scan_pipeline(
         if ctx.quantum_score:
             update["quantum_score"] = ctx.quantum_score if isinstance(ctx.quantum_score, dict) else ctx.quantum_score
 
-        # ── Track B: SAST / SCA / Host Scanner findings ──
+        # ── Track B: SAST / SCA / Host / Container findings ──
         if ctx.sast_findings:
             update["sast_findings"] = ctx.sast_findings
         if ctx.sca_findings:
@@ -493,6 +499,12 @@ async def _run_custom_scan_pipeline(
             update["host_config_findings"] = ctx.host_config_findings
         if ctx.internal_certificates:
             update["internal_certificates"] = ctx.internal_certificates
+        if getattr(ctx, "crypto_observations", None):
+            update["crypto_observations"] = ctx.crypto_observations
+        if getattr(ctx, "container_findings", None):
+            update["container_findings"] = ctx.container_findings
+        if getattr(ctx, "package_findings", None):
+            update["package_findings"] = ctx.package_findings
 
         # ── Track C: Unified CBOM Report (CERT-IN / PNB Annexure-A) ──
         if ctx.unified_cbom_report:

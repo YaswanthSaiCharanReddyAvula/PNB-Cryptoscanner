@@ -291,6 +291,35 @@ class CBOMUnificationEngine(ScanStage):
                 Source=f"Track B (Internal: {cert_data.get('file_path', 'filesystem')})",
             ))
 
+        # Track B: Certificates from normalized crypto_observations
+        for obs in (getattr(ctx, "crypto_observations", None) or []):
+            if not isinstance(obs, dict) or obs.get("artifact_type") != "certificate":
+                continue
+            fp = obs.get("fingerprint", "")
+            if fp and fp in seen:
+                continue
+            if fp:
+                seen.add(fp)
+
+            ev = obs.get("evidence", {})
+            subject_cn = ev.get("subject_cn") or "unknown"
+            issuer_cn = ev.get("issuer_cn") or "unknown"
+            key_type = obs.get("algorithm") or "unknown"
+            key_size = obs.get("key_size") or 0
+            sig_alg = obs.get("signature_algorithm") or ""
+            layer_str = f" [Layer {obs.get('layer_index')}]" if obs.get('layer_index') is not None else ""
+
+            certs.append(CBOMCertificate(
+                Name=subject_cn,
+                Subject_Name=ev.get("subject", f"CN={subject_cn}"),
+                Issuer_Name=ev.get("issuer", f"CN={issuer_cn}"),
+                Not_Valid_Before=ev.get("not_valid_before", ""),
+                Not_Valid_After=ev.get("not_valid_after", ""),
+                Signature_Algorithm_Reference=_resolve_sig_oid(sig_alg),
+                Subject_Public_Key_Reference=f"{key_type} {key_size}-bit",
+                Source=f"Track B (Container/Filesystem: {obs.get('file_path', 'unknown')}{layer_str})",
+            ))
+
         return certs
 
     @staticmethod
@@ -447,6 +476,38 @@ class CBOMUnificationEngine(ScanStage):
                     Source=f"Track B (Host Config: {daemon})",
                 )
 
+        # Track B: Container & Filesystem observations (PQC, Libraries, Keys)
+        for obs in (getattr(ctx, "crypto_observations", None) or []):
+            if not isinstance(obs, dict):
+                continue
+            algo = obs.get("algorithm", "")
+            if not algo or algo in algo_map:
+                continue
+            if obs.get("artifact_type") in ("crypto_env_var",):
+                continue
+
+            clean_name = algo.replace("Library: ", "").replace("Shared Library: ", "")
+            normalized = clean_name.upper().replace("_", "-")
+            if normalized in algo_map:
+                continue
+
+            bits = obs.get("key_size") or CryptoNormalization.extract_bits(normalized) or 256
+            primitive = CryptoNormalization.classify_primitive(normalized)
+            mode = CryptoNormalization.extract_mode(normalized)
+            csl = CryptoNormalization.classical_security_level(primitive, bits)
+
+            source_label = f"Track B (Container: {obs.get('target_id', 'filesystem')})"
+            if obs.get("pqc_classification") in ("PQC_CONFIGURED", "PQC_CAPABLE_LIBRARY", "PQC_USAGE_OBSERVED"):
+                source_label += " [PQC]"
+
+            algo_map[normalized] = CBOMAlgorithm(
+                Name=normalized,
+                Primitive=primitive,
+                Mode=mode,
+                Classical_Security_Level=csl,
+                Source=source_label,
+            )
+
         return list(algo_map.values())
 
     # ── D. Keys ──────────────────────────────────────────────────────
@@ -494,6 +555,34 @@ class CBOMUnificationEngine(ScanStage):
                 state="Active",
                 size=256,  # Assumed for JWT/API keys
                 Source=f"Track B (SAST: {secret_type})",
+            ))
+
+        # From Container / Filesystem inspection (Track B CryptoObservations)
+        for obs in (getattr(ctx, "crypto_observations", None) or []):
+            if not isinstance(obs, dict):
+                continue
+            art_type = obs.get("artifact_type")
+            if art_type not in ("private_key", "public_key"):
+                continue
+
+            fp = obs.get("fingerprint") or ""
+            key_id = fp if fp else _fingerprint_key(f"{obs.get('file_path')}|{obs.get('algorithm')}")
+            if key_id in seen_ids:
+                continue
+            seen_ids.add(key_id)
+
+            algo = obs.get("algorithm", "Key")
+            size = obs.get("key_size") or CryptoNormalization.extract_bits(algo) or 2048
+            path = obs.get("file_path", "")
+            short_path = path.replace("\\", "/").split("/")[-1]
+            layer_info = f" [Layer {obs.get('layer_index')}]" if obs.get("layer_index") is not None else ""
+
+            keys.append(CBOMKey(
+                Name=f"{algo} {art_type.replace('_', ' ').title()} ({short_path}){layer_info}",
+                id=key_id,
+                state="Active",
+                size=size,
+                Source=f"Track B (Container/Filesystem: {short_path})",
             ))
 
         return keys

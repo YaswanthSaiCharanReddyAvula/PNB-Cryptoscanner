@@ -271,7 +271,7 @@ class ScanRequest(BaseModel):
         description="Per subprocess cap for discovery tools and TLS helpers (sslscan/openssl/zgrab/testssl)",
     )
 
-    # ── Track B: SAST Source Acquisition ─────────────────────────────
+    # ── Track B: SAST Source Acquisition & Container / Filesystem Inspection ──
     source_code_paths: Optional[List[str]] = Field(
         default=None,
         description="List of local absolute paths to directories/files to scan.",
@@ -283,6 +283,18 @@ class ScanRequest(BaseModel):
     source_scope: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Additional configuration for source acquisition and discovery (e.g., exclusions, depth).",
+    )
+    container_images: Optional[List[str]] = Field(
+        default=None,
+        description="List of container image references (Docker/OCI archives .tar/.tar.gz or extracted image directories).",
+    )
+    filesystem_paths: Optional[List[str]] = Field(
+        default=None,
+        description="List of authorized host filesystem paths to inspect.",
+    )
+    inspection_targets: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Explicit InspectionTarget specifications for advanced inspection orchestration.",
     )
 
 

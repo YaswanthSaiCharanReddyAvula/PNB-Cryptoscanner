@@ -104,7 +104,7 @@ class ScanScopePolicy:
                         ip_version=parsed_ip.version,
                         authorization=auth
                     ))
-            except (NXDOMAIN, NoAnswer, NoNameservers, Timeout):
+            except Exception:
                 pass
                 
         return targets

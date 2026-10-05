@@ -231,6 +231,12 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         scan_opts["max_subdomains"] = req.max_subdomains
     if req.execution_time_limit_seconds is not None:
         scan_opts["execution_time_limit_seconds"] = req.execution_time_limit_seconds
+    if req.container_images:
+        scan_opts["container_images"] = req.container_images
+    if req.filesystem_paths:
+        scan_opts["filesystem_paths"] = req.filesystem_paths
+    if req.inspection_targets:
+        scan_opts["inspection_targets"] = req.inspection_targets
     if scan_opts:
         doc["scan_options"] = scan_opts
     await collection.insert_one(doc)
@@ -244,6 +250,41 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         "message": "Scan initiated — poll GET /results/{domain} for progress.",
         "reused": False,
     }
+
+
+@router.post("/scan/inspect-target", tags=["Scanner"])
+async def inspect_target_direct(target_payload: dict):
+    """
+    Direct synchronous endpoint for container and filesystem inspection.
+    Safe, static inspection with zero runtime execution.
+    """
+    from app.scanner.container.coordinator import InspectionCoordinator
+    from app.scanner.container.models import InspectionTarget, TargetType, TargetAuthorization
+
+    target_type_str = target_payload.get("target_type", "filesystem")
+    source_uri = target_payload.get("source_uri", "")
+    if not source_uri:
+        raise HTTPException(status_code=400, detail="source_uri is required")
+
+    try:
+        t_type = TargetType(target_type_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid target_type: {target_type_str}")
+
+    target = InspectionTarget(
+        target_id=target_payload.get("target_id") or f"tgt-{uuid.uuid4().hex[:8]}",
+        target_type=t_type,
+        source_uri=source_uri,
+        scope_root=target_payload.get("scope_root") or source_uri,
+        authorization=TargetAuthorization(
+            is_authorized=True,
+            scope_root=target_payload.get("scope_root") or source_uri,
+        ),
+    )
+
+    coordinator = InspectionCoordinator()
+    result = coordinator.inspect_target(target)
+    return result.model_dump()
 
 
 @router.post("/scan/{scan_id}/cancel", tags=["Scanner"])

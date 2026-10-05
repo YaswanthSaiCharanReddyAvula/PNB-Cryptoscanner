@@ -699,7 +699,7 @@ async def get_cbom_domain(domain: str):
     )
     if not doc:
         raise HTTPException(status_code=404, detail=f"No scan results found for domain: {domain}")
-    cbom_report = doc.get("cbom_report")
+    cbom_report = doc.get("unified_cbom_report") or doc.get("cbom_report") or doc.get("cbom")
     if not cbom_report:
         raise HTTPException(status_code=404, detail=f"CBOM not yet generated for domain: {domain}")
     return cbom_report
