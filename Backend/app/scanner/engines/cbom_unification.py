@@ -539,12 +539,12 @@ class CBOMUnificationEngine(ScanStage):
         for sast in (ctx.sast_findings or []):
             if not isinstance(sast, dict):
                 continue
-            if sast.get("finding_type") != "hardcoded_secret":
+            if sast.get("finding_type") not in ("HARDCODED_SECRET", "hardcoded_secret", "POSSIBLE_HARDCODED_SECRET"):
                 continue
 
             secret_type = sast.get("secret_type", "unknown")
             file_path = sast.get("file_path", "unknown")
-            key_id = _fingerprint_key(f"{secret_type}|{file_path}|{sast.get('line_number', 0)}")
+            key_id = sast.get("fingerprint") or _fingerprint_key(f"{secret_type}|{file_path}|{sast.get('line_number', 0)}")
             if key_id in seen_ids:
                 continue
             seen_ids.add(key_id)

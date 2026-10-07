@@ -173,6 +173,42 @@ from .common import _normalize_negotiated_tls_label, _encryption_protocol_sort_k
 
 
 
+from fastapi import Response
+from app.scanner.convergence.cyclonedx.exporter import CycloneDXExporter
+from app.scanner.convergence.aggregation import CanonicalEstate
+
+@router.get("/cbom/cyclonedx", tags=["CBOM"])
+async def get_cyclonedx_bom(target: str = None, scope: str = "all"):
+    """
+    Export Phase 3 Canonical Inventory as CycloneDX 1.6 JSON.
+    Scope can be runtime, build, or all.
+    """
+    db = get_database()
+    query = {"status": "completed"}
+    if target:
+        query["domain"] = target
+        
+    doc = await db[SCANS_COLLECTION].find_one(query, sort=[("completed_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="No completed scan found for target")
+        
+    canonical_dict = doc.get("canonical_inventory")
+    if not canonical_dict:
+        raise HTTPException(status_code=404, detail="Canonical inventory not generated for this scan (must run with Phase 3 convergence)")
+        
+    try:
+        estate = CanonicalEstate(**canonical_dict)
+    except Exception as e:
+        logger.error(f"Failed to rehydrate canonical estate: {e}")
+        raise HTTPException(status_code=500, detail="Corrupt canonical inventory format")
+        
+    # We pass the full estate, filtering by scope could be done here if needed.
+    exporter = CycloneDXExporter(estate)
+    bom_json = exporter.generate()
+    
+    return Response(content=bom_json, media_type="application/vnd.cyclonedx+json; version=1.6")
+
+
 @router.get("/cbom/summary", tags=["CBOM"])
 async def get_cbom_summary(domain: str = None):
     db = get_database()

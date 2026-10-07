@@ -2,6 +2,7 @@
 QuantumShield — Syntax-Aware Regex Analyzer
 """
 
+import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -220,16 +221,18 @@ class SyntaxRegexAnalyzer:
                     continue # Inside comment
                     
                 line_num = source[:m.start()].count("\n") + 1
-                evidence = m.group(0)[:80]
+                raw_secret = m.group(1) if len(m.groups()) > 0 else m.group(0)
+                fingerprint = f"sha256:{hashlib.sha256(raw_secret.encode('utf-8')).hexdigest()}"
                 
                 f = SASTFinding(
                     file_path=sf.file_path,
                     language=sf.language,
                     line_number=line_num,
-                    finding_type="POSSIBLE_HARDCODED_SECRET",
+                    finding_type="HARDCODED_SECRET",
                     evidence_type="REGEX",
                     secret_type=secret_type,
-                    evidence=f"Hardcoded {secret_type}: {evidence}…",
+                    evidence="[REDACTED]",
+                    fingerprint=fingerprint,
                     severity="info", # Neutral observation
                     confidence=0.75,
                     observed_at=now

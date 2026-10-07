@@ -296,6 +296,12 @@ class ScanRequest(BaseModel):
         default=None,
         description="Explicit InspectionTarget specifications for advanced inspection orchestration.",
     )
+    
+    # ── Cloud Infrastructure Key Audit Engine ──
+    cloud_targets: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Cloud provider target specifications (AWS, Azure, GCP, K8s).",
+    )
 
 
 class BatchScanRequest(BaseModel):

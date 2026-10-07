@@ -311,6 +311,7 @@ async def _run_custom_scan_pipeline(
     from app.scanner.engines.sast_crypto import SASTCryptoEngine
     from app.scanner.engines.sca_engine import SCAEngine
     from app.scanner.engines.host_scanner import HostScannerEngine
+    from app.scanner.engines.cloud_audit import CloudAuditEngine
     # Track C engine
     from app.scanner.engines.cbom_unification import CBOMUnificationEngine
 
@@ -366,6 +367,7 @@ async def _run_custom_scan_pipeline(
             "container_images": container_imgs,
             "filesystem_paths": fs_paths or source_paths,
             "inspection_targets": insp_targets,
+            "cloud_targets": getattr(request, "cloud_targets", None) or [],
         },
         throttle=throttle,
         broadcast=_broadcast,
@@ -388,11 +390,12 @@ async def _run_custom_scan_pipeline(
         CBOMReportEngine(),
     ]
 
-    # ── Track B: Build / Internal (3 new stages) ──
+    # ── Track B: Build / Internal (4 new stages) ──
     track_b_stages = [
         SASTCryptoEngine(),
         SCAEngine(),
         HostScannerEngine(),
+        CloudAuditEngine(),
     ]
 
     # ── Track C: Unification (CBOM brain) ──

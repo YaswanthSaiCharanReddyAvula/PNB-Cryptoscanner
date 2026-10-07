@@ -144,6 +144,10 @@ class ScanContext:
         self.package_findings: list[dict] = []
         self.inspection_metrics: dict = {}
         self.unified_cbom_report: dict = {}
+        
+        # --- Convergence Layer ---
+        self.canonical_inventory: Any = None
+        self.cyclonedx_bom: Any = None
 
         # --- Adaptive state (AI-driven prioritisation) ---
         self.extra_hidden_paths: list[str] = []
@@ -355,10 +359,19 @@ class PipelineManager:
 
     @staticmethod
     def _dedup_key(item: Any) -> str:
+        if hasattr(item, "finding_id"):
+            return getattr(item, "finding_id")
+        if hasattr(item, "asset_id"):
+            return getattr(item, "asset_id")
         if isinstance(item, dict):
-            return (
-                f"{item.get('host', '')}-{item.get('port', '')}-{item.get('path', '')}"
-            )
+            # Try to build a unique key based on available identifiable fields
+            key_parts = []
+            for field in ["host", "ip", "port", "path", "name", "id", "digest", "algorithm", "component", "url"]:
+                if field in item:
+                    key_parts.append(f"{field}:{item[field]}")
+            if key_parts:
+                return "-".join(key_parts)
+            return str(hash(frozenset(item.items())))
         return str(item)
 
     # ---- persistence ------------------------------------------------------
@@ -429,6 +442,7 @@ class PipelineManager:
             "host_config_findings": ctx.host_config_findings,
             "internal_certificates": ctx.internal_certificates,
             "unified_cbom_report": ctx.unified_cbom_report,
+            "canonical_inventory": ctx.canonical_inventory.model_dump() if ctx.canonical_inventory else None,
             "stage_metrics": [m.model_dump() for m in self.metrics],
         }
 

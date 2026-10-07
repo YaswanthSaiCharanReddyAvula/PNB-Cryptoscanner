@@ -672,7 +672,7 @@ class SASTFinding(BaseModel):
     language: Optional[str] = None
     
     # Observation categorization
-    finding_type: str = ""        # import | function_call | POSSIBLE_HARDCODED_SECRET
+    finding_type: str = ""        # import | function_call | HARDCODED_SECRET
     evidence_type: Optional[str] = None # e.g. AST_CALL, CONFIGURATION, REGEX
     
     # Crypto Semantics
@@ -690,6 +690,7 @@ class SASTFinding(BaseModel):
     
     # Base observation
     evidence: str = ""
+    fingerprint: Optional[str] = None
     severity: str = "info"  # SAST just reports facts. RiskEngine decides severity.
     confidence: float = 0.8
     observed_at: Optional[str] = None
