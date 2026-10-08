@@ -123,6 +123,12 @@ def resolve_asset_quantum_risk(
         algorithm = _get_property_val(prop_val)
         is_kex = "kex" in prop_name.lower() or "key_exchange" in prop_name.lower()
         
+        key_size = None
+        for token in algorithm.replace("-", " ").split():
+            if token.isdigit():
+                key_size = int(token)
+                break
+        
         evidence = [f"Derived from canonical property '{prop_name}'"]
         if isinstance(prop_val, CanonicalProperty):
             evidence.append(f"Confidence: {prop_val.confidence}")
@@ -130,6 +136,7 @@ def resolve_asset_quantum_risk(
         assessment = assess_quantum_risk(
             asset_id=asset.asset_id,
             algorithm_name=algorithm,
+            key_size=key_size,
             key_exchange_role=is_kex,
             timeline=timeline,
             data_sensitivity=sensitivity,

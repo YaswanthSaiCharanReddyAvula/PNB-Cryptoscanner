@@ -40,12 +40,9 @@ def calculate_hndl_exposure(
         
     sensitivity_val = SENSITIVITY_WEIGHT.get(data_sensitivity.upper(), 0.5)
     
-    # Calculate Data Lifetime Factor (normalize Tc up to 20 years = 1.0)
-    tc_val = timeline.Tc.value if timeline.Tc.value is not None else 5.0
-    lifetime_factor = min(tc_val / 20.0, 1.0)
-    
-    # Exposure is a score between 0.0 and 1.0
-    exposure = sensitivity_val * lifetime_factor
+    # Exposure is derived directly from data sensitivity. 
+    # Temporal factors (like Tc) are handled by Mosca to avoid double-counting.
+    exposure = sensitivity_val
     
     # Base weight multiplier applied to the overall risk based on HNDL exposure
     # An exposure of 1.0 yields a 1.5x multiplier. 

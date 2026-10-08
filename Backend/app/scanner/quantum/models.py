@@ -80,3 +80,50 @@ class QuantumRiskAssessment(BaseModel):
     confidence: float
     assumptions: List[str] = Field(default_factory=list)
     evidence: List[str] = Field(default_factory=list)
+
+
+class HNDLSummary(BaseModel):
+    exposure: float = 0.0
+    classification: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE", "UNKNOWN"]
+
+
+class MoscaSummary(BaseModel):
+    margin: Optional[float] = None
+    status: str
+
+
+class AssetQuantumRiskSummary(BaseModel):
+    asset_id: str
+    quantum_risk_score: float
+    risk_tier: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE", "UNKNOWN"]
+    hndl: HNDLSummary
+    mosca: MoscaSummary
+    migration_priority: Literal["P0", "P1", "P2", "P3", "MONITOR", "NONE", "UNKNOWN"]
+    confidence: float
+    unknown_coverage: float = 0.0
+    assessments: List[QuantumRiskAssessment] = Field(default_factory=list)
+
+
+class ApplicationQuantumRiskSummary(BaseModel):
+    application_id: str
+    quantum_risk_score: float
+    risk_tier: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE", "UNKNOWN"]
+    assets_analyzed: int
+    critical_assets: int
+    confidence: float
+    asset_summaries: List[AssetQuantumRiskSummary] = Field(default_factory=list)
+
+
+class OrganizationQuantumRiskSummary(BaseModel):
+    overall_quantum_risk_score: float
+    risk_tier: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE", "UNKNOWN"]
+    total_assets: int
+    critical_assets: int
+    p0_assets: int
+    hndl_exposed_assets: int
+    mosca_boundary_assets: int
+    unknown_crypto_assets: int
+    pqc_ready_assets: int
+    known_coverage: float
+    unknown_coverage: float
+    confidence: float

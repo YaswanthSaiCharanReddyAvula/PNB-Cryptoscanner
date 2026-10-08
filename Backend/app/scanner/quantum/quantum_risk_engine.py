@@ -37,8 +37,9 @@ def determine_algorithmic_risk(alg_info: Dict[str, Any]) -> float:
 def assess_quantum_risk(
     asset_id: str,
     algorithm_name: str,
-    key_exchange_role: bool,
     timeline: QuantumTimeline,
+    key_size: int = None,
+    key_exchange_role: bool = False,
     data_sensitivity: str = "UNKNOWN",
     business_criticality: str = "UNKNOWN",
     migration_complexity: str = "UNKNOWN",
@@ -48,18 +49,22 @@ def assess_quantum_risk(
     Evaluates a single quantum subject (cryptographic primitive) and computes its quantum risk.
     """
     assumed = []
-    
+    confidence = 1.0
+    is_unknown = False
+
     # Canonicalize the algorithm name
     alg_key = algorithm_name.upper().strip()
     alg_info = QUANTUM_ALGORITHM_TAXONOMY.get(alg_key)
     
     if not alg_info:
-        assumed.append(f"Algorithm {alg_key} unknown, assuming low baseline risk")
+        is_unknown = True
+        confidence = 0.2
+        assumed.append(f"Algorithm {alg_key} unknown, assuming INSUFFICIENT_DATA")
         alg_info = {
             "family": "unknown",
             "quantum_attack": "unknown",
             "affected": False,
-            "default_quantum_class": "low",
+            "default_quantum_class": "unknown",
             "hndl_capable": False,
         }
 
@@ -73,13 +78,15 @@ def assess_quantum_risk(
         shor_assessment = ShorAssessment(
             affected=True,
             vulnerability_class=alg_info.get("default_quantum_class"),
-            algorithm=alg_key
+            algorithm=alg_key,
+            key_size=key_size
         )
     elif alg_info.get("quantum_attack") == "Grover":
         grover_assessment = GroverAssessment(
             affected=True,
             vulnerability_class=alg_info.get("default_quantum_class"),
-            algorithm=alg_key
+            algorithm=alg_key,
+            effective_security_bits=key_size // 2 if key_size else None
         )
 
     # 3. Mosca Assessment
@@ -102,32 +109,36 @@ def assess_quantum_risk(
         overall_risk += 5
         
     overall_risk = min(max(overall_risk, 0.0), 100.0)
-    
-    # 6. Determine Risk Tier
-    if overall_risk >= 85:
-        risk_tier = "CRITICAL"
-    elif overall_risk >= 70:
-        risk_tier = "HIGH"
-    elif overall_risk >= 40:
-        risk_tier = "MEDIUM"
-    elif overall_risk >= 1:
-        risk_tier = "LOW"
+    if is_unknown:
+        overall_risk = 0.0
+        risk_tier = "UNKNOWN"
+        migration_priority = "UNKNOWN"
     else:
-        risk_tier = "SAFE"
+        # 6. Determine Risk Tier
+        if overall_risk >= 85:
+            risk_tier = "CRITICAL"
+        elif overall_risk >= 70:
+            risk_tier = "HIGH"
+        elif overall_risk >= 40:
+            risk_tier = "MEDIUM"
+        elif overall_risk >= 1:
+            risk_tier = "LOW"
+        else:
+            risk_tier = "SAFE"
 
-    # 7. Migration Priority
-    # Business Criticality and Migration Complexity could shift priority.
-    # A simple mapping for now.
-    if mosca.status in ("CRITICAL_URGENCY", "MIGRATION_REQUIRED") or risk_tier == "CRITICAL":
-        migration_priority = "P0"
-    elif risk_tier == "HIGH":
-        migration_priority = "P1"
-    elif risk_tier == "MEDIUM":
-        migration_priority = "P2"
-    elif risk_tier == "LOW":
-        migration_priority = "P3"
-    else:
-        migration_priority = "MONITOR"
+        # 7. Migration Priority
+        # Business Criticality and Migration Complexity could shift priority.
+        # A simple mapping for now.
+        if mosca.status in ("CRITICAL_URGENCY", "MIGRATION_REQUIRED") or risk_tier == "CRITICAL":
+            migration_priority = "P0"
+        elif risk_tier == "HIGH":
+            migration_priority = "P1"
+        elif risk_tier == "MEDIUM":
+            migration_priority = "P2"
+        elif risk_tier == "LOW":
+            migration_priority = "P3"
+        else:
+            migration_priority = "MONITOR"
 
     # Assemble assessment
     return QuantumRiskAssessment(
@@ -152,7 +163,7 @@ def assess_quantum_risk(
         risk_tier=risk_tier,
         migration_priority=migration_priority,
         
-        confidence=1.0,  # Derive from inputs later
+        confidence=confidence,
         assumptions=assumed,
         evidence=evidence or []
     )

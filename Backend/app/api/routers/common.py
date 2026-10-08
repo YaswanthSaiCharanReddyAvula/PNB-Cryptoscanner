@@ -572,23 +572,13 @@ async def _run_custom_scan_pipeline(
                 details=f.get("evidence"),
             ))
 
-        # Call the real quantum risk engine
-        try:
-            q_score_obj = quantum_risk_engine.calculate_score(
-                all_components,
-                aggregation="estate_weakest",
-            )
-            q_score_dict = q_score_obj.model_dump(mode="json")
-            update["quantum_score"] = q_score_dict
-            update["risk_level"] = q_score_dict.get("risk_level", "medium")
-            logger.info("[%s] Quantum score: %.1f (%s)", scan_id,
-                       q_score_obj.score, q_score_obj.risk_level.value)
-        except Exception as qe:
-            logger.warning("[%s] Quantum risk engine failed: %s", scan_id, qe)
-            # Fallback to the reporting engine's simple score
-            q_score = result.get("quantum_score", {})
-            if q_score:
-                update["quantum_score"] = q_score
+        # The authoritative Phase 4 score is now set by QuantumRiskStage in ctx.quantum_score.
+        # We no longer invoke the legacy calculate_score here.
+        if not update.get("quantum_score") and getattr(ctx, "quantum_score", None):
+            update["quantum_score"] = ctx.quantum_score
+        
+        q_score_dict = update.get("quantum_score", {})
+        update["risk_level"] = q_score_dict.get("risk_level", "unknown")
 
         # ── Shadow ML Ensemble Assessment (if available) ──
         try:
@@ -603,7 +593,7 @@ async def _run_custom_scan_pipeline(
                             quantum_status_rule=(_comp.quantum_status.value
                                                  if hasattr(_comp.quantum_status, "value")
                                                  else str(_comp.quantum_status)).upper(),
-                            rule_confidence=float(q_score_obj.confidence) if 'q_score_obj' in dir() else 0.65,
+                            rule_confidence=float(update.get("quantum_score", {}).get("confidence", 0.65)),
                         )
                         _fv = _ml_fb.build(_comp, tls_info=None, rule_assessment={
                             "quantum_status": _rule_a.quantum_status_rule.lower(),
@@ -1041,13 +1031,37 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         agg_raw = (getattr(settings, "QUANTUM_SCORE_AGGREGATION", None) or "estate_weakest").strip().lower()
         if agg_raw not in ("estate_weakest", "per_host_min", "p25"):
             agg_raw = "estate_weakest"
-        q_score = quantum_risk_engine.calculate_score(
+        legacy_q_score = quantum_risk_engine.calculate_score(
             all_components,
             aggregation=agg_raw,  # type: ignore[arg-type]
             tls_scan_confidences=tls_conf_levels,
         )
 
-        is_high_risk = 1 if q_score.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH] else 0
+        # Convert Legacy Readiness (100=Safe) to Phase 4 Risk (100=Critical)
+        converted_risk_score = 100.0 - legacy_q_score.score
+        
+        # Map to Phase 4 Tiers
+        if converted_risk_score >= 85:
+            new_risk_tier = "CRITICAL"
+        elif converted_risk_score >= 70:
+            new_risk_tier = "HIGH"
+        elif converted_risk_score >= 40:
+            new_risk_tier = "MEDIUM"
+        elif converted_risk_score >= 1:
+            new_risk_tier = "LOW"
+        else:
+            new_risk_tier = "SAFE"
+            
+        q_score_dict = {
+            "score": converted_risk_score,
+            "risk_level": new_risk_tier.lower(),
+            "confidence": legacy_q_score.confidence,
+            "unknown_coverage": 0.0,
+            "legacy_breakdown": legacy_q_score.breakdown.model_dump() if legacy_q_score.breakdown else {}
+        }
+
+
+        is_high_risk = 1 if new_risk_tier in ["CRITICAL", "HIGH"] else 0
 
         # ── Shadow ML assessment (never changes user-facing quantum_status) ──
         try:
@@ -1064,7 +1078,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
                             quantum_status_rule=(_comp.quantum_status.value
                                                  if hasattr(_comp.quantum_status, "value")
                                                  else str(_comp.quantum_status)).upper(),
-                            rule_confidence=float(q_score.confidence),
+                            rule_confidence=float(legacy_q_score.confidence),
                         )
                         _fv = _ml_fb.build(_comp, tls_info=_tls_ctx, rule_assessment={
                             "quantum_status": _rule_a.quantum_status_rule.lower(),
@@ -1098,7 +1112,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
         await collection.update_one(
             {"scan_id": scan_id},
             {"$set": {
-                "quantum_score": q_score.model_dump(),
+                "quantum_score": q_score_dict,
                 "current_stage": "Quantum Risk",
                 "progress": 70,
             }},
@@ -1136,7 +1150,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
 
         # ── Stage 6: Recommendations ────────────────────────────
         logger.info("[%s] Stage 6/8: PQC Recommendations", scan_id)
-        recs = recommendation_engine.get_recommendations(all_components, q_score)
+        recs = recommendation_engine.get_recommendations(all_components, legacy_q_score)
 
         await collection.update_one(
             {"scan_id": scan_id},
@@ -1204,7 +1218,7 @@ async def _run_scan_pipeline(scan_id: str, request: ScanRequest) -> None:
             _notify_scan_complete_hooks(
                 scan_id,
                 request.domain,
-                q_score.model_dump(mode="json"),
+                legacy_q_score.model_dump(mode="json"),
             )
         )
 

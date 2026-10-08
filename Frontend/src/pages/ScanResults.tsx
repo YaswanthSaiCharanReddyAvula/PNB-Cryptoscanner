@@ -684,16 +684,20 @@ export default function ScanResults() {
                   ? `${(qs.confidence * 100).toFixed(0)}%`
                   : qs.confidence ?? "—"
               } />
-              <KV label="Aggregation" value={qs.aggregation ?? "—"} />
-              <KV label="Catalog Version" value={qs.catalog_version ?? "—"} />
+              <KV label="Aggregation" value={qs.aggregation ?? "Asset Level Max"} />
+              <KV label="Unknown Coverage" value={
+                typeof qs.unknown_coverage === "number"
+                  ? `${(qs.unknown_coverage * 100).toFixed(0)}%`
+                  : "—"
+              } />
               <KV label="PQC Ready" value={
-                qs.score >= 80
+                qs.score < 1
                   ? <span className="text-green-600 font-bold">✓ Yes</span>
                   : <span className="text-red-500 font-bold">✗ No</span>
               } />
             </div>
             {/* Breakdown per category */}
-            {qs.breakdown && (
+            {qs.legacy_breakdown && (
               <div className="space-y-3">
                 <p className="text-xs font-semibold text-slate-500 uppercase">Category Breakdown</p>
                 {[
@@ -703,20 +707,21 @@ export default function ScanResults() {
                   { key: "hash_score", label: "Hash", weight: "10%" },
                   { key: "protocol_score", label: "Protocol", weight: "8%" },
                 ].map(({ key, label, weight }) => {
-                  const val = qs.breakdown[key];
+                  const val = qs.legacy_breakdown[key];
                   const pct = typeof val === "number" ? val : 0;
+                  const riskPct = 100 - pct; // convert readiness to risk for display
                   return (
                     <div key={key}>
                       <div className="flex justify-between text-xs mb-0.5">
                         <span className="text-slate-600 font-medium">{label} <span className="text-slate-400">({weight})</span></span>
-                        <span className="font-mono font-bold text-slate-800">{pct.toFixed(0)}/100</span>
+                        <span className="font-mono font-bold text-slate-800">{riskPct.toFixed(0)}/100 Risk</span>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-2">
                         <div
                           className={`h-2 rounded-full transition-all ${
-                            pct >= 80 ? "bg-green-500" : pct >= 60 ? "bg-blue-500" : pct >= 40 ? "bg-yellow-500" : pct >= 20 ? "bg-orange-500" : "bg-red-500"
+                            riskPct >= 85 ? "bg-red-500" : riskPct >= 70 ? "bg-orange-500" : riskPct >= 40 ? "bg-yellow-500" : riskPct >= 1 ? "bg-blue-500" : "bg-green-500"
                           }`}
-                          style={{ width: `${Math.min(100, pct)}%` }}
+                          style={{ width: `${Math.min(100, riskPct)}%` }}
                         />
                       </div>
                     </div>
