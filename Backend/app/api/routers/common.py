@@ -314,6 +314,7 @@ async def _run_custom_scan_pipeline(
     from app.scanner.engines.cloud_audit import CloudAuditEngine
     # Track C engine
     from app.scanner.engines.cbom_unification import CBOMUnificationEngine
+    from app.scanner.quantum.engine_stage import QuantumRiskStage
 
     db = get_database()
     collection = db[SCANS_COLLECTION]
@@ -401,6 +402,7 @@ async def _run_custom_scan_pipeline(
     # ── Track C: Unification (CBOM brain) ──
     track_c_stages = [
         CBOMUnificationEngine(),
+        QuantumRiskStage(),
     ]
 
     pipeline = DualTrackPipelineManager(

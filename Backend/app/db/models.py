@@ -530,6 +530,11 @@ class ScanResult(BaseModel):
     vuln_findings: List[ActiveVulnFinding] = Field(default_factory=list)
     dns_records: List[NameServerInfo] = Field(default_factory=list)
     error: Optional[str] = None
+    # ── Phase 3 Canonical Data Convergence ──
+    canonical_inventory: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        description="The converged Phase 3 single source of truth"
+    )
 
 
 class CBOMReport(BaseModel):

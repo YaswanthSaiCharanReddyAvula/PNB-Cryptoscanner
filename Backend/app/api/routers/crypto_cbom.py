@@ -1144,7 +1144,16 @@ async def get_vulnerable_algorithms(domain: Optional[str] = None):
         return []
     
     cbom = scan.get("cbom", [])
-    vulnerable = [c.get("name") for c in cbom if c.get("risk_level") != "safe"]
+    if not isinstance(cbom, list):
+        cbom = []
+        
+    vulnerable = []
+    for c in cbom:
+        if isinstance(c, dict) and c.get("risk_level") != "safe":
+            name = c.get("name")
+            if name:
+                vulnerable.append(name)
+                
     return list(set(vulnerable)) # Unique names
 
 

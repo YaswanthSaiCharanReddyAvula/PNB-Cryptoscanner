@@ -79,4 +79,14 @@ def map_asset_to_component(asset: CanonicalAsset) -> Component:
         # We will populate crypto_properties via crypto_mapper.py, but we set the basic shell here
         pass
 
+    # Prevent data loss: map all canonical properties to CycloneDX Property extensions
+    try:
+        from cyclonedx.model import Property
+        for prop_name, prop_obj in asset.properties.items():
+            val = prop_obj.canonical_value if hasattr(prop_obj, "canonical_value") else prop_obj
+            if val is not None:
+                component.properties.add(Property(name=prop_name, value=str(val)))
+    except Exception:
+        pass
+
     return component

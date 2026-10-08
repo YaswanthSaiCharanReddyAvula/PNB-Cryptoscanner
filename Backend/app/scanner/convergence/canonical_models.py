@@ -16,6 +16,31 @@ from pydantic import BaseModel, Field
 from app.scanner.convergence.enums import AssetType, ObservationStatus, RiskLevel
 
 
+class CanonicalObservation(BaseModel):
+    observation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    scan_id: str
+    source_engine: str
+    source_stage: str
+    target: str
+    asset_hint: Optional[str] = None
+    property_name: str
+    property_value: Any
+    observation_type: str = "property"
+    state: ObservationStatus = ObservationStatus.OBSERVED
+    confidence: float = 1.0
+    observed_at: datetime
+    evidence_refs: List[str] = Field(default_factory=list)
+
+
+class CanonicalProperty(BaseModel):
+    name: str
+    canonical_value: Any
+    value_type: Optional[str] = None
+    state: ObservationStatus = ObservationStatus.OBSERVED
+    confidence: float = 1.0
+    observations: List[CanonicalObservation] = Field(default_factory=list)
+
+
 class Identifier(BaseModel):
     type: str  # e.g., 'hostname', 'ip', 'url', 'port', 'service', 'purl', 'cpe', 'fingerprint', 'digest'
     value: str
@@ -27,8 +52,12 @@ class Location(BaseModel):
 
 
 class Relationship(BaseModel):
+    relationship_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source_asset_id: Optional[str] = None  # Populated during graph resolution
     type: str  # e.g., 'depends_on', 'hosted_on', 'uses', 'contains'
     target_id: str
+    confidence: float = 1.0
+    observations: List[CanonicalObservation] = Field(default_factory=list)
 
 
 class CanonicalEvidence(BaseModel):
@@ -78,7 +107,7 @@ class CanonicalAsset(BaseModel):
     observed_at: datetime
     confidence: float = 1.0
     status: ObservationStatus = ObservationStatus.OBSERVED
-    properties: Dict[str, Any] = Field(default_factory=dict)  # Extensible properties for specific types (crypto, cloud)
+    properties: Dict[str, Union[Any, CanonicalProperty]] = Field(default_factory=dict)  # Extensible properties for specific types (crypto, cloud)
 
 
 class CanonicalPackage(BaseModel):

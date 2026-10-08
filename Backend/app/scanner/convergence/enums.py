@@ -18,6 +18,9 @@ class RiskLevel(str, Enum):
 
 class ObservationStatus(str, Enum):
     OBSERVED = "OBSERVED"
+    INFERRED = "INFERRED"
+    DERIVED = "DERIVED"
+    ENRICHED = "ENRICHED"
     NOT_OBSERVED = "NOT_OBSERVED"
     NOT_SCANNED = "NOT_SCANNED"
     FAILED = "FAILED"

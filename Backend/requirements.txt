@@ -47,3 +47,6 @@ pytest==8.3.4
 
 # ── Browser engine (optional — Stage 16, graceful skip if absent) ─
 playwright>=1.40.0
+
+# ── SBOM ─────────────────────────────────────────────────────────
+cyclonedx-python-lib>=5.0.0

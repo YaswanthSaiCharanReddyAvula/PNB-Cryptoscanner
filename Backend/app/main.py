@@ -29,6 +29,7 @@ from app.db.connection import (
     get_database,
 )
 from app.api.main_router import main_router as scanner_router          # v1 scanner & all dashboard endpoints
+from app.api.routers.quantum import router as quantum_router
 from app.api.v1.ws import router as ws_router               # real-time scan updates
 from app.utils.logger import get_logger
 from app.modules.report_scheduler import scheduler_loop
@@ -215,6 +216,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Scanner routes & all dashboard endpoints (v1)
 app.include_router(scanner_router, prefix="/api/v1")
+app.include_router(quantum_router, prefix="/api/v1")
 
 # WebSocket scan updates
 app.include_router(ws_router)

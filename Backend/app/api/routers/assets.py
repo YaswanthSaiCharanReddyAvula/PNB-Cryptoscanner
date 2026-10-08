@@ -668,3 +668,38 @@ async def get_network_graph(domain: Optional[str] = None):
         edges.append({"source": "root", "target": sub_node_id})
                 
     return {"nodes": nodes, "edges": edges}
+
+
+# ── Phase 3: Canonical Data API ─────────────────────────────────
+
+@router.get("/canonical-inventory/{scan_id}", tags=["Canonical Inventory"])
+async def get_canonical_inventory(scan_id: str):
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({"scan_id": scan_id})
+    if not doc or "canonical_inventory" not in doc or not doc["canonical_inventory"]:
+        raise HTTPException(status_code=404, detail="Canonical inventory not found for scan")
+    return doc["canonical_inventory"]
+
+@router.get("/canonical-inventory/{scan_id}/assets", tags=["Canonical Inventory"])
+async def get_canonical_assets(scan_id: str):
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({"scan_id": scan_id})
+    if not doc or "canonical_inventory" not in doc or not doc["canonical_inventory"]:
+        raise HTTPException(status_code=404, detail="Canonical inventory not found for scan")
+    return doc["canonical_inventory"].get("assets", {})
+
+@router.get("/canonical-inventory/{scan_id}/findings", tags=["Canonical Inventory"])
+async def get_canonical_findings(scan_id: str):
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({"scan_id": scan_id})
+    if not doc or "canonical_inventory" not in doc or not doc["canonical_inventory"]:
+        raise HTTPException(status_code=404, detail="Canonical inventory not found for scan")
+    return doc["canonical_inventory"].get("findings", [])
+
+@router.get("/canonical-inventory/{scan_id}/evidence", tags=["Canonical Inventory"])
+async def get_canonical_evidence(scan_id: str):
+    db = get_database()
+    doc = await db[SCANS_COLLECTION].find_one({"scan_id": scan_id})
+    if not doc or "canonical_inventory" not in doc or not doc["canonical_inventory"]:
+        raise HTTPException(status_code=404, detail="Canonical inventory not found for scan")
+    return doc["canonical_inventory"].get("evidence", [])

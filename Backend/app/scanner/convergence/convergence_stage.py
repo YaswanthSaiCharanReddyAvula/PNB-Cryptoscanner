@@ -18,7 +18,7 @@ from app.scanner.convergence.adapters import (
     TLSAdapter,
     VulnAdapter,
 )
-from app.scanner.convergence.aggregation import aggregate_estate
+from app.scanner.convergence.aggregation import CanonicalInventoryBuilder
 from app.scanner.convergence.canonical_models import (
     CanonicalAsset,
     CanonicalEvidence,
@@ -83,8 +83,8 @@ class ConvergenceStage(ScanStage):
         correlated_assets = correlate_assets(unique_assets)
         
         # 4. Aggregate
-        logger.info("Aggregating Canonical Estate...")
-        estate = aggregate_estate(
+        logger.info("Building Canonical Inventory...")
+        inventory = CanonicalInventoryBuilder.build(
             scan_id=ctx.scan_id,
             target=ctx.domain,
             assets=correlated_assets,
@@ -93,7 +93,7 @@ class ConvergenceStage(ScanStage):
         )
         
         # Save to context
-        ctx.canonical_inventory = estate
+        ctx.canonical_inventory = inventory
         
         return StageResult(
             status="success",

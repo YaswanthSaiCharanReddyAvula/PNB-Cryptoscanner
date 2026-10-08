@@ -125,3 +125,39 @@ def normalize_elliptic_curve(curve_name: str) -> str:
         return "secp521r1"
         
     return curve_name.strip()
+
+
+class NormalizationEngine:
+    """
+    Centralized service for canonical normalization as defined by the Phase 3 Architecture.
+    Delegates to specific normalization functions.
+    """
+    
+    @classmethod
+    def normalize_hostname(cls, raw: str) -> str:
+        return normalize_hostname(raw)
+        
+    @classmethod
+    def normalize_ip(cls, raw: str) -> Optional[str]:
+        return normalize_ip(raw)
+        
+    @classmethod
+    def normalize_url(cls, raw: str) -> str:
+        return normalize_url(raw)
+        
+    @classmethod
+    def normalize_port(cls, port: int, transport: str = "tcp") -> Dict[str, Union[int, str]]:
+        return normalize_port(port, transport)
+        
+    @classmethod
+    def normalize_technology(cls, raw: str) -> str:
+        return normalize_technology(raw)
+        
+    @classmethod
+    def normalize_version(cls, raw: str) -> Dict[str, str]:
+        return normalize_version(raw)
+        
+    @classmethod
+    def normalize_elliptic_curve(cls, raw: str) -> str:
+        return normalize_elliptic_curve(raw)
+

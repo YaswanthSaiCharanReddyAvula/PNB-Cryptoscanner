@@ -1,30 +1,14 @@
-"""
-QuantumShield — Convergence Conflict Resolution
-
-Handles conflict resolution when different engines report conflicting observations
-for the same asset or property.
-"""
-
-from typing import Any, Dict, List
-
-from app.scanner.convergence.canonical_models import CanonicalAsset, CanonicalEvidence
+from typing import Any, Dict, List, Optional
+from app.scanner.convergence.canonical_models import CanonicalAsset, CanonicalProperty, CanonicalObservation
 
 
-class ObservationSet:
+class PropertyResolutionEngine:
     """
-    Maintains multiple conflicting observations and prioritizes them based on
-    predefined rules rather than silently discarding them.
+    Resolves conflicts between multiple observations of the same property,
+    preserving the conflicting observations and choosing a canonical value based on priority.
     """
     
-    # Example Priority (higher index = higher priority):
-    # 0: heuristic inference
-    # 1: network banner
-    # 2: HTTP response
-    # 3: active protocol observation
-    # 4: TLS certificate metadata
-    # 5: authenticated cloud API
-    # 6: verified structured source
-    
+    # Priority map for resolving conflicting properties (higher is better)
     PRIORITY_MAP = {
         "heuristic": 0,
         "network_banner": 1,
@@ -35,30 +19,57 @@ class ObservationSet:
         "structured_source": 6
     }
     
-    def __init__(self):
-        self.observations: List[Dict[str, Any]] = []
+    @classmethod
+    def get_source_priority(cls, source_engine: str) -> int:
+        """Returns the priority of a source engine. Extensible as needed."""
+        # This is a naive implementation; in reality, you might map engine names to priority categories.
+        # Default priority is 0 (lowest)
+        return 0
+    
+    @classmethod
+    def resolve_property(cls, existing_prop: CanonicalProperty, new_prop: CanonicalProperty) -> CanonicalProperty:
+        """
+        Merges two CanonicalProperties non-destructively.
+        Adds the observations from new_prop to existing_prop and recalculates the canonical_value.
+        """
+        if existing_prop.canonical_value == new_prop.canonical_value:
+            # Same value, just add observations and possibly boost confidence
+            existing_prop.observations.extend(new_prop.observations)
+            existing_prop.confidence = min(1.0, existing_prop.confidence + 0.1) # Naive confidence boost
+            return existing_prop
+            
+        # Conflict exists
+        # Merge observations
+        merged_observations = existing_prop.observations + new_prop.observations
         
-    def add_observation(self, value: Any, source: str, priority_key: str, evidence: CanonicalEvidence):
-        self.observations.append({
-            "value": value,
-            "source": source,
-            "priority": self.PRIORITY_MAP.get(priority_key, 0),
-            "evidence": evidence
-        })
+        # Decide canonical value (naive implementation: highest priority, tie-break by recency)
+        best_obs = cls._select_best_observation(merged_observations)
         
-    def resolve(self) -> Any:
-        """Returns the highest priority value without discarding others from evidence."""
-        if not self.observations:
+        return CanonicalProperty(
+            name=existing_prop.name,
+            canonical_value=best_obs.property_value if best_obs else existing_prop.canonical_value,
+            value_type=existing_prop.value_type or new_prop.value_type,
+            state=best_obs.state if best_obs else existing_prop.state,
+            confidence=best_obs.confidence if best_obs else existing_prop.confidence,
+            observations=merged_observations
+        )
+        
+    @classmethod
+    def _select_best_observation(cls, observations: List[CanonicalObservation]) -> Optional[CanonicalObservation]:
+        if not observations:
             return None
             
-        # Sort by priority descending
-        sorted_obs = sorted(self.observations, key=lambda x: x["priority"], reverse=True)
-        return sorted_obs[0]["value"]
+        # Sort by (priority descending, observed_at descending)
+        return sorted(
+            observations,
+            key=lambda obs: (cls.get_source_priority(obs.source_engine), obs.observed_at),
+            reverse=True
+        )[0]
 
 
 def resolve_asset_conflicts(assets: List[CanonicalAsset]) -> List[CanonicalAsset]:
     """
-    Given a list of partially merged assets, resolves field-level conflicts
-    using ObservationSets. Currently a placeholder for complex logic.
+    Placeholder for resolving complex asset-level conflicts after property-level resolution.
+    Property-level conflicts are now handled in deduplication via PropertyResolutionEngine.
     """
     return assets

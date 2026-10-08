@@ -6,8 +6,10 @@ Centralized deduplication engine for CanonicalFindings and CanonicalAssets.
 
 from typing import Dict, List, Set, Tuple
 
-from app.scanner.convergence.canonical_models import CanonicalAsset, CanonicalFinding
+from app.scanner.convergence.canonical_models import CanonicalAsset, CanonicalFinding, CanonicalProperty
 from app.scanner.convergence.enums import AssetType
+from app.scanner.convergence.identity_resolver import AssetIdentityResolver
+from app.scanner.convergence.conflict_resolution import PropertyResolutionEngine
 
 
 def _generate_finding_identity(finding: CanonicalFinding) -> str:
@@ -52,13 +54,7 @@ def deduplicate_findings(findings: List[CanonicalFinding]) -> List[CanonicalFind
     return list(unique_findings.values())
 
 
-def _generate_asset_identity(asset: CanonicalAsset) -> str:
-    """
-    Generates a deterministic identity for an asset based on its identifiers.
-    """
-    # Sort identifiers by type and value
-    id_strings = sorted([f"{i.type}:{i.value}" for i in asset.identifiers])
-    return f"{asset.asset_type.value}|{','.join(id_strings)}"
+
 
 
 def deduplicate_assets(assets: List[CanonicalAsset]) -> List[CanonicalAsset]:
@@ -68,11 +64,7 @@ def deduplicate_assets(assets: List[CanonicalAsset]) -> List[CanonicalAsset]:
     unique_assets: Dict[str, CanonicalAsset] = {}
     
     for asset in assets:
-        # If an asset has no identifiers, we fallback to its name + type
-        if not asset.identifiers:
-            identity = f"{asset.asset_type.value}|name:{asset.name}"
-        else:
-            identity = _generate_asset_identity(asset)
+        identity = AssetIdentityResolver.resolve_identity(asset.asset_type, asset.identifiers, asset.name)
             
         if identity in unique_assets:
             existing = unique_assets[identity]
@@ -95,8 +87,17 @@ def deduplicate_assets(assets: List[CanonicalAsset]) -> List[CanonicalAsset]:
                     existing.relationships.append(rel)
                     existing_rels.add(rel_key)
                     
-            # Properties could be merged recursively here
-            existing.properties.update(asset.properties)
+            # Properties are resolved via PropertyResolutionEngine if they are CanonicalProperties
+            for prop_key, prop_val in asset.properties.items():
+                if prop_key in existing.properties:
+                    existing_val = existing.properties[prop_key]
+                    if isinstance(existing_val, CanonicalProperty) and isinstance(prop_val, CanonicalProperty):
+                        existing.properties[prop_key] = PropertyResolutionEngine.resolve_property(existing_val, prop_val)
+                    else:
+                        # Fallback for non-migrated properties (shallow overwrite)
+                        existing.properties[prop_key] = prop_val
+                else:
+                    existing.properties[prop_key] = prop_val
         else:
             unique_assets[identity] = asset
             

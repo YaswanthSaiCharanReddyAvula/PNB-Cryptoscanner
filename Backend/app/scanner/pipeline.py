@@ -148,6 +148,7 @@ class ScanContext:
         # --- Convergence Layer ---
         self.canonical_inventory: Any = None
         self.cyclonedx_bom: Any = None
+        self.quantum_assessments: list[dict] = []
 
         # --- Adaptive state (AI-driven prioritisation) ---
         self.extra_hidden_paths: list[str] = []
@@ -443,6 +444,7 @@ class PipelineManager:
             "internal_certificates": ctx.internal_certificates,
             "unified_cbom_report": ctx.unified_cbom_report,
             "canonical_inventory": ctx.canonical_inventory.model_dump() if ctx.canonical_inventory else None,
+            "quantum_assessments": ctx.quantum_assessments,
             "stage_metrics": [m.model_dump() for m in self.metrics],
         }
 
