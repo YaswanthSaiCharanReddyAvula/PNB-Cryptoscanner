@@ -36,15 +36,17 @@ import {
 import { toast } from "sonner";
 
 type RoadmapItem = {
-  id: string;
-  source?: string;
-  risk: string;
-  risk_detail?: string;
-  category?: string;
-  priority?: string;
-  solution: string;
-  actions?: string;
-  confidence?: string;
+  roadmap_item_id: string;
+  title: string;
+  description: string;
+  track: string;
+  action_type: string;
+  tier: string;
+  priority_score: number;
+  urgency: string;
+  effort: string;
+  rationale: string;
+  explanation: string[];
 };
 
 type RoadmapResponse = {
@@ -930,29 +932,35 @@ export default function SecurityRoadmap() {
                   ) : (
                     items.map((row) => (
                       <tr
-                        key={row.id}
+                        key={row.roadmap_item_id}
                         className="border-b border-border/80 align-top last:border-0 hover:bg-secondary/20"
                       >
                         <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {priorityBadge(row.priority)}
-                            {row.confidence ? confidenceBadge(row.confidence) : null}
+                          <div className="flex flex-col items-start gap-1">
+                            {priorityBadge(row.tier)}
+                            <span className="text-[10px] font-mono text-muted-foreground">Score: {row.priority_score.toFixed(1)}</span>
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="font-medium text-foreground">{row.risk}</p>
-                          {row.risk_detail ? (
-                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{row.risk_detail}</p>
-                          ) : null}
-                          {row.source ? (
-                            <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">
-                              Source: {row.source.replace(/_/g, " ")}
-                            </p>
+                          <p className="font-medium text-foreground">{row.title}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{row.description}</p>
+                          {row.explanation && row.explanation.length > 0 ? (
+                            <ul className="mt-2 list-disc pl-4 text-[10px] text-muted-foreground/80">
+                              {row.explanation.map((e, i) => (
+                                <li key={i}>{e}</li>
+                              ))}
+                            </ul>
                           ) : null}
                         </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground capitalize">{row.category || "—"}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{row.solution}</td>
-                        <td className="px-4 py-3 text-xs leading-relaxed text-muted-foreground">{row.actions || "—"}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground capitalize">
+                          {row.track.replace(/_/g, " ")}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-foreground">{row.rationale}</td>
+                        <td className="px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+                          <span className="font-medium text-foreground">{row.action_type.replace(/_/g, " ")}</span>
+                          <br />
+                          Effort: {row.effort}
+                        </td>
                       </tr>
                     ))
                   )}

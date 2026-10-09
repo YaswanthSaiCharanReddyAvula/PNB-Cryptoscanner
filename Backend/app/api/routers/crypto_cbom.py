@@ -126,7 +126,7 @@ from app.modules.threat_nist_mapping import (
     enrich_cbom_component_dict,
     simulate_quantum_score,
 )
-from app.modules.security_roadmap import build_security_roadmap
+from app.scanner.roadmap.facade import build_roadmap_from_scan
 from app.modules.report_bundle import build_export_bundle_payload
 from app.modules.report_scheduler import (
     REPORT_SCHEDULES_COLLECTION,
@@ -771,8 +771,10 @@ async def get_security_roadmap_latest():
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No completed scan results found yet.",
         )
-    items = build_security_roadmap(doc)
+    
+    roadmap = await build_roadmap_from_scan(db, doc)
     q = doc.get("quantum_score") or {}
+    
     return {
         "domain": doc.get("domain"),
         "scan_id": doc.get("scan_id"),
@@ -780,7 +782,8 @@ async def get_security_roadmap_latest():
         "completed_at": doc.get("completed_at"),
         "quantum_risk_level": q.get("risk_level"),
         "quantum_score": q.get("score"),
-        "items": items,
+        "items": [item.model_dump() for item in roadmap.items],
+        "statistics": roadmap.statistics.model_dump(),
         "disclaimer": (
             "Indicative guidance derived from external scan signals; validate with architecture, "
             "application, and PKI owners before production or compliance commitments."
@@ -801,8 +804,10 @@ async def get_security_roadmap_by_scan_id(scan_id: str):
     doc = await db[SCANS_COLLECTION].find_one({"scan_id": sid})
     if not doc:
         raise HTTPException(status_code=404, detail="Scan not found")
-    items = build_security_roadmap(doc)
+        
+    roadmap = await build_roadmap_from_scan(db, doc)
     q = doc.get("quantum_score") or {}
+    
     return {
         "domain": doc.get("domain"),
         "scan_id": doc.get("scan_id"),
@@ -810,7 +815,8 @@ async def get_security_roadmap_by_scan_id(scan_id: str):
         "completed_at": doc.get("completed_at"),
         "quantum_risk_level": q.get("risk_level"),
         "quantum_score": q.get("score"),
-        "items": items,
+        "items": [item.model_dump() for item in roadmap.items],
+        "statistics": roadmap.statistics.model_dump(),
         "disclaimer": (
             "Indicative guidance derived from external scan signals; validate with architecture, "
             "application, and PKI owners before production or compliance commitments."
@@ -840,8 +846,10 @@ async def get_security_roadmap(domain: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No scan results found for domain: {domain}",
         )
-    items = build_security_roadmap(doc)
+        
+    roadmap = await build_roadmap_from_scan(db, doc)
     q = doc.get("quantum_score") or {}
+    
     return {
         "domain": doc.get("domain"),
         "scan_id": doc.get("scan_id"),
@@ -849,7 +857,8 @@ async def get_security_roadmap(domain: str):
         "completed_at": doc.get("completed_at"),
         "quantum_risk_level": q.get("risk_level"),
         "quantum_score": q.get("score"),
-        "items": items,
+        "items": [item.model_dump() for item in roadmap.items],
+        "statistics": roadmap.statistics.model_dump(),
         "disclaimer": (
             "Indicative guidance derived from external scan signals; validate with architecture, "
             "application, and PKI owners before production or compliance commitments."

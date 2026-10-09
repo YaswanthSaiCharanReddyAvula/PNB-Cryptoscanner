@@ -126,7 +126,7 @@ from app.modules.threat_nist_mapping import (
     enrich_cbom_component_dict,
     simulate_quantum_score,
 )
-from app.modules.security_roadmap import build_security_roadmap
+from app.scanner.roadmap.facade import build_roadmap_from_scan
 from app.modules.report_bundle import build_export_bundle_payload
 from app.modules.report_scheduler import (
     REPORT_SCHEDULES_COLLECTION,
@@ -540,7 +540,8 @@ async def ai_roadmap_plan(body: AiRoadmapPlanBody, _user: User = Depends(get_cur
     if not doc:
         raise HTTPException(status_code=404, detail=f"No scan results found for domain: {body.domain}")
 
-    items = build_security_roadmap(doc)[:80]
+    roadmap = await build_roadmap_from_scan(db, doc)
+    items = [item.model_dump() for item in roadmap.items][:80]
     q = doc.get("quantum_score") or {}
     det: Dict[str, Any] = {
         "domain": doc.get("domain"),
