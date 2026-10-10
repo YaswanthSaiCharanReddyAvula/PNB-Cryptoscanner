@@ -225,6 +225,9 @@ class CBOMReportEngine(ScanStage):
     # ------------------------------------------------------------------
 
     def _build_recommendations(self, ctx: ScanContext) -> list[dict]:
+        from app.scanner.roadmap.adapters.phase3_adapter import NormalizedFindingContext
+        from app.scanner.roadmap.decision_engine import PqcDecisionEngine
+        
         recs: list[dict] = []
         seen_keys: set[str] = set()
 
@@ -241,24 +244,43 @@ class CBOMReportEngine(ScanStage):
                 continue
             seen_keys.add(rkey)
 
-            if hndl:
-                recs.append(self._rec(1, "critical", "PQC Migration", host,
-                    "Deploy ML-KEM Hybrid Key Exchange",
-                    f"Host {host} uses {algo} key exchange vulnerable to Harvest-Now-Decrypt-Later.",
-                    "Configure TLS to offer X25519Kyber768 hybrid key exchange.",
-                    NIST_REFS.get("key_exchange", ""), "medium", "high"))
-            elif qr == "critical":
-                recs.append(self._rec(2, "critical", "Crypto Remediation", host,
-                    f"Replace {algo}",
-                    f"Algorithm {algo} on {host} is critically weak.",
-                    f"Remove {algo} from server configuration immediately.",
-                    NIST_REFS.get(comp, ""), "low", "high"))
-            elif qr == "high":
-                recs.append(self._rec(3, "high", "Crypto Hardening", host,
-                    f"Upgrade {algo}",
-                    f"Algorithm {algo} on {host} has high quantum risk.",
-                    fd.get("nist_recommendation") or f"Replace {algo} with quantum-safe alternative.",
-                    NIST_REFS.get(comp, ""), "medium", "medium"))
+            if hndl or qr in ("critical", "high"):
+                finding_ctx = NormalizedFindingContext(
+                    finding_id=f"legacy-{host}-{algo}",
+                    finding_type=f"{algo} {comp}",
+                    severity=qr or "high",
+                    confidence=1.0,
+                    state="OBSERVED",
+                    details={
+                        "algorithm": algo,
+                        "primitive": comp,
+                    }
+                )
+                
+                pqc_rec = PqcDecisionEngine.generate_recommendation(finding_ctx, [])
+                
+                rec_title = f"Deploy {pqc_rec.recommended_candidate}" if pqc_rec.recommended_candidate else f"Replace {algo}"
+                rec_action = f"Configure TLS to offer {pqc_rec.recommended_candidate}." if pqc_rec.recommended_candidate else f"Replace {algo} with a quantum-safe alternative."
+                rec_desc = f"Algorithm {algo} on {host} is vulnerable. Trade-off winner: {pqc_rec.recommended_candidate}." if pqc_rec.recommended_candidate else f"Algorithm {algo} on {host} is vulnerable."
+                
+                if hndl:
+                    recs.append(self._rec(1, "critical", "PQC Migration", host,
+                        rec_title,
+                        rec_desc + " (HNDL Exposure)",
+                        rec_action,
+                        NIST_REFS.get("key_exchange", ""), "medium", "high"))
+                elif qr == "critical":
+                    recs.append(self._rec(2, "critical", "Crypto Remediation", host,
+                        rec_title,
+                        rec_desc,
+                        rec_action,
+                        NIST_REFS.get(comp, ""), "low", "high"))
+                elif qr == "high":
+                    recs.append(self._rec(3, "high", "Crypto Hardening", host,
+                        rec_title,
+                        rec_desc,
+                        rec_action,
+                        NIST_REFS.get(comp, ""), "medium", "medium"))
 
         return sorted(recs, key=lambda r: (r["priority"], -{"critical": 4, "high": 3, "medium": 2, "low": 1}.get(r["severity"], 0)))
 

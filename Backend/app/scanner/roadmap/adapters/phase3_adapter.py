@@ -5,7 +5,7 @@ Bridges the gap between the CanonicalInventory (Phase 3) and the Roadmap Engine.
 Extracts and normalizes context like asset criticality, data sensitivity, and exposure.
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.scanner.convergence.canonical_models import CanonicalInventory, CanonicalAsset, CanonicalFinding
@@ -30,6 +30,7 @@ class NormalizedFindingContext(BaseModel):
     state: str
     evidence: List[str] = Field(default_factory=list)
     source: List[str] = Field(default_factory=list)
+    details: Dict[str, Any] = Field(default_factory=dict)
     asset_contexts: List[NormalizedAssetContext] = Field(default_factory=list)
 
 class Phase3Context(BaseModel):
@@ -101,6 +102,7 @@ def build_phase3_context(inventory: CanonicalInventory) -> Phase3Context:
             state=status_val,
             evidence=finding.evidence_refs,
             source=finding.source,
+            details=finding.details,
             asset_contexts=[]
         )
         

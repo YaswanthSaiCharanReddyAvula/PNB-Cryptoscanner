@@ -201,11 +201,25 @@ def _derive_tls_roadmap(tls_results: List[Dict[str, Any]]) -> List[Dict[str, Any
     if no_hybrid:
         # For PQC/hybrid absence we don't have endpoint-specific signals in this roadmap row,
         # but we still label confidence for explainability.
+        from app.scanner.roadmap.adapters.phase3_adapter import NormalizedFindingContext
+        from app.scanner.roadmap.decision_engine import PqcDecisionEngine
+        
+        finding_ctx = NormalizedFindingContext(
+            finding_id="legacy-tls-hybrid-missing",
+            finding_type="Missing PQC Hybrid Key Exchange",
+            severity="low",
+            confidence=0.5,
+            state="INFERRED",
+            details={"cryptographic_role": "KEY_ESTABLISHMENT"}
+        )
+        pqc_rec = PqcDecisionEngine.generate_recommendation(finding_ctx, [])
+        solution = f"Plan hybrid TLS key exchange pilots (e.g. {pqc_rec.recommended_candidate or 'ML-KEM'}) on supported platforms; track NIST and vendor roadmaps."
+        
         add_row(
             "pqc-readiness-transport",
             "No hybrid / PQC key exchange observed on scanned endpoints",
-            "External scan did not observe hybrid KEM (e.g. X25519Kyber768) or PQC signals on negotiated handshakes.",
-            "Plan hybrid TLS key exchange pilots (e.g. ML-KEM with classical ECDH) on supported platforms; track NIST and vendor roadmaps.",
+            "External scan did not observe hybrid KEM or PQC signals on negotiated handshakes.",
+            solution,
             "Validate client population, FIPS modules, and LB termination paths before broad rollout.",
             "low",
             confidence="low",
