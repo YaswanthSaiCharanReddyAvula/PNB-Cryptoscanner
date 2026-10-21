@@ -312,8 +312,9 @@ async def _run_custom_scan_pipeline(
     from app.scanner.engines.sca_engine import SCAEngine
     from app.scanner.engines.host_scanner import HostScannerEngine
     from app.scanner.engines.cloud_audit import CloudAuditEngine
-    # Track C engine
+    # Track C engines
     from app.scanner.engines.cbom_unification import CBOMUnificationEngine
+    from app.scanner.convergence.convergence_stage import ConvergenceStage
     from app.scanner.quantum.engine_stage import QuantumRiskStage
 
     db = get_database()
@@ -399,9 +400,10 @@ async def _run_custom_scan_pipeline(
         CloudAuditEngine(),
     ]
 
-    # ── Track C: Unification (CBOM brain) ──
+    # ── Track C: Unification & Convergence (CBOM brain) ──
     track_c_stages = [
         CBOMUnificationEngine(),
+        ConvergenceStage(),
         QuantumRiskStage(),
     ]
 
@@ -514,6 +516,41 @@ async def _run_custom_scan_pipeline(
         # ── Track C: Unified CBOM Report (CERT-IN / PNB Annexure-A) ──
         if ctx.unified_cbom_report:
             update["unified_cbom_report"] = ctx.unified_cbom_report
+
+        # ── Track C: Phase 3 Canonical Inventory (Defect D1 fix & Phase 3.4 Remediation) ──
+        # Serialize via Pydantic JSON-mode so all enums, datetimes, and nested
+        # Pydantic models become plain Python primitives suitable for MongoDB BSON.
+        canonical_serialization_failed = False
+        if ctx.canonical_inventory is not None:
+            try:
+                update["canonical_inventory"] = ctx.canonical_inventory.model_dump(mode="json")
+            except Exception as _ci_err:
+                canonical_serialization_failed = True
+                _ci_err_msg = f"canonical_inventory serialization failed: {type(_ci_err).__name__}: {_ci_err}"
+                logger.error(
+                    "[%s] canonical_inventory serialization failed for target '%s': %s",
+                    scan_id,
+                    ctx.domain,
+                    _ci_err_msg,
+                    exc_info=True,
+                )
+                update["canonical_inventory_error"] = _ci_err_msg
+                update["persistence_error"] = _ci_err_msg
+                update["error"] = _ci_err_msg
+                update["status"] = ScanStatus.FAILED.value
+                update["current_stage"] = "Failed"
+
+        # ── Track C: Convergence adapter warnings (Defect D3 fix) ──
+        # Persist per-adapter conversion errors so results API and dashboard can
+        # expose them without requiring the in-memory stage metrics.
+        _conv_adapter_errors = getattr(ctx, "convergence_adapter_errors", None)
+        if _conv_adapter_errors:
+            update["convergence_adapter_errors"] = _conv_adapter_errors
+
+        # ── Track C: Phase 4 Quantum Stage DB write errors ──
+        _quantum_write_errors = getattr(ctx, "quantum_write_errors", None)
+        if _quantum_write_errors:
+            update["quantum_write_errors"] = _quantum_write_errors
 
         # Convert crypto_findings dicts → CryptoComponent objects for the engine
         _RISK_TO_QSTATUS = {
@@ -736,13 +773,20 @@ async def _run_custom_scan_pipeline(
                 },
             }, scan_id)
 
-        await ws_manager.broadcast({
-            "type": "status",
-            "status": "completed",
-            "message": "15-stage ASPM scan completed.",
-        }, scan_id)
-
-        logger.info("[%s] 15-stage ASPM scan completed.", scan_id)
+        if canonical_serialization_failed or update.get("status") == ScanStatus.FAILED.value:
+            await ws_manager.broadcast({
+                "type": "status",
+                "status": "failed",
+                "message": update.get("error", "Scan completed with persistence failure."),
+            }, scan_id)
+            logger.warning("[%s] 15-stage ASPM scan finished with failure: %s", scan_id, update.get("error"))
+        else:
+            await ws_manager.broadcast({
+                "type": "status",
+                "status": "completed",
+                "message": "15-stage ASPM scan completed.",
+            }, scan_id)
+            logger.info("[%s] 15-stage ASPM scan completed.", scan_id)
 
     except Exception as exc:
         logger.exception("[%s] Custom engine pipeline failed: %s", scan_id, exc)

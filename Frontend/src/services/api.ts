@@ -1,5 +1,15 @@
 import axios from "axios";
 import { getViteApiBaseUrl } from "@/lib/runtimeConfig";
+import type { 
+  DashboardSummary, 
+  PolicyAlignment, 
+  MigrationSnapshot, 
+  ExecutiveBrief,
+  LoginResponse,
+  VerifyOtpResponse,
+  AiRoadmapPlanBody,
+  AiRoadmapPlanResponse
+} from "./types";
 
 /** Origin hosting the FastAPI app (e.g. http://localhost:8000) — for /health and root routes.
  *  When using a Vite dev proxy (VITE_API_BASE_URL=/api/v1), returns "" so requests
@@ -66,32 +76,31 @@ export const authService = {
   login: (email: string, password: string) => {
     // The v2 auth router expects { email, password }
     // The scanner demo router at /auth/login accepts { username/email, password }
-    return api.post("/auth/login", { email, username: email, password });
+    return api.post<LoginResponse>("/auth/login", { email, username: email, password });
   },
   verifyOtp: (email: string, otp: string) =>
-    api.post("/auth/verify-otp", { email, otp }),
+    api.post<VerifyOtpResponse>("/auth/verify-otp", { email, otp }),
   resendOtp: (email: string) =>
-    api.post("/auth/resend-otp", { email }),
+    api.post<{ message: string }>("/auth/resend-otp", { email }),
   forgotPassword: (email: string) =>
-    api.post("/auth/forgot-password", { email }),
+    api.post<{ message: string }>("/auth/forgot-password", { email }),
 };
 
 // ── Users ────────────────────────────────────────────────────────
 
-export const userService = {
-  getMe: () => api.get("/users/me"),
-};
+// The /users/me endpoint does not exist on the backend and is completely unused by the frontend.
+// Removed dead userService implementation.
 
 // ── Dashboard ─────────────────────────────────────────────────────
 
 export const dashboardService = {
-  getSummary: () => api.get("/dashboard/summary"),
+  getSummary: () => api.get<DashboardSummary>("/dashboard/summary"),
   /** Phase 4: org policy vs latest scan TLS (indicative) */
-  getPolicyAlignment: () => api.get("/dashboard/policy-alignment"),
+  getPolicyAlignment: () => api.get<PolicyAlignment>("/dashboard/policy-alignment"),
   /** Phase 5: open migration tasks + pending waivers (counts) */
-  getMigrationSnapshot: () => api.get("/dashboard/migration-snapshot"),
+  getMigrationSnapshot: () => api.get<MigrationSnapshot>("/dashboard/migration-snapshot"),
   /** Phase 6: stakeholder rollup (KPIs, policy, migration, domains) */
-  getExecutiveBrief: () => api.get("/dashboard/executive-brief"),
+  getExecutiveBrief: () => api.get<ExecutiveBrief>("/dashboard/executive-brief"),
 };
 
 // ── Assets ───────────────────────────────────────────────────────
@@ -230,12 +239,9 @@ export const notificationService = {
 // ── AI (LM Studio compatible) ─────────────────────────────────────
 
 export const aiService = {
-  roadmapPlan: (body: {
-    domain: string;
-    constraints?: { horizon_days?: number; notes?: string };
-  }) => api.post("/ai/roadmap/plan", body),
+  roadmapPlan: (body: AiRoadmapPlanBody) => api.post<AiRoadmapPlanResponse>("/ai/roadmap/plan", body),
   copilotChat: (body: { message: string; domain?: string | null }) =>
-    api.post("/ai/copilot/chat", body),
+    api.post<{ reply: string }>("/ai/copilot/chat", body),
 };
 
 // ── LLM Status (local AI model availability) ─────────────────────

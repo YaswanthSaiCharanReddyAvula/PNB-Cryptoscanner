@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Set
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ── Enums ────────────────────────────────────────────────────────
 
@@ -155,6 +155,7 @@ class RoadmapItem(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
+    model_config = ConfigDict(protected_namespaces=())
     model_version: str = "1.0.0"
     policy_version: str = "1.0.0"
 
@@ -211,6 +212,7 @@ class TieredSecurityRoadmap(BaseModel):
     domain: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
+    model_config = ConfigDict(protected_namespaces=())
     model_version: str = "1.0.0"
     policy_version: str = "1.0.0"
     

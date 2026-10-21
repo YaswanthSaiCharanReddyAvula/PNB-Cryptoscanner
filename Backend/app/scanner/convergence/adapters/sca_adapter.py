@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Tuple
 
-from app.scanner.convergence.adapters.base_adapter import EngineAdapter
+from app.scanner.convergence.adapters.base_adapter import EngineAdapter, extract_field
 from app.scanner.convergence.canonical_models import (
     CanonicalAsset,
     CanonicalEvidence,
@@ -19,6 +19,9 @@ from app.scanner.convergence.canonical_models import (
 )
 from app.scanner.convergence.enums import AssetType, ObservationStatus, RiskLevel
 from app.scanner.pipeline import ScanContext
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SCAAdapter(EngineAdapter):
@@ -39,47 +42,54 @@ class SCAAdapter(EngineAdapter):
 
         # Handle package_findings (discovered dependencies)
         for pkg_data in getattr(ctx, "package_findings", []):
-            # The structure of pkg_data depends on how SCA populates it. Let's assume it resembles SCADependency or PackageIdentity.
-            if hasattr(pkg_data, "package"):
-                identity = pkg_data.package
-            else:
-                identity = pkg_data
+            if not isinstance(pkg_data, dict) and not hasattr(pkg_data, "name") and not hasattr(pkg_data, "package"):
+                msg = f"Skipping malformed package finding record: invalid type {type(pkg_data).__name__}"
+                logger.warning(msg)
+                self.record_error(msg)
+                continue
 
-            name = getattr(identity, "name", "unknown_package")
-            version = getattr(identity, "version", None) or getattr(pkg_data, "resolved_version", None)
-            purl = getattr(identity, "purl", None)
-            cpe = getattr(identity, "cpe", None)
-            ecosystem = getattr(identity, "ecosystem", "unknown")
-            if hasattr(ecosystem, "value"):
-                ecosystem = ecosystem.value
+            pkg_identity = extract_field(pkg_data, "package", pkg_data)
+            name = extract_field(pkg_identity, "name") or extract_field(pkg_data, "name")
+            if not name or not isinstance(name, str) or not name.strip():
+                msg = f"Skipping package record missing valid name: {pkg_data!r}"
+                logger.warning(msg)
+                self.record_error(msg)
+                continue
+
+            name = name.strip()
+            version = extract_field(pkg_identity, "version") or extract_field(pkg_data, ("resolved_version", "version"))
+            purl = extract_field(pkg_identity, "purl") or extract_field(pkg_data, "purl")
+            cpe = extract_field(pkg_identity, "cpe") or extract_field(pkg_data, "cpe")
+            ecosystem_raw = extract_field(pkg_identity, "ecosystem") or extract_field(pkg_data, "ecosystem", "unknown")
+            ecosystem = ecosystem_raw.value if hasattr(ecosystem_raw, "value") else str(ecosystem_raw or "unknown")
 
             # Create Canonical Package Property
             cp = CanonicalPackage(
                 name=name,
                 ecosystem=ecosystem,
-                version=version,
-                purl=purl,
-                cpe=cpe,
-                dependency_scope=getattr(pkg_data, "scope", None),
-                directness=getattr(pkg_data, "dependency_type", None)
+                version=str(version) if version is not None else None,
+                purl=str(purl) if purl else None,
+                cpe=str(cpe) if cpe else None,
+                dependency_scope=extract_field(pkg_data, "scope"),
+                directness=extract_field(pkg_data, "dependency_type")
             )
 
             identifiers = []
             if purl:
-                identifiers.append(Identifier(type="purl", value=purl))
+                identifiers.append(Identifier(type="purl", value=str(purl)))
             if cpe:
-                identifiers.append(Identifier(type="cpe", value=cpe))
+                identifiers.append(Identifier(type="cpe", value=str(cpe)))
 
             locations = []
-            manifest = getattr(pkg_data, "manifest_file", None) or getattr(pkg_data, "resolution_source", None)
+            manifest = extract_field(pkg_data, ("manifest_file", "resolution_source", "source_file"))
             if manifest:
-                locations.append(Location(type="file", value=manifest))
+                locations.append(Location(type="file", value=str(manifest)))
 
             asset = CanonicalAsset(
                 scan_id=ctx.scan_id,
                 asset_type=AssetType.PACKAGE,
                 name=name,
-                version=version,
+                version=str(version) if version is not None else None,
                 identifiers=identifiers,
                 locations=locations,
                 observed_at=now,
@@ -94,55 +104,64 @@ class SCAAdapter(EngineAdapter):
                 source_stage=self.engine_stage,
                 observation_type="package_dependency",
                 target=name,
-                location=manifest,
+                location=str(manifest) if manifest else None,
                 observed_at=now,
-                value=purl or version
+                value=str(purl or version or name)
             )
             evidence.append(ev)
             asset.evidence_refs.append(ev.evidence_id)
 
-
         # Handle sca_findings (vulnerabilities associated with packages)
         for sca_finding in getattr(ctx, "sca_findings", []):
-            # Extract package details
-            if hasattr(sca_finding, "package"):
-                pkg_identity = sca_finding.package
-                pkg_name = getattr(pkg_identity, "name", "unknown")
-                pkg_purl = getattr(pkg_identity, "purl", None)
-                pkg_version = getattr(sca_finding, "resolved_version", None)
-            else:
-                pkg_name = getattr(sca_finding, "library_name", "unknown")
-                pkg_purl = None
-                pkg_version = getattr(sca_finding, "version", None)
+            if not isinstance(sca_finding, dict) and not hasattr(sca_finding, "package") and not hasattr(sca_finding, "library_name"):
+                msg = f"Skipping malformed SCA finding record: invalid type {type(sca_finding).__name__}"
+                logger.warning(msg)
+                self.record_error(msg)
+                continue
 
-            vuln_id = getattr(sca_finding, "vulnerability_id", "UNKNOWN-VULN")
+            # Extract package details
+            pkg_identity = extract_field(sca_finding, "package")
+            if pkg_identity:
+                pkg_name = extract_field(pkg_identity, "name") or extract_field(sca_finding, "library_name", "unknown")
+                pkg_purl = extract_field(pkg_identity, "purl")
+                pkg_version = extract_field(sca_finding, "resolved_version") or extract_field(pkg_identity, "version")
+            else:
+                pkg_name = extract_field(sca_finding, ("library_name", "package_name", "name"), "unknown")
+                pkg_purl = extract_field(sca_finding, "purl")
+                pkg_version = extract_field(sca_finding, "version")
+
+            vuln_id = extract_field(sca_finding, ("vulnerability_id", "cve_id"), "UNKNOWN-VULN")
+            manifest = extract_field(sca_finding, ("manifest_file", "resolution_source", "source_file"))
             
             # Evidence
-            manifest = getattr(sca_finding, "manifest_file", None)
             ev = CanonicalEvidence(
                 scan_id=ctx.scan_id,
                 source_engine=self.engine_name,
                 source_stage=self.engine_stage,
                 observation_type="vulnerability_match",
-                target=pkg_name,
-                location=manifest,
+                target=str(pkg_name or "unknown"),
+                location=str(manifest) if manifest else None,
                 observed_at=now,
-                value=vuln_id
+                value=str(vuln_id)
             )
             evidence.append(ev)
             
             # Severity
-            sev_raw = getattr(sca_finding, "severity", "info")
+            sev_raw = extract_field(sca_finding, "severity", "info")
             if sev_raw and isinstance(sev_raw, str):
                 sev_raw = sev_raw.upper()
                 if sev_raw in [r.value for r in RiskLevel]:
                     severity = RiskLevel(sev_raw)
-                elif sev_raw == "INFO":
+                elif sev_raw in ("INFO", "NONE"):
                     severity = RiskLevel.SAFE
                 else:
                     severity = RiskLevel.UNKNOWN
             else:
                 severity = RiskLevel.UNKNOWN
+
+            cvss = extract_field(sca_finding, "cvss")
+            cvss_score = extract_field(cvss, "base_score") or extract_field(sca_finding, "cvss_score")
+            cvss_vector = extract_field(cvss, "vector") or extract_field(sca_finding, "cvss_vector")
 
             # Finding
             cf = CanonicalFinding(
@@ -159,17 +178,17 @@ class SCAAdapter(EngineAdapter):
                     "package_name": pkg_name,
                     "version": pkg_version,
                     "purl": pkg_purl,
-                    "crypto_relevance": getattr(sca_finding, "crypto_relevance", None),
-                    "fixed_versions": getattr(sca_finding, "fixed_versions", []),
-                    "cvss_score": getattr(getattr(sca_finding, "cvss", None), "base_score", None),
-                    "cvss_vector": getattr(getattr(sca_finding, "cvss", None), "vector", None),
-                    "cwe": getattr(sca_finding, "cwe", []),
+                    "crypto_relevance": extract_field(sca_finding, "crypto_relevance"),
+                    "fixed_versions": extract_field(sca_finding, "fixed_versions", []),
+                    "cvss_score": cvss_score,
+                    "cvss_vector": cvss_vector,
+                    "cwe": extract_field(sca_finding, "cwe", []),
                 }
             )
             
             # References
-            if vuln_id and vuln_id.startswith("CVE"):
-                cf.references.append({"type": "cve", "id": vuln_id})
+            if vuln_id and str(vuln_id).startswith("CVE"):
+                cf.references.append({"type": "cve", "id": str(vuln_id)})
                 
             findings.append(cf)
 

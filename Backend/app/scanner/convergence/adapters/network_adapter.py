@@ -7,7 +7,7 @@ Transforms network services and OS fingerprints into canonical models.
 from datetime import datetime, timezone
 from typing import List, Tuple
 
-from app.scanner.convergence.adapters.base_adapter import EngineAdapter
+from app.scanner.convergence.adapters.base_adapter import EngineAdapter, extract_field
 from app.scanner.convergence.canonical_models import (
     CanonicalAsset,
     CanonicalEvidence,
@@ -38,16 +38,20 @@ class NetworkAdapter(EngineAdapter):
 
         # Services
         for svc in getattr(ctx, "services", []):
-            # svc could be dict or PortResult/ServiceFingerprint model
-            host = normalize_hostname(getattr(svc, "ip", getattr(svc, "host", "")))
-            port_raw = getattr(svc, "port", 0)
-            transport_raw = getattr(svc, "protocol", "tcp")
-            if isinstance(svc, dict):
-                host = normalize_hostname(svc.get("ip", svc.get("host", "")))
-                port_raw = svc.get("port", 0)
-                transport_raw = svc.get("protocol", "tcp")
-                
-            port_info = normalize_port(port_raw, transport_raw)
+            raw_host = extract_field(svc, "host") or extract_field(svc, "ip") or ""
+            raw_port = extract_field(svc, "port", 0)
+            transport_raw = str(extract_field(svc, "protocol", "tcp") or "tcp")
+            
+            try:
+                port_num = int(raw_port)
+            except (ValueError, TypeError):
+                continue
+
+            host = normalize_hostname(str(raw_host))
+            if not host or port_num <= 0:
+                continue
+
+            port_info = normalize_port(port_num, transport_raw)
             
             asset = CanonicalAsset(
                 scan_id=ctx.scan_id,
@@ -79,18 +83,17 @@ class NetworkAdapter(EngineAdapter):
             
         # OS Fingerprints
         for os_fp in getattr(ctx, "os_fingerprints", []):
-            host = normalize_hostname(getattr(os_fp, "host", ""))
-            if isinstance(os_fp, dict):
-                host = normalize_hostname(os_fp.get("host", ""))
-                os_match = os_fp.get("os_match", "unknown_os")
-            else:
-                os_match = getattr(os_fp, "os_match", "unknown_os")
+            raw_host = extract_field(os_fp, "host", "")
+            host = normalize_hostname(str(raw_host))
+            os_match = extract_field(os_fp, "os_match")
+            if not host or not os_match or os_match == "unknown_os":
+                continue
                 
             # Treat OS as an asset or property of host. We'll make it an OS/Framework asset.
             asset = CanonicalAsset(
                 scan_id=ctx.scan_id,
                 asset_type=AssetType.FRAMEWORK,
-                name=os_match,
+                name=str(os_match),
                 properties={"os": True},
                 observed_at=now,
                 sources=[self.engine_name]

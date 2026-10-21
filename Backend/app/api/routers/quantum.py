@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.db.connection import get_db
+from app.db.connection import get_database as get_db
 
 router = APIRouter(prefix="/quantum", tags=["Quantum Risk"])
 

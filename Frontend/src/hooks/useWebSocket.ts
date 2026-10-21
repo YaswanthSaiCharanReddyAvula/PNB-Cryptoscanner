@@ -113,7 +113,6 @@ export const useWebSocket = (scanId: string | null) => {
 
     socket.onerror = (error) => {
       console.error('WebSocket error:', error);
-      setStatus('closed');
     };
   }, [scanId]);
 

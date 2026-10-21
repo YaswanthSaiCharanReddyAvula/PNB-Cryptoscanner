@@ -194,6 +194,88 @@
       "data_provenance": [
         "IETF TLS WG"
       ]
+    },
+    {
+      "catalogue_id": "pqc.kem.ml-kem-1024",
+      "name": "ML-KEM-1024",
+      "family": "ML-KEM",
+      "primitive": "key_agreement",
+      "cryptographic_role": "KEY_ESTABLISHMENT",
+      "standardization_status": "STANDARDIZED",
+      "standard_reference": "FIPS 203",
+      "parameter_set": "ML-KEM-1024",
+      "security_category": 5,
+      "public_key_bytes": 1568,
+      "private_key_bytes": 3168,
+      "ciphertext_bytes": 1568,
+      "shared_secret_bytes": 32,
+      "performance_profiles": [],
+      "implementation_support": [
+        "openssl_3.2+",
+        "boringssl"
+      ],
+      "protocol_support": [
+        "tls_1.3"
+      ],
+      "deployment_constraints": [],
+      "data_provenance": [
+        "NIST FIPS 203"
+      ]
+    },
+    {
+      "catalogue_id": "pqc.sig.ml-dsa-87",
+      "name": "ML-DSA-87",
+      "family": "ML-DSA",
+      "primitive": "signature",
+      "cryptographic_role": "DIGITAL_SIGNATURE",
+      "standardization_status": "STANDARDIZED",
+      "standard_reference": "FIPS 204",
+      "parameter_set": "ML-DSA-87",
+      "security_category": 5,
+      "public_key_bytes": 2592,
+      "private_key_bytes": 4896,
+      "signature_bytes": 4627,
+      "shared_secret_bytes": null,
+      "performance_profiles": [],
+      "implementation_support": [
+        "openssl_3.3+"
+      ],
+      "protocol_support": [
+        "tls_1.3",
+        "x509"
+      ],
+      "deployment_constraints": [],
+      "data_provenance": [
+        "NIST FIPS 204"
+      ]
+    },
+    {
+      "catalogue_id": "pqc.sig.slh-dsa-sha2-128s",
+      "name": "SLH-DSA-SHA2-128s",
+      "family": "SLH-DSA",
+      "primitive": "signature",
+      "cryptographic_role": "DIGITAL_SIGNATURE",
+      "standardization_status": "STANDARDIZED",
+      "standard_reference": "FIPS 205",
+      "parameter_set": "SLH-DSA-SHA2-128s",
+      "security_category": 1,
+      "public_key_bytes": 32,
+      "private_key_bytes": 64,
+      "signature_bytes": 7856,
+      "shared_secret_bytes": null,
+      "performance_profiles": [],
+      "implementation_support": [
+        "openssl_3.3+"
+      ],
+      "protocol_support": [
+        "x509"
+      ],
+      "deployment_constraints": [
+        "large_signature_size"
+      ],
+      "data_provenance": [
+        "NIST FIPS 205"
+      ]
     }
   ]
 }

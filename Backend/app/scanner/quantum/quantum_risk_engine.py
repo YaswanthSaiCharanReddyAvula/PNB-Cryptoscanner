@@ -18,6 +18,7 @@ from app.scanner.quantum.models import (
 from app.scanner.quantum.taxonomy import QUANTUM_ALGORITHM_TAXONOMY
 from app.scanner.quantum.mosca_engine import calculate_mosca_assessment
 from app.scanner.quantum.hndl_engine import calculate_hndl_exposure
+from app.scanner.engines.crypto_normalization import CryptoNormalization
 
 
 def determine_algorithmic_risk(alg_info: Dict[str, Any]) -> float:
@@ -43,7 +44,8 @@ def assess_quantum_risk(
     data_sensitivity: str = "UNKNOWN",
     business_criticality: str = "UNKNOWN",
     migration_complexity: str = "UNKNOWN",
-    evidence: List[str] = None
+    evidence: List[str] = None,
+    scan_id: str = None
 ) -> QuantumRiskAssessment:
     """
     Evaluates a single quantum subject (cryptographic primitive) and computes its quantum risk.
@@ -56,6 +58,27 @@ def assess_quantum_risk(
     alg_key = algorithm_name.upper().strip()
     alg_info = QUANTUM_ALGORITHM_TAXONOMY.get(alg_key)
     
+    if not alg_info:
+        # Attempt normalization via CryptoNormalization
+        norm_alg, norm_bits, norm_kex, curve = CryptoNormalization.resolve_primitive(
+            algorithm_name, default_kex=key_exchange_role
+        )
+        if norm_alg:
+            alg_info = QUANTUM_ALGORITHM_TAXONOMY.get(norm_alg)
+            if alg_info:
+                if alg_key != norm_alg:
+                    assumed.append(f"Normalized algorithm '{algorithm_name}' to canonical '{norm_alg}'")
+                alg_key = norm_alg
+                if key_size is None and norm_bits is not None:
+                    key_size = norm_bits
+                if key_exchange_role is False and norm_kex is True:
+                    key_exchange_role = True
+
+    if key_size is None:
+        extracted = CryptoNormalization.extract_bits(alg_key) or CryptoNormalization.extract_bits(algorithm_name)
+        if extracted:
+            key_size = extracted
+
     if not alg_info:
         is_unknown = True
         confidence = 0.2
@@ -144,6 +167,7 @@ def assess_quantum_risk(
     return QuantumRiskAssessment(
         assessment_id=f"qra-{uuid.uuid4()}",
         asset_id=asset_id,
+        scan_id=scan_id,
         subject_id=f"sub-{alg_key.lower()}",
         model_version="4.0.0",
         assessed_at=datetime.now(timezone.utc).isoformat(),

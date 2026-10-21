@@ -33,11 +33,11 @@ function fallbackExplain(score1000: number): {
   const t = getTier(score1000);
   return {
     evidence: {
-      tls_total: 0,
-      tls_1_3: 0,
-      legacy_tls: 0,
-      weak_cipher_indicators: 0,
-      hndl_risk_inferred: 0,
+      tls_total: undefined,
+      tls_1_3: undefined,
+      legacy_tls: undefined,
+      weak_cipher_indicators: undefined,
+      hndl_risk_inferred: undefined,
     },
     drivers: [
       `Score ${score1000}/1000 maps to tier "${t.label}" (Standard is 400–700; Elite-PQC is above 700).`,
@@ -308,16 +308,16 @@ export default function CyberRating() {
                     </span>
                   ) : null}
                   <span className="text-xs px-2 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary font-semibold">
-                    TLS 1.3: {explainData.evidence?.tls_1_3 ?? 0}/{explainData.evidence?.tls_total ?? 0}
+                    TLS 1.3: {explainData.evidence?.tls_1_3 ?? "—"}/{explainData.evidence?.tls_total ?? "—"}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-amber-500/20 bg-amber-500/5 text-amber-700 font-semibold">
-                    Legacy TLS: {explainData.evidence?.legacy_tls ?? 0}
+                    Legacy TLS: {explainData.evidence?.legacy_tls ?? "—"}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
-                    Weak ciphers: {explainData.evidence?.weak_cipher_indicators ?? 0}
+                    Weak ciphers: {explainData.evidence?.weak_cipher_indicators ?? "—"}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 text-rose-700 font-semibold">
-                    HNDL risk: {explainData.evidence?.hndl_risk_inferred ?? 0}
+                    HNDL risk: {explainData.evidence?.hndl_risk_inferred ?? "—"}
                   </span>
                 </div>
 

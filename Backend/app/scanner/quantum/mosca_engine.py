@@ -21,7 +21,7 @@ def calculate_mosca_assessment(timeline: QuantumTimeline) -> MoscaAssessment:
     margin = timeline.Tm.value + timeline.Tc.value - timeline.Tq.value
     
     # Status determination based on margin
-    if margin < -2:
+    if margin <= -2:
         status = "SAFE_MARGIN"
     elif margin < 0:
         status = "BORDERLINE"

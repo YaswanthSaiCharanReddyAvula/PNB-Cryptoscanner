@@ -61,13 +61,16 @@ export default function Login() {
     setLoading(true);
     try {
       const loginRes = await authService.login(username, password);
-      
-      if (loginRes.data.requires_otp) {
+      if ("requires_otp" in loginRes.data && loginRes.data.requires_otp) {
         setOtpEmail(loginRes.data.email);
         setStep("otp");
         setTimeLeft(60);
         toast.success(loginRes.data.message);
         return;
+      }
+
+      if (!("access_token" in loginRes.data)) {
+        throw new Error("Invalid response from server");
       }
 
       const { access_token, user } = loginRes.data;

@@ -8,7 +8,8 @@ Extracts and normalizes context like asset criticality, data sensitivity, and ex
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from app.scanner.convergence.canonical_models import CanonicalInventory, CanonicalAsset, CanonicalFinding
+from app.scanner.convergence.canonical_models import CanonicalAsset, CanonicalFinding
+from app.scanner.convergence.aggregation import CanonicalInventory
 
 class NormalizedAssetContext(BaseModel):
     asset_id: str
@@ -72,10 +73,12 @@ def build_phase3_context(inventory: CanonicalInventory) -> Phase3Context:
     """Extracts finding-driven roadmap context from the Phase 3 inventory."""
     # Build a lookup for fast asset resolution
     asset_lookup: Dict[str, CanonicalAsset] = {}
-    if hasattr(inventory.assets, "model_fields"):
-        fields = inventory.assets.model_fields.keys()
-    else:
+    if hasattr(type(inventory.assets), "model_fields"):
+        fields = type(inventory.assets).model_fields.keys()
+    elif hasattr(inventory.assets, "__fields__"):
         fields = inventory.assets.__fields__.keys()
+    else:
+        fields = []
         
     for field_name in fields:
         asset_list = getattr(inventory.assets, field_name)

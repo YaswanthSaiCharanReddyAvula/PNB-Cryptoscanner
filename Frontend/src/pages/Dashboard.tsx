@@ -622,15 +622,17 @@ export default function Dashboard() {
 
   const applyV1Fallback = (v1: any) => {
     const v1Assets = Array.isArray(v1.assets) ? v1.assets : [];
-    const v1Tls = Array.isArray(v1.tls_results) ? v1.tls_results : [];
+    const v1Tls = Array.isArray(v1.tls_results) ? v1.tls_results : (Array.isArray(v1.tls_profiles) ? v1.tls_profiles : []);
 
     const expiring = v1Tls.filter((t: any) => {
-      const days = t?.certificate?.days_until_expiry;
+      const days = t?.leaf_cert?.days_until_expiry ?? t?.certificate?.days_until_expiry;
       return typeof days === "number" && days <= 30 && days >= 0;
     }).length;
-    const highRisk = Array.isArray(v1.cbom)
-      ? v1.cbom.filter((c: any) => ["critical", "high"].includes(String(c?.risk_level))).length
-      : 0;
+    const highRisk = Array.isArray(v1.crypto_findings)
+      ? v1.crypto_findings.filter((c: any) => ["critical", "high"].includes(String(c?.quantum_risk))).length
+      : Array.isArray(v1.cbom)
+        ? v1.cbom.filter((c: any) => ["critical", "high"].includes(String(c?.risk_level))).length
+        : 0;
 
     setSummary((prev: any) => prev ?? {
       total_assets: v1Assets.length,
@@ -643,7 +645,8 @@ export default function Dashboard() {
 
     setAssetInventoryData(
       v1Assets.slice(0, 5).map((a: any) => {
-        const tls = v1Tls.find((t: any) => t.host === a.subdomain) || {};
+        const tls = v1Tls.find((t: any) => (t.host || t.subdomain) === a.subdomain) || {};
+        const keySize = tls?.leaf_cert?.key_size ?? tls?.certificate?.public_key_size;
         return {
           name: a.subdomain,
           url: a.subdomain,
@@ -655,11 +658,11 @@ export default function Dashboard() {
           certStatus: "",
           keyLength: "",
           lastScan: v1.completed_at ? new Date(v1.completed_at).toLocaleDateString() : "",
-          pqcStatus: determinePQCStatus(tls.tls_version, tls.cipher_suite, tls.certificate?.public_key_size?.toString()),
+          pqcStatus: determinePQCStatus(tls.tls_version, tls.cipher_suite, keySize?.toString()),
           hndlRisk: hndlRiskFromCrypto(
             tls.tls_version,
             tls.cipher_suite,
-            tls.certificate?.public_key_size?.toString(),
+            keySize?.toString(),
           ),
         };
       })
@@ -667,12 +670,13 @@ export default function Dashboard() {
     
     let hCount3 = 0;
     v1Assets.forEach((a: any) => {
-      const tls = v1Tls.find((t: any) => t.host === a.subdomain) || {};
+      const tls = v1Tls.find((t: any) => (t.host || t.subdomain) === a.subdomain) || {};
+      const keySize = tls?.leaf_cert?.key_size ?? tls?.certificate?.public_key_size;
       if (
         hndlRiskFromCrypto(
           tls.tls_version,
           tls.cipher_suite,
-          tls.certificate?.public_key_size?.toString(),
+          keySize?.toString(),
         )
       )
         hCount3++;
@@ -689,14 +693,17 @@ export default function Dashboard() {
     setDistributionData(distArray.length > 0 ? distArray : [{ name: "No Data", value: 1 }]);
 
     setCryptoSecurityData(
-      v1Tls.slice(0, 5).map((t: any) => ({
-        asset: `${t.host}:${t.port}`,
-        keyLength: t?.certificate?.public_key_size ? `${t.certificate.public_key_size}-bit` : "Unknown",
-        cipherSuite: t.cipher_suite || "Unknown",
-        tlsVersion: t.tls_version || "Unknown",
-        ca: t?.certificate?.issuer || "Unknown",
-        pqcStatus: determinePQCStatus(t.tls_version, t.cipher_suite, t.certificate?.public_key_size?.toString()),
-      }))
+      v1Tls.slice(0, 5).map((t: any) => {
+        const keySize = t?.leaf_cert?.key_size ?? t?.certificate?.public_key_size;
+        return {
+          asset: `${t.host || t.subdomain}:${t.port || 443}`,
+          keyLength: keySize ? `${keySize}-bit` : "Unknown",
+          cipherSuite: t.cipher_suite || "Unknown",
+          tlsVersion: t.tls_version || "Unknown",
+          ca: t?.leaf_cert?.issuer ?? t?.certificate?.issuer ?? "Unknown",
+          pqcStatus: determinePQCStatus(t.tls_version, t.cipher_suite, keySize?.toString()),
+        };
+      })
     );
   };
 

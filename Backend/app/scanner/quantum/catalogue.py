@@ -1,9 +1,11 @@
 import json
 import os
 from typing import List, Optional, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class PerformanceProfile(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     operation: Optional[str] = None
     metric: str = Field(alias="metric_name")
     value: float = Field(alias="metric_value")
@@ -18,9 +20,6 @@ class PerformanceProfile(BaseModel):
     source_version: Optional[str] = None
     measured_at: Optional[str] = None
     confidence: float = 1.0
-
-    class Config:
-        populate_by_name = True
 
 class CatalogueEntry(BaseModel):
     catalogue_id: str

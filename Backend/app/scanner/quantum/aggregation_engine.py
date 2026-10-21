@@ -34,11 +34,17 @@ def aggregate_asset_risk(asset_id: str, assessments: List[QuantumRiskAssessment]
     unknown_count = 0
     total_count = len(assessments)
     
-    PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "MONITOR": 4, "UNKNOWN": 5, "NONE": 6}
-    MOSCA_ORDER = {"CRITICAL_URGENCY": 0, "MIGRATION_REQUIRED": 1, "BORDERLINE": 2, "SAFE_MARGIN": 3, "NOT_APPLICABLE": 4, "INSUFFICIENT_DATA": 5}
-    TIER_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "SAFE": 4, "UNKNOWN": 5}
+    # Priority ordering: P0 is most urgent, UNKNOWN precedes MONITOR/NONE so unquantified risk is not hidden
+    PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "UNKNOWN": 4, "MONITOR": 5, "NONE": 6}
+    # Mosca ordering: CRITICAL_URGENCY is most urgent, INSUFFICIENT_DATA precedes SAFE_MARGIN so missing data is not hidden
+    MOSCA_ORDER = {"CRITICAL_URGENCY": 0, "MIGRATION_REQUIRED": 1, "BORDERLINE": 2, "INSUFFICIENT_DATA": 3, "SAFE_MARGIN": 4, "NOT_APPLICABLE": 5}
+    # Tier ordering: CRITICAL is worst (0) down to LOW (3). UNKNOWN (4) is worse than SAFE (5) so unknown risk is not masked as safe!
+    TIER_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4, "SAFE": 5}
     
-    worst_tier = "SAFE"
+    first = assessments[0]
+    worst_tier = first.risk_tier
+    highest_priority = first.migration_priority
+    most_urgent_mosca = first.mosca.status
     
     for a in assessments:
         if a.risk_tier == "UNKNOWN":
@@ -47,13 +53,13 @@ def aggregate_asset_risk(asset_id: str, assessments: List[QuantumRiskAssessment]
         max_risk = max(max_risk, a.overall_quantum_risk)
         max_hndl_exposure = max(max_hndl_exposure, a.hndl.exposure)
         
-        if TIER_ORDER.get(a.risk_tier, 5) < TIER_ORDER.get(worst_tier, 5):
+        if TIER_ORDER.get(a.risk_tier, 4) < TIER_ORDER.get(worst_tier, 4):
             worst_tier = a.risk_tier
             
-        if PRIORITY_ORDER.get(a.migration_priority, 6) < PRIORITY_ORDER.get(highest_priority, 6):
+        if PRIORITY_ORDER.get(a.migration_priority, 4) < PRIORITY_ORDER.get(highest_priority, 4):
             highest_priority = a.migration_priority
             
-        if MOSCA_ORDER.get(a.mosca.status, 5) < MOSCA_ORDER.get(most_urgent_mosca, 5):
+        if MOSCA_ORDER.get(a.mosca.status, 3) < MOSCA_ORDER.get(most_urgent_mosca, 3):
             most_urgent_mosca = a.mosca.status
             
         min_confidence = min(min_confidence, a.confidence)
@@ -68,6 +74,8 @@ def aggregate_asset_risk(asset_id: str, assessments: List[QuantumRiskAssessment]
         hndl_class = "MEDIUM"
     elif max_hndl_exposure > 0:
         hndl_class = "LOW"
+    elif unknown_count == total_count:
+        hndl_class = "UNKNOWN"
         
     return AssetQuantumRiskSummary(
         asset_id=asset_id,
@@ -110,6 +118,9 @@ def aggregate_organization_risk(asset_summaries: List[AssetQuantumRiskSummary]) 
     total_confidence = 0.0
     total_unknown_coverage = 0.0
     
+    TIER_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4, "SAFE": 5}
+    worst_tier = asset_summaries[0].risk_tier
+    
     for s in asset_summaries:
         max_risk = max(max_risk, s.quantum_risk_score)
         total_confidence += s.confidence
@@ -123,15 +134,12 @@ def aggregate_organization_risk(asset_summaries: List[AssetQuantumRiskSummary]) 
             hndl_exposed += 1
         if s.mosca.status in ("CRITICAL_URGENCY", "MIGRATION_REQUIRED", "BORDERLINE"):
             mosca_boundary += 1
-        if s.unknown_coverage > 0:
+        if s.unknown_coverage > 0 or s.risk_tier == "UNKNOWN":
             unknown_crypto += 1
         if s.risk_tier == "SAFE" and s.unknown_coverage == 0:
             pqc_ready += 1
 
-    TIER_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "SAFE": 4, "UNKNOWN": 5}
-    worst_tier = "SAFE"
-    for s in asset_summaries:
-        if TIER_ORDER.get(s.risk_tier, 5) < TIER_ORDER.get(worst_tier, 5):
+        if TIER_ORDER.get(s.risk_tier, 4) < TIER_ORDER.get(worst_tier, 4):
             worst_tier = s.risk_tier
 
     avg_unknown_coverage = total_unknown_coverage / total_assets
@@ -146,7 +154,7 @@ def aggregate_organization_risk(asset_summaries: List[AssetQuantumRiskSummary]) 
         mosca_boundary_assets=mosca_boundary,
         unknown_crypto_assets=unknown_crypto,
         pqc_ready_assets=pqc_ready,
-        known_coverage=1.0 - avg_unknown_coverage,
+        known_coverage=max(0.0, 1.0 - avg_unknown_coverage),
         unknown_coverage=avg_unknown_coverage,
         confidence=total_confidence / total_assets
     )

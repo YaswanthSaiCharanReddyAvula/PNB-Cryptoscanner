@@ -96,10 +96,11 @@ export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({
           {/* Connection dot */}
           <span className="flex items-center gap-1 text-[10px]">
             <span className={`h-1.5 w-1.5 rounded-full ${wsStatus === 'open' ? 'bg-emerald-400 animate-pulse' :
-                wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse' : 'bg-zinc-500'
+                wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse' : 
+                (wsStatus === 'closed' && !isCompleted && !isFailed && scanId) ? 'bg-rose-500' : 'bg-zinc-500'
               }`} />
             <span className="text-zinc-500">
-              {wsStatus === 'open' ? 'Connected' : wsStatus === 'connecting' ? 'Connecting…' : 'Idle'}
+              {wsStatus === 'open' ? 'Connected' : wsStatus === 'connecting' ? 'Connecting…' : (wsStatus === 'closed' && !isCompleted && !isFailed && scanId) ? 'Connection Lost' : 'Idle'}
             </span>
           </span>
         </div>
@@ -220,6 +221,13 @@ export const LiveScanConsole: React.FC<LiveScanConsoleProps> = ({
 
           return null;
         })}
+
+        {wsStatus === 'closed' && !isCompleted && !isFailed && scanId && (
+          <div className="mt-3 pt-2 border-t border-zinc-700/50 flex items-center gap-2 text-rose-400 font-bold text-[11px]">
+            <AlertCircle className="h-4 w-4" />
+            Connection lost — the scan may still be running.
+          </div>
+        )}
 
         {/* Final banner */}
         {isCompleted && (

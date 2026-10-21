@@ -3,7 +3,7 @@ Phase 4 — Quantum Risk Models
 """
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TimeValue(BaseModel):
@@ -59,8 +59,10 @@ class QuantumRiskAssessment(BaseModel):
     assessment_id: str
     asset_id: str
     subject_id: str
+    model_config = ConfigDict(protected_namespaces=())
     model_version: str
     assessed_at: str
+    scan_id: Optional[str] = None
 
     algorithmic_risk: float
     shor_assessment: Optional[ShorAssessment] = None
@@ -75,7 +77,7 @@ class QuantumRiskAssessment(BaseModel):
 
     overall_quantum_risk: float
     risk_tier: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE", "UNKNOWN"]
-    migration_priority: Literal["P0", "P1", "P2", "P3", "MONITOR", "NONE"]
+    migration_priority: Literal["P0", "P1", "P2", "P3", "MONITOR", "NONE", "UNKNOWN"]
 
     confidence: float
     assumptions: List[str] = Field(default_factory=list)

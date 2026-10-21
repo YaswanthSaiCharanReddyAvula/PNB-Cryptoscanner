@@ -59,7 +59,10 @@ class ReconAdapter(EngineAdapter):
         # 2. Subdomains
         for sub in getattr(ctx, "subdomains", []):
             # sub could be a string or a dict
-            sub_name = sub.get("subdomain") if isinstance(sub, dict) else sub
+            if isinstance(sub, dict):
+                sub_name = sub.get("hostname") or sub.get("subdomain") or ""
+            else:
+                sub_name = str(sub or "")
             norm_sub = normalize_hostname(sub_name)
             if not norm_sub or norm_sub in host_assets:
                 continue

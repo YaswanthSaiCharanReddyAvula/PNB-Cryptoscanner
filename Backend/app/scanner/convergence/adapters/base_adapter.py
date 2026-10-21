@@ -16,6 +16,24 @@ from app.scanner.convergence.canonical_models import (
 from app.scanner.pipeline import ScanContext
 
 
+def extract_field(obj: Any, key: Any, default: Any = None) -> Any:
+    """Safely extracts a field from a dict, Pydantic model, or arbitrary object.
+    Supports a tuple or list of alternative keys to probe in sequence."""
+    if obj is None:
+        return default
+    keys = (key,) if isinstance(key, str) else tuple(key)
+    for k in keys:
+        if isinstance(obj, dict):
+            val = obj.get(k)
+            if val is not None:
+                return val
+        elif hasattr(obj, str(k)):
+            val = getattr(obj, str(k), None)
+            if val is not None:
+                return val
+    return default
+
+
 class EngineAdapter(ABC):
     """
     Abstract base class for all engine adapters.
@@ -24,6 +42,13 @@ class EngineAdapter(ABC):
     and CanonicalEvidence.
     """
     
+    def __init__(self):
+        self.conversion_errors: List[str] = []
+
+    def record_error(self, message: str) -> None:
+        """Records a conversion failure or malformed record error."""
+        self.conversion_errors.append(message)
+
     @property
     @abstractmethod
     def engine_name(self) -> str:

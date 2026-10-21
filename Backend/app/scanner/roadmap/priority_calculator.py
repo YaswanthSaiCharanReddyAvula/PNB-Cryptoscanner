@@ -30,11 +30,13 @@ def calculate_priority_score(drivers: PriorityDrivers) -> float:
         criticality_multiplier = 1.0 + (drivers.criticality * 0.3) # Up to 30% increase for business critical assets
         
     # 4. HNDL and Mosca Urgency
-    # HNDL indicates data is currently at risk of capture.
-    hndl_adder = drivers.hndl * 10.0 # Add up to 10 points
+    # HNDL indicates data is currently at risk of capture (normalized 0-1 from 0-100 or 0-1 scale).
+    norm_hndl = max(0.0, min(1.0, drivers.hndl / 100.0 if drivers.hndl > 1.0 else drivers.hndl))
+    hndl_adder = norm_hndl * 10.0 # Add up to 10 points
     
-    # Mosca urgency means time is running out.
-    mosca_adder = drivers.mosca_urgency * 15.0 # Add up to 15 points
+    # Mosca urgency means time is running out (normalized 0-1 from 0-100 or 0-1 scale).
+    norm_mosca = max(0.0, min(1.0, drivers.mosca_urgency / 100.0 if drivers.mosca_urgency > 1.0 else drivers.mosca_urgency))
+    mosca_adder = norm_mosca * 15.0 # Add up to 15 points
     
     # 5. Dependency Impact
     # If this task blocks many others, it should be prioritized.

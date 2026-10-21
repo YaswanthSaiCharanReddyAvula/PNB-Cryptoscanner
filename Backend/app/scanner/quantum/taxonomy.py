@@ -148,7 +148,49 @@ QUANTUM_ALGORITHM_TAXONOMY: Dict[str, Dict[str, Any]] = {
         "default_quantum_class": "none",
         "hndl_capable": False,
     },
+    "KYBER": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
+    "CRYSTALS-KYBER": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
     "ML-DSA": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
+    "DILITHIUM": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
+    "CRYSTALS-DILITHIUM": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
+    "FALCON": {
+        "family": "pqc",
+        "quantum_attack": "none",
+        "affected": False,
+        "default_quantum_class": "none",
+        "hndl_capable": False,
+    },
+    "SPHINCS+": {
         "family": "pqc",
         "quantum_attack": "none",
         "affected": False,
@@ -161,5 +203,42 @@ QUANTUM_ALGORITHM_TAXONOMY: Dict[str, Dict[str, Any]] = {
         "affected": False,
         "default_quantum_class": "none",
         "hndl_capable": False,
-    }
+    },
+
+    # Additional Elliptic Curve / Key Agreement primitives
+    "X25519": {
+        "family": "asymmetric",
+        "quantum_attack": "Shor",
+        "affected": True,
+        "default_quantum_class": "high",
+        "hndl_capable": True,
+    },
+    "CURVE25519": {
+        "family": "asymmetric",
+        "quantum_attack": "Shor",
+        "affected": True,
+        "default_quantum_class": "high",
+        "hndl_capable": True,
+    },
+    "EDDSA": {
+        "family": "asymmetric",
+        "quantum_attack": "Shor",
+        "affected": True,
+        "default_quantum_class": "high",
+        "hndl_capable": False,
+    },
+    "EC": {
+        "family": "asymmetric",
+        "quantum_attack": "Shor",
+        "affected": True,
+        "default_quantum_class": "high",
+        "hndl_capable": True,
+    },
+    "ECC": {
+        "family": "asymmetric",
+        "quantum_attack": "Shor",
+        "affected": True,
+        "default_quantum_class": "high",
+        "hndl_capable": True,
+    },
 }
